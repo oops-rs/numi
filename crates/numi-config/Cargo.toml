@@ -1,0 +1,10 @@
+[package]
+name = "numi-config"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+numi-diagnostics = { path = "../numi-diagnostics" }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"

@@ -1,6 +1,9 @@
-[package]
-name = "numi"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
+[workspace]
+members = [
+    "crates/numi-cli",
+    "crates/numi-core",
+    "crates/numi-config",
+    "crates/numi-ir",
+    "crates/numi-diagnostics",
+]
+resolver = "3"

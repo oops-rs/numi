@@ -1,0 +1,12 @@
+version = 1
+
+[[jobs]]
+name = "l10n"
+output = "Generated/L10n.swift"
+
+[[jobs.inputs]]
+type = "strings"
+path = "Resources/Localization"
+
+[jobs.template]
+builtin = "l10n"

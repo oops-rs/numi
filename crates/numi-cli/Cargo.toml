@@ -1,0 +1,18 @@
+[package]
+name = "numi-cli"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "numi"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+numi-config = { path = "../numi-config" }
+numi-core = { path = "../numi-core" }
+toml = "0.8"
+
+[dev-dependencies]
+serde_json = "1"

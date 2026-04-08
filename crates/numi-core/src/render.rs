@@ -1,11 +1,18 @@
-use minijinja::Environment;
-use std::{fs, path::Path};
+use minijinja::{Environment, Error, ErrorKind};
+use std::{
+    borrow::Cow,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use crate::context::AssetTemplateContext;
 
 const SWIFTUI_ASSETS_TEMPLATE: &str =
     include_str!("../../../templates/builtin/swiftui-assets.jinja");
 const L10N_TEMPLATE: &str = include_str!("../../../templates/builtin/l10n.jinja");
+const ENTRY_TEMPLATE_NAME: &str = "__numi_entry__";
+const FILE_TEMPLATE_PREFIX: &str = "file:";
+const INCLUDE_REQUEST_PREFIX: &str = "include:";
 
 #[derive(Debug)]
 pub enum RenderError {
@@ -46,13 +53,28 @@ pub fn render_builtin(
     render_template_source(builtin_name, template_source, context)
 }
 
-pub fn render_path(path: &Path, context: &AssetTemplateContext) -> Result<String, RenderError> {
+pub fn render_path(
+    path: &Path,
+    config_root: &Path,
+    context: &AssetTemplateContext,
+) -> Result<String, RenderError> {
     let template_source = fs::read_to_string(path).map_err(|source| RenderError::ReadTemplate {
         path: path.to_path_buf(),
         source,
     })?;
 
-    render_template_source("custom", &template_source, context)
+    let mut environment = build_custom_environment(path, config_root);
+    environment
+        .add_template_owned(ENTRY_TEMPLATE_NAME.to_string(), template_source)
+        .map_err(RenderError::RegisterTemplate)?;
+
+    let rendered = environment
+        .get_template(ENTRY_TEMPLATE_NAME)
+        .map_err(RenderError::Render)?
+        .render(context)
+        .map_err(RenderError::Render)?;
+
+    Ok(normalize_blank_lines(&rendered))
 }
 
 fn render_template_source(
@@ -80,6 +102,158 @@ fn build_environment() -> Environment<'static> {
     environment.add_filter("lower_first", lower_first);
     environment.add_filter("string_literal", string_literal);
     environment
+}
+
+fn build_custom_environment(entry_path: &Path, config_root: &Path) -> Environment<'static> {
+    let mut environment = build_environment();
+    let entry_dir = entry_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
+    let config_root = config_root.to_path_buf();
+    let join_entry_dir = entry_dir.clone();
+    let join_config_root = config_root.clone();
+
+    environment.set_path_join_callback(move |name, parent| {
+        Cow::Owned(resolve_include_name(
+            name,
+            parent,
+            &join_entry_dir,
+            &join_config_root,
+        ))
+    });
+
+    let load_entry_dir = entry_dir;
+    let load_config_root = config_root;
+    environment
+        .set_loader(move |name| load_custom_template(name, &load_entry_dir, &load_config_root));
+
+    environment
+}
+
+fn resolve_include_name(
+    include_name: &str,
+    parent_name: &str,
+    entry_dir: &Path,
+    config_root: &Path,
+) -> String {
+    let local_root = parent_local_root(parent_name, entry_dir);
+
+    resolve_include(include_name, &local_root, config_root)
+        .map(|path| encode_loaded_template_path(&path))
+        .unwrap_or_else(|_| encode_include_request(parent_name, include_name))
+}
+
+fn load_custom_template(
+    name: &str,
+    entry_dir: &Path,
+    config_root: &Path,
+) -> Result<Option<String>, minijinja::Error> {
+    if let Some(path) = decode_loaded_template_path(name) {
+        return fs::read_to_string(&path).map(Some).map_err(|source| {
+            minijinja::Error::new(
+                minijinja::ErrorKind::InvalidOperation,
+                format!("failed to read included template {}", path.display()),
+            )
+            .with_source(source)
+        });
+    }
+
+    let Some((parent_name, include_name)) = decode_include_request(name) else {
+        return Ok(None);
+    };
+    let local_root = parent_local_root(parent_name, entry_dir);
+    let path = resolve_include(include_name, &local_root, config_root)?;
+
+    fs::read_to_string(&path).map(Some).map_err(|source| {
+        minijinja::Error::new(
+            minijinja::ErrorKind::InvalidOperation,
+            format!("failed to read included template {}", path.display()),
+        )
+        .with_source(source)
+    })
+}
+
+fn resolve_include(
+    include_name: &str,
+    local_root: &Path,
+    config_root: &Path,
+) -> Result<PathBuf, Error> {
+    let local_candidate = safe_template_join(local_root, include_name).ok_or_else(|| {
+        Error::new(
+            ErrorKind::InvalidOperation,
+            format!("invalid include path `{include_name}`"),
+        )
+    })?;
+    let shared_candidate = safe_template_join(config_root, include_name).ok_or_else(|| {
+        Error::new(
+            ErrorKind::InvalidOperation,
+            format!("invalid include path `{include_name}`"),
+        )
+    })?;
+
+    let local_exists = local_candidate.exists();
+    let shared_exists = shared_candidate.exists();
+
+    match (local_exists, shared_exists) {
+        (true, false) => Ok(local_candidate),
+        (false, true) => Ok(shared_candidate),
+        (false, false) => Err(Error::new(
+            ErrorKind::InvalidOperation,
+            format!(
+                "missing included template `{include_name}`; searched local root {} and shared root {}",
+                local_root.display(),
+                config_root.display()
+            ),
+        )),
+        (true, true) if local_candidate == shared_candidate => Ok(local_candidate),
+        (true, true) => Err(Error::new(
+            ErrorKind::InvalidOperation,
+            format!(
+                "ambiguous included template `{include_name}`; matched {} and {}",
+                local_candidate.display(),
+                shared_candidate.display()
+            ),
+        )),
+    }
+}
+
+fn parent_local_root(parent_name: &str, entry_dir: &Path) -> PathBuf {
+    if parent_name == ENTRY_TEMPLATE_NAME {
+        return entry_dir.to_path_buf();
+    }
+
+    decode_loaded_template_path(parent_name)
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+        .unwrap_or_else(|| entry_dir.to_path_buf())
+}
+
+fn encode_loaded_template_path(path: &Path) -> String {
+    format!("{FILE_TEMPLATE_PREFIX}{}", path.display())
+}
+
+fn encode_include_request(parent_name: &str, include_name: &str) -> String {
+    format!("{INCLUDE_REQUEST_PREFIX}{parent_name}|{include_name}")
+}
+
+fn decode_include_request(name: &str) -> Option<(&str, &str)> {
+    let payload = name.strip_prefix(INCLUDE_REQUEST_PREFIX)?;
+    payload.split_once('|')
+}
+
+fn decode_loaded_template_path(name: &str) -> Option<PathBuf> {
+    name.strip_prefix(FILE_TEMPLATE_PREFIX).map(PathBuf::from)
+}
+
+fn safe_template_join(base: &Path, include_name: &str) -> Option<PathBuf> {
+    let mut path = base.to_path_buf();
+    for segment in include_name.split('/') {
+        if segment.starts_with('.') || segment.contains('\\') {
+            return None;
+        }
+        path.push(segment);
+    }
+    Some(path)
 }
 
 fn lower_first(value: String) -> String {
@@ -202,10 +376,182 @@ private func tr(_ table: String, _ key: String) -> String {
         )
         .expect("template should be written");
 
-        let rendered =
-            render_path(&template_path, &l10n_context()).expect("template should render");
+        let rendered = render_path(&template_path, &temp_dir, &l10n_context())
+            .expect("template should render");
 
         assert_eq!(rendered, "L10n|Localizable|Profile\n");
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn renders_local_include_from_template_directory() {
+        let temp_dir = make_temp_dir("render-local-include");
+        let config_root = temp_dir.join("Config");
+        let templates_dir = config_root.join("Templates");
+        fs::create_dir_all(templates_dir.join("partials")).expect("templates dir should exist");
+        fs::write(
+            templates_dir.join("main.jinja"),
+            "{% include \"partials/header.jinja\" %}|{{ job.swiftIdentifier }}\n",
+        )
+        .expect("main template should be written");
+        fs::write(templates_dir.join("partials/header.jinja"), "LOCAL")
+            .expect("local partial should be written");
+
+        let rendered = render_path(
+            &templates_dir.join("main.jinja"),
+            &config_root,
+            &l10n_context(),
+        )
+        .expect("template should render");
+
+        assert_eq!(rendered, "LOCAL|L10n\n");
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn renders_include_from_shared_config_root() {
+        let temp_dir = make_temp_dir("render-shared-include");
+        let config_root = temp_dir.join("Config");
+        let templates_dir = config_root.join("Templates");
+        fs::create_dir_all(&templates_dir).expect("templates dir should exist");
+        fs::create_dir_all(config_root.join("partials")).expect("shared partial dir should exist");
+        fs::write(
+            templates_dir.join("main.jinja"),
+            "{% include \"partials/header.jinja\" %}|{{ modules[0].name }}\n",
+        )
+        .expect("main template should be written");
+        fs::write(config_root.join("partials/header.jinja"), "SHARED")
+            .expect("shared partial should be written");
+
+        let rendered = render_path(
+            &templates_dir.join("main.jinja"),
+            &config_root,
+            &l10n_context(),
+        )
+        .expect("template should render");
+
+        assert_eq!(rendered, "SHARED|Localizable\n");
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn renders_nested_includes_from_mixed_roots() {
+        let temp_dir = make_temp_dir("render-nested-includes");
+        let config_root = temp_dir.join("Config");
+        let templates_dir = config_root.join("Templates");
+        fs::create_dir_all(templates_dir.join("partials")).expect("templates dir should exist");
+        fs::create_dir_all(config_root.join("shared")).expect("shared include dir should exist");
+        fs::write(
+            templates_dir.join("main.jinja"),
+            "{% include \"partials/outer.jinja\" %}\n",
+        )
+        .expect("main template should be written");
+        fs::write(
+            templates_dir.join("partials/outer.jinja"),
+            "OUTER[{% include \"shared/inner.jinja\" %}]",
+        )
+        .expect("outer partial should be written");
+        fs::write(
+            config_root.join("shared/inner.jinja"),
+            "{{ job.swiftIdentifier }}",
+        )
+        .expect("shared nested partial should be written");
+
+        let rendered = render_path(
+            &templates_dir.join("main.jinja"),
+            &config_root,
+            &l10n_context(),
+        )
+        .expect("template should render");
+
+        assert_eq!(rendered, "OUTER[L10n]\n");
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn missing_include_reports_local_and_shared_roots() {
+        let temp_dir = make_temp_dir("render-missing-include");
+        let config_root = temp_dir.join("Config");
+        let templates_dir = config_root.join("Templates");
+        fs::create_dir_all(&templates_dir).expect("templates dir should exist");
+        fs::write(
+            templates_dir.join("main.jinja"),
+            "{% include \"partials/missing.jinja\" %}\n",
+        )
+        .expect("main template should be written");
+
+        let error = render_path(
+            &templates_dir.join("main.jinja"),
+            &config_root,
+            &l10n_context(),
+        )
+        .expect_err("missing include should fail");
+
+        let message = error.to_string();
+        assert!(message.contains("missing included template `partials/missing.jinja`"));
+        assert!(message.contains("Templates"));
+        assert!(message.contains("Config"));
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn ambiguous_include_reports_both_candidate_paths() {
+        let temp_dir = make_temp_dir("render-ambiguous-include");
+        let config_root = temp_dir.join("Config");
+        let templates_dir = config_root.join("Templates");
+        fs::create_dir_all(templates_dir.join("partials")).expect("local partial dir should exist");
+        fs::create_dir_all(config_root.join("partials")).expect("shared partial dir should exist");
+        fs::write(
+            templates_dir.join("main.jinja"),
+            "{% include \"partials/header.jinja\" %}\n",
+        )
+        .expect("main template should be written");
+        fs::write(templates_dir.join("partials/header.jinja"), "LOCAL")
+            .expect("local partial should exist");
+        fs::write(config_root.join("partials/header.jinja"), "SHARED")
+            .expect("shared partial should exist");
+
+        let error = render_path(
+            &templates_dir.join("main.jinja"),
+            &config_root,
+            &l10n_context(),
+        )
+        .expect_err("ambiguous include should fail");
+
+        let message = error.to_string();
+        assert!(message.contains("ambiguous included template `partials/header.jinja`"));
+        assert!(message.contains("Templates/partials/header.jinja"));
+        assert!(message.contains("Config/partials/header.jinja"));
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn renders_include_from_same_config_root_without_false_ambiguity() {
+        let temp_dir = make_temp_dir("render-same-config-root-include");
+        let config_root = temp_dir.join("Config");
+        fs::create_dir_all(config_root.join("partials")).expect("partials dir should exist");
+        fs::write(
+            config_root.join("main.jinja"),
+            "{% include \"partials/header.jinja\" %}|{{ job.swiftIdentifier }}\n",
+        )
+        .expect("main template should be written");
+        fs::write(config_root.join("partials/header.jinja"), "ROOT")
+            .expect("root partial should be written");
+
+        let rendered = render_path(
+            &config_root.join("main.jinja"),
+            &config_root,
+            &l10n_context(),
+        )
+        .expect("template should render");
+
+        assert_eq!(rendered, "ROOT|L10n\n");
 
         fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
     }

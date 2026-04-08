@@ -387,9 +387,11 @@ fn render_job(
 
     if let Some(template_path) = job.template.path.as_deref() {
         let resolved_path = config_dir.join(template_path);
-        return render_path(&resolved_path, context).map_err(|source| GenerateError::Render {
-            job: job.name.clone(),
-            source,
+        return render_path(&resolved_path, config_dir, context).map_err(|source| {
+            GenerateError::Render {
+                job: job.name.clone(),
+                source,
+            }
         });
     }
 
@@ -514,6 +516,60 @@ builtin = "l10n"
         assert!(message.contains("duplicate localization table `Localizable`"));
         assert!(message.contains("en.lproj/Localizable.strings"));
         assert!(message.contains("fr.lproj/Localizable.strings"));
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn generate_renders_custom_template_includes_from_config_root() {
+        let temp_dir = make_temp_dir("custom-template-shared-include");
+        let config_path = temp_dir.join("swiftgen.toml");
+        let localization_root = temp_dir.join("Resources/Localization");
+        let templates_dir = temp_dir.join("Templates");
+        let generated_path = temp_dir.join("Generated/L10n.swift");
+
+        fs::create_dir_all(localization_root.join("en.lproj"))
+            .expect("localization dir should exist");
+        fs::create_dir_all(&templates_dir).expect("templates dir should exist");
+        fs::create_dir_all(temp_dir.join("partials")).expect("shared partial dir should exist");
+
+        fs::write(
+            localization_root.join("en.lproj/Localizable.strings"),
+            "\"profile.title\" = \"Profile\";\n",
+        )
+        .expect("strings file should be written");
+        fs::write(
+            templates_dir.join("main.jinja"),
+            "{% include \"partials/header.jinja\" %}|{{ job.swiftIdentifier }}|{{ modules[0].name }}\n",
+        )
+        .expect("template should be written");
+        fs::write(temp_dir.join("partials/header.jinja"), "SHARED")
+            .expect("shared include should be written");
+        fs::write(
+            &config_path,
+            r#"
+version = 1
+
+[[jobs]]
+name = "l10n"
+output = "Generated/L10n.swift"
+
+[[jobs.inputs]]
+type = "strings"
+path = "Resources/Localization"
+
+[jobs.template]
+path = "Templates/main.jinja"
+"#,
+        )
+        .expect("config should be written");
+
+        let report = generate(&config_path, None).expect("generation should succeed");
+        let rendered = fs::read_to_string(&generated_path).expect("output should be written");
+
+        assert_eq!(report.jobs.len(), 1);
+        assert_eq!(report.jobs[0].outcome, WriteOutcome::Created);
+        assert_eq!(rendered, "SHARED|L10n|Localizable\n");
 
         fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
     }

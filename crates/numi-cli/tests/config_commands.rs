@@ -42,8 +42,8 @@ fn copy_dir_all(source: &Path, destination: &Path) {
     }
 }
 
-fn write_workspace_manifest(root: &Path, contents: &str) {
-    fs::write(root.join("numi-workspace.toml"), contents).expect("workspace manifest should exist");
+fn write_manifest(root: &Path, contents: &str) {
+    fs::write(root.join("numi.toml"), contents).expect("manifest should exist");
 }
 
 #[test]
@@ -88,34 +88,6 @@ swift = "swiftui-assets"
         .canonicalize()
         .expect("config path should canonicalize");
     assert_eq!(stdout.trim(), expected_path.to_string_lossy());
-
-    fs::remove_dir_all(root).expect("temp dir should be removed");
-}
-
-#[test]
-fn config_locate_reports_ambiguous_descendant_configs() {
-    let root = make_temp_dir("ambiguous-descendants");
-    let app_ui = root.join("AppUI");
-    let core = root.join("Core");
-    fs::create_dir_all(&app_ui).expect("AppUI dir should exist");
-    fs::create_dir_all(&core).expect("Core dir should exist");
-    fs::write(app_ui.join("numi.toml"), "version = 1\njobs = []\n")
-        .expect("AppUI config should be written");
-    fs::write(core.join("numi.toml"), "version = 1\njobs = []\n")
-        .expect("Core config should be written");
-
-    let output = Command::new(env!("CARGO_BIN_EXE_numi"))
-        .args(["config", "locate"])
-        .current_dir(&root)
-        .output()
-        .expect("numi config locate should run");
-
-    assert!(!output.status.success(), "command unexpectedly succeeded");
-
-    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
-    assert!(stderr.contains("Multiple configuration files found"));
-    assert!(stderr.contains("AppUI/numi.toml"));
-    assert!(stderr.contains("Core/numi.toml"));
 
     fs::remove_dir_all(root).expect("temp dir should be removed");
 }
@@ -198,30 +170,13 @@ swift = "l10n"
 }
 
 #[test]
-fn config_locate_finds_single_descendant_when_no_ancestor_exists() {
-    let root = make_temp_dir("single-descendant");
+fn config_locate_does_not_scan_descendants() {
+    let root = make_temp_dir("descendants-not-searched");
     let search_dir = root.join("Repo");
     let config_dir = search_dir.join("AppUI");
     fs::create_dir_all(&config_dir).expect("config dir should exist");
-
-    let config_path = config_dir.join("numi.toml");
-    fs::write(
-        &config_path,
-        r#"
-version = 1
-
-[jobs.assets]
-output = "Generated/Assets.swift"
-
-[[jobs.assets.inputs]]
-type = "xcassets"
-path = "Resources/Assets.xcassets"
-
-[jobs.assets.template.builtin]
-swift = "swiftui-assets"
-"#,
-    )
-    .expect("descendant config should be written");
+    fs::write(config_dir.join("numi.toml"), "version = 1\njobs = []\n")
+        .expect("descendant config should be written");
 
     let output = Command::new(env!("CARGO_BIN_EXE_numi"))
         .args(["config", "locate"])
@@ -229,18 +184,10 @@ swift = "swiftui-assets"
         .output()
         .expect("numi config locate should run");
 
-    assert!(
-        output.status.success(),
-        "command failed:\nstdout={}\nstderr={}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assert!(!output.status.success(), "command unexpectedly succeeded");
 
-    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
-    let expected_path = config_path
-        .canonicalize()
-        .expect("descendant config should canonicalize");
-    assert_eq!(stdout.trim(), expected_path.to_string_lossy());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
+    assert!(stderr.contains("No configuration file found from"));
 
     fs::remove_dir_all(root).expect("temp dir should be removed");
 }
@@ -635,37 +582,29 @@ fn config_print_emits_files_builtin_and_input_kind() {
 }
 
 #[test]
-fn workspace_generate_runs_multiple_member_configs() {
-    let temp_root = make_temp_dir("workspace-generate-multiple");
+fn generate_from_member_directory_uses_nearest_member_manifest() {
+    let temp_root = make_temp_dir("generate-member-manifest");
     let workspace_root = temp_root.join("workspace");
     let assets_root = workspace_root.join("apps/assets");
     let files_root = workspace_root.join("packages/files");
 
     copy_dir_all(&repo_root().join("fixtures/xcassets-basic"), &assets_root);
     copy_dir_all(&repo_root().join("fixtures/files-basic"), &files_root);
-    write_workspace_manifest(
+    write_manifest(
         &workspace_root,
         r#"
 version = 1
 
-[[members]]
-config = "apps/assets/numi.toml"
-
-[[members]]
-config = "packages/files/numi.toml"
+[workspace]
+members = ["apps/assets", "packages/files"]
 "#,
     );
 
     let output = Command::new(env!("CARGO_BIN_EXE_numi"))
-        .args([
-            "workspace",
-            "generate",
-            "--workspace",
-            "numi-workspace.toml",
-        ])
-        .current_dir(&workspace_root)
+        .arg("generate")
+        .current_dir(&assets_root)
         .output()
-        .expect("numi workspace generate should run");
+        .expect("numi generate should run");
 
     assert!(
         output.status.success(),
@@ -675,129 +614,39 @@ config = "packages/files/numi.toml"
     );
     assert!(
         assets_root.join("Generated/Assets.swift").exists(),
-        "assets output was not generated"
+        "member output was not generated"
     );
     assert!(
-        files_root.join("Generated/Files.swift").exists(),
-        "files output was not generated"
+        !files_root.join("Generated/Files.swift").exists(),
+        "workspace output should not be generated without --workspace"
     );
 
     fs::remove_dir_all(temp_root).expect("temp dir should be removed");
 }
 
 #[test]
-fn workspace_generate_reports_missing_manifest_with_real_guidance() {
-    let root = make_temp_dir("workspace-generate-missing-manifest");
-
-    let output = Command::new(env!("CARGO_BIN_EXE_numi"))
-        .args(["workspace", "generate"])
-        .current_dir(&root)
-        .output()
-        .expect("numi workspace generate should run");
-
-    assert!(!output.status.success(), "command unexpectedly succeeded");
-
-    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
-    assert!(
-        stderr.contains("No workspace manifest found"),
-        "stderr was: {stderr}"
-    );
-    assert!(
-        stderr.contains("numi workspace generate --workspace <path>"),
-        "stderr was: {stderr}"
-    );
-    assert!(
-        !stderr.contains("numi workspace locate"),
-        "stderr was: {stderr}"
-    );
-
-    fs::remove_dir_all(root).expect("temp dir should be removed");
-}
-
-#[test]
-fn workspace_check_reports_ambiguous_manifests_with_real_guidance() {
-    let root = make_temp_dir("workspace-check-ambiguous-manifests");
-    let app_dir = root.join("apps/App");
-    let core_dir = root.join("packages/Core");
-    fs::create_dir_all(&app_dir).expect("app dir should exist");
-    fs::create_dir_all(&core_dir).expect("core dir should exist");
-    write_workspace_manifest(
-        &app_dir,
-        "version = 1\n[[members]]\nconfig = \"apps/App/numi.toml\"\n",
-    );
-    write_workspace_manifest(
-        &core_dir,
-        "version = 1\n[[members]]\nconfig = \"packages/Core/numi.toml\"\n",
-    );
-
-    let output = Command::new(env!("CARGO_BIN_EXE_numi"))
-        .args(["workspace", "check"])
-        .current_dir(&root)
-        .output()
-        .expect("numi workspace check should run");
-
-    assert!(!output.status.success(), "command unexpectedly succeeded");
-
-    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
-    assert!(
-        stderr.contains("Multiple workspace manifests found"),
-        "stderr was: {stderr}"
-    );
-    assert!(
-        stderr.contains("apps/App/numi-workspace.toml"),
-        "stderr was: {stderr}"
-    );
-    assert!(
-        stderr.contains("packages/Core/numi-workspace.toml"),
-        "stderr was: {stderr}"
-    );
-    assert!(
-        stderr.contains("numi workspace check --workspace <path>"),
-        "stderr was: {stderr}"
-    );
-    assert!(
-        !stderr.contains("numi workspace locate"),
-        "stderr was: {stderr}"
-    );
-
-    fs::remove_dir_all(root).expect("temp dir should be removed");
-}
-
-#[test]
-fn workspace_generate_can_select_one_member() {
-    let temp_root = make_temp_dir("workspace-generate-select-one");
+fn generate_workspace_from_member_directory_uses_ancestor_workspace_manifest() {
+    let temp_root = make_temp_dir("generate-workspace-ancestor");
     let workspace_root = temp_root.join("workspace");
     let assets_root = workspace_root.join("apps/assets");
     let files_root = workspace_root.join("packages/files");
 
     copy_dir_all(&repo_root().join("fixtures/xcassets-basic"), &assets_root);
     copy_dir_all(&repo_root().join("fixtures/files-basic"), &files_root);
-    write_workspace_manifest(
+    write_manifest(
         &workspace_root,
         r#"
 version = 1
 
-[[members]]
-config = "apps/assets/numi.toml"
-
-[[members]]
-config = "packages/files/numi.toml"
+[workspace]
+members = ["apps/assets", "packages/files"]
 "#,
     );
-
     let output = Command::new(env!("CARGO_BIN_EXE_numi"))
-        .args([
-            "workspace",
-            "generate",
-            "--workspace",
-            "numi-workspace.toml",
-            "--member",
-            "packages/files/numi.toml",
-        ])
-        .current_dir(&workspace_root)
+        .args(["generate", "--workspace"])
+        .current_dir(&assets_root)
         .output()
-        .expect("numi workspace generate should run");
-
+        .expect("numi generate --workspace should run");
     assert!(
         output.status.success(),
         "command failed:\nstdout={}\nstderr={}",
@@ -805,142 +654,41 @@ config = "packages/files/numi.toml"
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        !assets_root.join("Generated/Assets.swift").exists(),
-        "unselected member should not have generated output"
+        assets_root.join("Generated/Assets.swift").exists(),
+        "workspace assets output was not generated"
     );
     assert!(
         files_root.join("Generated/Files.swift").exists(),
-        "selected member output was not generated"
+        "workspace files output was not generated"
     );
 
     fs::remove_dir_all(temp_root).expect("temp dir should be removed");
 }
 
 #[test]
-fn workspace_generate_honors_member_jobs_selection() {
-    let temp_root = make_temp_dir("workspace-generate-member-jobs");
-    let workspace_root = temp_root.join("workspace");
-    let member_root = workspace_root.join("apps/mixed");
-    fs::create_dir_all(member_root.join("Resources")).expect("resources dir should exist");
-
-    copy_dir_all(
-        &repo_root().join("fixtures/xcassets-basic/Resources/Assets.xcassets"),
-        &member_root.join("Resources/Assets.xcassets"),
-    );
-    copy_dir_all(
-        &repo_root().join("fixtures/files-basic/Resources/Fixtures"),
-        &member_root.join("Resources/Fixtures"),
-    );
-    fs::write(
-        member_root.join("numi.toml"),
-        r#"
-version = 1
-
-[jobs.assets]
-output = "Generated/Assets.swift"
-
-[[jobs.assets.inputs]]
-type = "xcassets"
-path = "Resources/Assets.xcassets"
-
-[jobs.assets.template.builtin]
-swift = "swiftui-assets"
-
-[jobs.files]
-output = "Generated/Files.swift"
-
-[[jobs.files.inputs]]
-type = "files"
-path = "Resources/Fixtures"
-
-[jobs.files.template.builtin]
-swift = "files"
-"#,
-    )
-    .expect("member config should be written");
-    write_workspace_manifest(
-        &workspace_root,
-        r#"
-version = 1
-
-[[members]]
-config = "apps/mixed/numi.toml"
-jobs = ["assets"]
-"#,
-    );
-
-    let output = Command::new(env!("CARGO_BIN_EXE_numi"))
-        .args([
-            "workspace",
-            "generate",
-            "--workspace",
-            "numi-workspace.toml",
-        ])
-        .current_dir(&workspace_root)
-        .output()
-        .expect("numi workspace generate should run");
-
-    assert!(
-        output.status.success(),
-        "command failed:\nstdout={}\nstderr={}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(
-        member_root.join("Generated/Assets.swift").exists(),
-        "selected assets output was not generated"
-    );
-    assert!(
-        !member_root.join("Generated/Files.swift").exists(),
-        "unselected files output should not be generated"
-    );
-
-    fs::remove_dir_all(temp_root).expect("temp dir should be removed");
-}
-
-#[test]
-fn workspace_check_returns_exit_code_2_when_any_member_is_stale() {
-    let temp_root = make_temp_dir("workspace-check-stale");
+fn check_workspace_aggregates_stale_paths_across_members() {
+    let temp_root = make_temp_dir("check-workspace-stale");
     let workspace_root = temp_root.join("workspace");
     let assets_root = workspace_root.join("apps/assets");
     let files_root = workspace_root.join("packages/files");
 
     copy_dir_all(&repo_root().join("fixtures/xcassets-basic"), &assets_root);
     copy_dir_all(&repo_root().join("fixtures/files-basic"), &files_root);
-    write_workspace_manifest(
+    write_manifest(
         &workspace_root,
         r#"
 version = 1
 
-[[members]]
-config = "apps/assets/numi.toml"
-
-[[members]]
-config = "packages/files/numi.toml"
+[workspace]
+members = ["apps/assets", "packages/files"]
 "#,
     );
-
-    let stale_assets_output = assets_root.join("Generated/Assets.swift");
-    fs::create_dir_all(
-        stale_assets_output
-            .parent()
-            .expect("generated file should have parent"),
-    )
-    .expect("generated directory should exist");
-    fs::write(&stale_assets_output, "// stale output\n").expect("stale output should be written");
 
     let generate_output = Command::new(env!("CARGO_BIN_EXE_numi"))
-        .args([
-            "workspace",
-            "generate",
-            "--workspace",
-            "numi-workspace.toml",
-            "--member",
-            "packages/files/numi.toml",
-        ])
-        .current_dir(&workspace_root)
+        .args(["generate", "--workspace"])
+        .current_dir(&assets_root)
         .output()
-        .expect("numi workspace generate should run");
+        .expect("numi generate --workspace should run");
     assert!(
         generate_output.status.success(),
         "setup generate failed:\nstdout={}\nstderr={}",
@@ -948,11 +696,22 @@ config = "packages/files/numi.toml"
         String::from_utf8_lossy(&generate_output.stderr)
     );
 
+    fs::write(
+        assets_root.join("Generated/Assets.swift"),
+        "// stale assets output\n",
+    )
+    .expect("stale assets output should be written");
+    fs::write(
+        files_root.join("Generated/Files.swift"),
+        "// stale files output\n",
+    )
+    .expect("stale files output should be written");
+
     let output = Command::new(env!("CARGO_BIN_EXE_numi"))
-        .args(["workspace", "check", "--workspace", "numi-workspace.toml"])
-        .current_dir(&workspace_root)
+        .args(["check", "--workspace"])
+        .current_dir(&assets_root)
         .output()
-        .expect("numi workspace check should run");
+        .expect("numi check --workspace should run");
 
     assert_eq!(
         output.status.code(),
@@ -966,8 +725,41 @@ config = "packages/files/numi.toml"
         "stderr was: {stderr}"
     );
     assert!(
-        !stderr.contains("packages/files/Generated/Files.swift"),
+        stderr.contains("packages/files/Generated/Files.swift"),
         "stderr was: {stderr}"
+    );
+
+    fs::remove_dir_all(temp_root).expect("temp dir should be removed");
+}
+
+#[test]
+fn dump_context_rejects_workspace_manifests() {
+    let temp_root = make_temp_dir("dump-context-workspace-manifest");
+    let workspace_root = temp_root.join("workspace");
+    fs::create_dir_all(workspace_root.join("apps/assets"))
+        .expect("workspace member dir should exist");
+    write_manifest(
+        &workspace_root,
+        r#"
+version = 1
+
+[workspace]
+members = ["apps/assets"]
+"#,
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_numi"))
+        .args(["dump-context", "--job", "assets"])
+        .current_dir(&workspace_root)
+        .output()
+        .expect("numi dump-context should run");
+
+    assert!(!output.status.success(), "command unexpectedly succeeded");
+
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
+    assert_eq!(
+        stderr.trim(),
+        "`dump-context` only supports single-config manifests; run it from a member directory or pass `--config <member>/numi.toml`"
     );
 
     fs::remove_dir_all(temp_root).expect("temp dir should be removed");

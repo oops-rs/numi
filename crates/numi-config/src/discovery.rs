@@ -1,7 +1,4 @@
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 pub const CONFIG_FILE_NAME: &str = "numi.toml";
 
@@ -60,6 +57,20 @@ pub fn discover_config(
     start_dir: &Path,
     explicit_path: Option<&Path>,
 ) -> Result<PathBuf, DiscoveryError> {
+    if let Some(explicit_path) = explicit_path {
+        return resolve_explicit_path(start_dir, explicit_path);
+    }
+
+    let canonical_start = start_dir.canonicalize()?;
+    find_in_ancestors(&canonical_start, CONFIG_FILE_NAME).ok_or(DiscoveryError::NotFound {
+        start_dir: canonical_start,
+    })
+}
+
+pub fn discover_workspace_ancestor(
+    start_dir: &Path,
+    explicit_path: Option<&Path>,
+) -> Result<PathBuf, DiscoveryError> {
     discover_named_file(start_dir, explicit_path, CONFIG_FILE_NAME)
 }
 
@@ -69,35 +80,13 @@ pub(crate) fn discover_named_file(
     file_name: &str,
 ) -> Result<PathBuf, DiscoveryError> {
     if let Some(explicit_path) = explicit_path {
-        let resolved = resolve_explicit_path(start_dir, explicit_path)?;
-        if resolved.is_file() {
-            return Ok(resolved);
-        }
-        return Err(DiscoveryError::ExplicitPathNotFound(
-            explicit_path.to_path_buf(),
-        ));
+        return resolve_explicit_path(start_dir, explicit_path);
     }
 
     let canonical_start = start_dir.canonicalize()?;
-
-    if let Some(path) = find_in_ancestors(&canonical_start, file_name) {
-        return Ok(path);
-    }
-
-    let mut matches = Vec::new();
-    collect_descendants(&canonical_start, &canonical_start, file_name, &mut matches)?;
-    matches.sort();
-
-    match matches.len() {
-        0 => Err(DiscoveryError::NotFound {
-            start_dir: canonical_start,
-        }),
-        1 => Ok(canonical_start.join(&matches[0])),
-        _ => Err(DiscoveryError::Ambiguous {
-            root: canonical_start,
-            matches,
-        }),
-    }
+    find_in_ancestors(&canonical_start, file_name).ok_or(DiscoveryError::NotFound {
+        start_dir: canonical_start,
+    })
 }
 
 fn resolve_explicit_path(
@@ -125,31 +114,4 @@ fn find_in_ancestors(start_dir: &Path, file_name: &str) -> Option<PathBuf> {
         }
     }
     None
-}
-
-fn collect_descendants(
-    root: &Path,
-    current_dir: &Path,
-    file_name: &str,
-    matches: &mut Vec<PathBuf>,
-) -> Result<(), DiscoveryError> {
-    let mut entries: Vec<_> = fs::read_dir(current_dir)?.collect::<Result<_, _>>()?;
-    entries.sort_by_key(|entry| entry.path());
-
-    for entry in entries {
-        let path = entry.path();
-        let file_type = entry.file_type()?;
-
-        if file_type.is_dir() {
-            collect_descendants(root, &path, file_name, matches)?;
-        } else if file_type.is_file() && entry.file_name() == file_name {
-            let relative = path
-                .strip_prefix(root)
-                .expect("descendant path should stay under root")
-                .to_path_buf();
-            matches.push(relative);
-        }
-    }
-
-    Ok(())
 }

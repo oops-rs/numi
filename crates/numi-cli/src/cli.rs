@@ -21,7 +21,6 @@ pub enum Command {
     Check(CheckArgs),
     Init(InitArgs),
     Config(ConfigCommand),
-    Workspace(WorkspaceCommand),
     #[command(name = "dump-context")]
     DumpContext(DumpContextArgs),
 }
@@ -39,18 +38,6 @@ pub enum ConfigSubcommand {
 }
 
 #[derive(Debug, Args)]
-pub struct WorkspaceCommand {
-    #[command(subcommand)]
-    pub command: WorkspaceSubcommand,
-}
-
-#[derive(Debug, Subcommand)]
-pub enum WorkspaceSubcommand {
-    Generate(WorkspaceGenerateArgs),
-    Check(WorkspaceCheckArgs),
-}
-
-#[derive(Debug, Args)]
 pub struct LocateArgs {
     #[arg(long = "config")]
     pub config: Option<PathBuf>,
@@ -60,6 +47,8 @@ pub struct LocateArgs {
 pub struct GenerateArgs {
     #[arg(long = "config")]
     pub config: Option<PathBuf>,
+    #[arg(long = "workspace", action = ArgAction::SetTrue)]
+    pub workspace: bool,
     #[arg(long = "job")]
     pub jobs: Vec<String>,
     #[command(flatten)]
@@ -70,18 +59,30 @@ pub struct GenerateArgs {
 pub struct CheckArgs {
     #[arg(long = "config")]
     pub config: Option<PathBuf>,
+    #[arg(long = "workspace", action = ArgAction::SetTrue)]
+    pub workspace: bool,
     #[arg(long = "job")]
     pub jobs: Vec<String>,
 }
 
 #[derive(Debug, Args)]
-pub struct WorkspaceGenerateArgs {
-    #[arg(long = "workspace")]
-    pub workspace: Option<PathBuf>,
-    #[arg(long = "member")]
-    pub members: Vec<String>,
-    #[command(flatten)]
-    pub incremental_override: IncrementalOverrideArgs,
+pub struct InitArgs {
+    #[arg(long)]
+    pub force: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct PrintArgs {
+    #[arg(long = "config")]
+    pub config: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct DumpContextArgs {
+    #[arg(long = "config")]
+    pub config: Option<PathBuf>,
+    #[arg(long = "job")]
+    pub job: String,
 }
 
 #[derive(Debug, Args, Default, Clone, PartialEq, Eq)]
@@ -106,32 +107,4 @@ impl IncrementalOverrideArgs {
             None
         }
     }
-}
-
-#[derive(Debug, Args)]
-pub struct WorkspaceCheckArgs {
-    #[arg(long = "workspace")]
-    pub workspace: Option<PathBuf>,
-    #[arg(long = "member")]
-    pub members: Vec<String>,
-}
-
-#[derive(Debug, Args)]
-pub struct InitArgs {
-    #[arg(long)]
-    pub force: bool,
-}
-
-#[derive(Debug, Args)]
-pub struct PrintArgs {
-    #[arg(long = "config")]
-    pub config: Option<PathBuf>,
-}
-
-#[derive(Debug, Args)]
-pub struct DumpContextArgs {
-    #[arg(long = "config")]
-    pub config: Option<PathBuf>,
-    #[arg(long = "job")]
-    pub job: String,
 }

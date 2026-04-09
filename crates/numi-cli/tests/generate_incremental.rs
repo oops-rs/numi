@@ -1,5 +1,5 @@
 use clap::Parser;
-use numi_cli::cli::{Cli, Command, WorkspaceSubcommand};
+use numi_cli::cli::{Cli, Command};
 
 #[test]
 fn generate_accepts_incremental_override_flags() {
@@ -27,30 +27,22 @@ fn generate_accepts_incremental_override_flags() {
 }
 
 #[test]
-fn workspace_generate_accepts_incremental_override_flags() {
+fn generate_accepts_workspace_flag_with_incremental_override_flags() {
     let cli = Cli::try_parse_from([
         "numi",
-        "workspace",
         "generate",
         "--workspace",
-        "numi-workspace.toml",
         "--no-incremental",
-        "--member",
+        "--job",
         "ios",
     ])
-    .expect("workspace generate command should parse");
+    .expect("generate command should parse");
 
-    let Command::Workspace(workspace) = cli.command.expect("command should parse") else {
-        panic!("expected workspace command");
-    };
-    let WorkspaceSubcommand::Generate(args) = workspace.command else {
-        panic!("expected workspace generate command");
+    let Command::Generate(args) = cli.command.expect("command should parse") else {
+        panic!("expected generate command");
     };
 
-    assert_eq!(
-        args.workspace.as_deref(),
-        Some(std::path::Path::new("numi-workspace.toml"))
-    );
-    assert_eq!(args.members, vec!["ios"]);
+    assert!(args.workspace, "workspace flag should be enabled");
+    assert_eq!(args.jobs, vec!["ios"]);
     assert_eq!(args.incremental_override.resolve(), Some(false));
 }

@@ -57,15 +57,14 @@ fn config_locate_finds_nearest_ancestor() {
         r#"
 version = 1
 
-[[jobs]]
-name = "assets"
+[jobs.assets]
 output = "Generated/Assets.swift"
 
-[[jobs.inputs]]
+[[jobs.assets.inputs]]
 type = "xcassets"
 path = "Resources/Assets.xcassets"
 
-[jobs.template.builtin]
+[jobs.assets.template.builtin]
 swift = "swiftui-assets"
 "#,
     )
@@ -135,15 +134,14 @@ fn config_locate_prefers_explicit_path_over_ancestor() {
         r#"
 version = 1
 
-[[jobs]]
-name = "ancestor"
+[jobs.ancestor]
 output = "Generated/Ancestor.swift"
 
-[[jobs.inputs]]
+[[jobs.ancestor.inputs]]
 type = "xcassets"
 path = "Resources/Ancestor.xcassets"
 
-[jobs.template.builtin]
+[jobs.ancestor.template.builtin]
 swift = "swiftui-assets"
 "#,
     )
@@ -155,15 +153,14 @@ swift = "swiftui-assets"
         r#"
 version = 1
 
-[[jobs]]
-name = "explicit"
+[jobs.explicit]
 output = "Generated/Explicit.swift"
 
-[[jobs.inputs]]
+[[jobs.explicit.inputs]]
 type = "strings"
 path = "Resources/Localization"
 
-[jobs.template.builtin]
+[jobs.explicit.template.builtin]
 swift = "l10n"
 "#,
     )
@@ -213,15 +210,14 @@ fn config_locate_finds_single_descendant_when_no_ancestor_exists() {
         r#"
 version = 1
 
-[[jobs]]
-name = "assets"
+[jobs.assets]
 output = "Generated/Assets.swift"
 
-[[jobs.inputs]]
+[[jobs.assets.inputs]]
 type = "xcassets"
 path = "Resources/Assets.xcassets"
 
-[jobs.template.builtin]
+[jobs.assets.template.builtin]
 swift = "swiftui-assets"
 "#,
     )
@@ -300,15 +296,14 @@ fn check_warns_and_returns_exit_code_2_for_stale_xcstrings_output() {
         r#"
 version = 1
 
-[[jobs]]
-name = "l10n"
+[jobs.l10n]
 output = "Generated/L10n.swift"
 
-[[jobs.inputs]]
+[[jobs.l10n.inputs]]
 type = "xcstrings"
 path = "Resources/Localization"
 
-[jobs.template.builtin]
+[jobs.l10n.template.builtin]
 swift = "l10n"
 "#,
     )
@@ -473,7 +468,7 @@ fn init_creates_starter_numi_toml() {
         include_str!("../../../docs/examples/starter-numi.toml")
     );
     assert!(
-        created.contains("[jobs.template.builtin]"),
+        created.contains("[jobs.l10n.template.builtin]"),
         "starter config was: {created}"
     );
     assert!(
@@ -492,7 +487,7 @@ fn init_creates_starter_numi_toml() {
 fn config_print_validation_hints_reference_numi_toml() {
     let root = make_temp_dir("config-print-validation-hints");
     let config_path = root.join("numi.toml");
-    fs::write(&config_path, "version = 2\njobs = []\n").expect("config should be written");
+    fs::write(&config_path, "version = 2\n[jobs]\n").expect("config should be written");
 
     let output = Command::new(env!("CARGO_BIN_EXE_numi"))
         .args(["config", "print", "--config", "numi.toml"])
@@ -508,7 +503,7 @@ fn config_print_validation_hints_reference_numi_toml() {
         "stderr was: {stderr}"
     );
     assert!(
-        stderr.contains("add one `[[jobs]]` table to numi.toml"),
+        stderr.contains("add one `[jobs.<name>]` table to numi.toml"),
         "stderr was: {stderr}"
     );
 
@@ -524,15 +519,14 @@ fn generate_missing_job_hint_references_numi_toml() {
         r#"
 version = 1
 
-[[jobs]]
-name = "assets"
+[jobs.assets]
 output = "Generated/Assets.swift"
 
-[[jobs.inputs]]
+[[jobs.assets.inputs]]
 type = "xcassets"
 path = "Resources/Assets.xcassets"
 
-[jobs.template.builtin]
+[jobs.assets.template.builtin]
 swift = "swiftui-assets"
 "#,
     )
@@ -564,15 +558,14 @@ fn config_print_emits_the_resolved_config_with_effective_defaults() {
         r#"
 version = 1
 
-[[jobs]]
-name = "l10n"
+[jobs.l10n]
 output = "Generated/L10n.swift"
 
-[[jobs.inputs]]
+[[jobs.l10n.inputs]]
 type = "strings"
 path = "Resources/Localization"
 
-[jobs.template.builtin]
+[jobs.l10n.template.builtin]
 swift = "l10n"
 "#,
     )
@@ -598,9 +591,9 @@ swift = "l10n"
         "stdout was: {stdout}"
     );
     assert!(stdout.contains("mode = \"module\""), "stdout was: {stdout}");
-    assert!(stdout.contains("name = \"l10n\""), "stdout was: {stdout}");
+    assert!(stdout.contains("[jobs.l10n]"), "stdout was: {stdout}");
     assert!(
-        stdout.contains("[jobs.template.builtin]"),
+        stdout.contains("[jobs.l10n.template.builtin]"),
         "stdout was: {stdout}"
     );
     assert!(stdout.contains("swift = \"l10n\""), "stdout was: {stdout}");
@@ -629,10 +622,10 @@ fn config_print_emits_files_builtin_and_input_kind() {
     );
 
     let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
-    assert!(stdout.contains("name = \"files\""), "stdout was: {stdout}");
+    assert!(stdout.contains("[jobs.files]"), "stdout was: {stdout}");
     assert!(stdout.contains("type = \"files\""), "stdout was: {stdout}");
     assert!(
-        stdout.contains("[jobs.template.builtin]"),
+        stdout.contains("[jobs.files.template.builtin]"),
         "stdout was: {stdout}"
     );
     assert!(stdout.contains("swift = \"files\""), "stdout was: {stdout}");
@@ -843,26 +836,24 @@ fn workspace_generate_honors_member_jobs_selection() {
         r#"
 version = 1
 
-[[jobs]]
-name = "assets"
+[jobs.assets]
 output = "Generated/Assets.swift"
 
-[[jobs.inputs]]
+[[jobs.assets.inputs]]
 type = "xcassets"
 path = "Resources/Assets.xcassets"
 
-[jobs.template.builtin]
+[jobs.assets.template.builtin]
 swift = "swiftui-assets"
 
-[[jobs]]
-name = "files"
+[jobs.files]
 output = "Generated/Files.swift"
 
-[[jobs.inputs]]
+[[jobs.files.inputs]]
 type = "files"
 path = "Resources/Fixtures"
 
-[jobs.template.builtin]
+[jobs.files.template.builtin]
 swift = "files"
 "#,
     )

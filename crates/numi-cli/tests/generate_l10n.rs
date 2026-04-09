@@ -52,15 +52,14 @@ fn write_xcstrings_skip_warning_fixture(working_root: &Path) {
         r#"
 version = 1
 
-[[jobs]]
-name = "l10n"
+[jobs.l10n]
 output = "Generated/L10n.swift"
 
-[[jobs.inputs]]
+[[jobs.l10n.inputs]]
 type = "xcstrings"
 path = "Resources/Localization"
 
-[jobs.template.builtin]
+[jobs.l10n.template.builtin]
 swift = "l10n"
 "#,
     )
@@ -331,15 +330,14 @@ fn generate_warns_and_succeeds_for_langcodec_skipped_xcstrings_entries() {
         r#"
 version = 1
 
-[[jobs]]
-name = "l10n"
+[jobs.l10n]
 output = "Generated/L10n.swift"
 
-[[jobs.inputs]]
+[[jobs.l10n.inputs]]
 type = "xcstrings"
 path = "Resources/Localization"
 
-[jobs.template.builtin]
+[jobs.l10n.template.builtin]
 swift = "l10n"
 "#,
     )

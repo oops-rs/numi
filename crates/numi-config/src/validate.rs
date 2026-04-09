@@ -23,7 +23,7 @@ pub fn validate_config(config: &Config) -> Vec<Diagnostic> {
     if config.jobs.is_empty() {
         diagnostics.push(
             Diagnostic::error("config must define at least one job")
-                .with_hint("add one `[[jobs]]` table to numi.toml"),
+                .with_hint("add one `[jobs.<name>]` table to numi.toml"),
         );
     }
 
@@ -61,7 +61,7 @@ pub fn validate_config(config: &Config) -> Vec<Diagnostic> {
             diagnostics.push(
                 Diagnostic::error("job must define at least one input")
                     .with_job(job.name.clone())
-                    .with_hint("add one or more `[[jobs.inputs]]` tables"),
+                    .with_hint("add one or more `[[jobs.<name>.inputs]]` tables"),
             );
         }
 
@@ -105,7 +105,7 @@ pub fn validate_config(config: &Config) -> Vec<Diagnostic> {
             diagnostics.push(
                 Diagnostic::error("job template must set exactly one source")
                     .with_job(job.name.clone())
-                    .with_hint("set either `[jobs.template.builtin] swift = \"...\"` or `[jobs.template] path = \"...\"`"),
+                    .with_hint("set either `[jobs.<name>.template.builtin] swift = \"...\"` or `[jobs.<name>.template] path = \"...\"`"),
             );
         }
 
@@ -114,7 +114,7 @@ pub fn validate_config(config: &Config) -> Vec<Diagnostic> {
                 diagnostics.push(
                     Diagnostic::error("job template builtin must set exactly one namespace")
                         .with_job(job.name.clone())
-                        .with_hint("set `[jobs.template.builtin] swift = \"...\"`"),
+                        .with_hint("set `[jobs.<name>.template.builtin] swift = \"...\"`"),
                 );
             } else if let Some(swift_builtin) = builtin.swift.as_deref() {
                 validate_allowed_value(

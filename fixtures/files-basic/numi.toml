@@ -1,12 +1,11 @@
 version = 1
 
-[[jobs]]
-name = "files"
+[jobs.files]
 output = "Generated/Files.swift"
 
-[[jobs.inputs]]
+[[jobs.files.inputs]]
 type = "files"
 path = "Resources/Fixtures"
 
-[jobs.template.builtin]
+[jobs.files.template.builtin]
 swift = "files"

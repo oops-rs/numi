@@ -323,33 +323,31 @@ access_level = "internal"
 [defaults.bundle]
 mode = "module"
 
-[[jobs]]
-name = "assets"
+[jobs.assets]
 output = "Generated/Assets.swift"
 
-[[jobs.inputs]]
+[[jobs.assets.inputs]]
 type = "xcassets"
 path = "Resources/Assets.xcassets"
 
-[jobs.template.builtin]
+[jobs.assets.template.builtin]
 swift = "swiftui-assets"
 
-[[jobs]]
-name = "l10n"
+[jobs.l10n]
 output = "Generated/L10n.swift"
 
-[[jobs.inputs]]
+[[jobs.l10n.inputs]]
 type = "strings"
 path = "Resources/Localization"
 
-[jobs.template.builtin]
+[jobs.l10n.template.builtin]
 swift = "l10n"
 ```
 
 #### 7.3.2 Top-level Keys
 - `version`: schema version, required
 - `defaults`: optional defaults applied to jobs
-- `jobs`: required list of generation jobs
+- `jobs`: required table of named generation jobs
 
 #### 7.3.3 Defaults Block
 Possible v1 defaults:
@@ -360,8 +358,7 @@ Possible v1 defaults:
 - `format`: future placeholder
 
 #### 7.3.4 Job Schema
-Each job contains:
-- `name`: unique within config
+Each named job contains:
 - `inputs`: non-empty list
 - `template`: built-in or path-based template
 - `output`: destination file path
@@ -383,14 +380,14 @@ Supported v1 input types:
 Built-in template:
 
 ```toml
-[jobs.template.builtin]
+[jobs.assets.template.builtin]
 swift = "swiftui-assets"
 ```
 
 Custom template:
 
 ```toml
-[jobs.template]
+[jobs.assets.template]
 path = "Templates/assets.jinja"
 ```
 
@@ -993,26 +990,24 @@ access_level = "internal"
 [defaults.bundle]
 mode = "module"
 
-[[jobs]]
-name = "assets"
+[jobs.assets]
 output = "Generated/Assets.swift"
 
-[[jobs.inputs]]
+[[jobs.assets.inputs]]
 type = "xcassets"
 path = "Resources/Assets.xcassets"
 
-[jobs.template.builtin]
+[jobs.assets.template.builtin]
 swift = "swiftui-assets"
 
-[[jobs]]
-name = "l10n"
+[jobs.l10n]
 output = "Generated/L10n.swift"
 
-[[jobs.inputs]]
+[[jobs.l10n.inputs]]
 type = "strings"
 path = "Resources/Localization"
 
-[jobs.template.builtin]
+[jobs.l10n.template.builtin]
 swift = "l10n"
 ```
 

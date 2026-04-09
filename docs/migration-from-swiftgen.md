@@ -23,10 +23,10 @@ Numi is a general-purpose code generator that currently ships Swift templates fo
 
 The SwiftGen MVP concepts map directly onto Numi's current config surface:
 
-- `[[jobs]]` describes one generation unit
-- `[[jobs.inputs]]` declares each resource input
-- `[jobs.template]` contains either `[jobs.template.builtin]` for a shipped Swift template or a custom template path
-- `[jobs.template.builtin]` contains built-in template namespace keys; today `swift` is the supported namespace key, and its value selects the shipped template, for example `swift = "l10n"`
+- `[jobs.<name>]` describes one named generation unit
+- `[[jobs.<name>.inputs]]` declares each resource input for that named job
+- `[jobs.<name>.template]` contains either `[jobs.<name>.template.builtin]` for a shipped Swift template or a custom template path
+- `[jobs.<name>.template.builtin]` contains built-in template namespace keys; today `swift` is the supported namespace key, and its value selects the shipped template, for example `swift = "l10n"`
 - `[defaults]` and `[defaults.bundle]` provide shared defaults across jobs
 
 ## Built-In Templates
@@ -40,7 +40,7 @@ Current shipped Swift templates in `templates/swift` cover the MVP resource type
 Example:
 
 ```toml
-[jobs.template.builtin]
+[jobs.l10n.template.builtin]
 swift = "l10n"
 ```
 

@@ -1,12 +1,11 @@
 version = 1
 
-[[jobs]]
-name = "assets"
+[jobs.assets]
 output = "Generated/Assets.swift"
 
-[[jobs.inputs]]
+[[jobs.assets.inputs]]
 type = "xcassets"
 path = "Resources/Assets.xcassets"
 
-[jobs.template.builtin]
+[jobs.assets.template.builtin]
 swift = "swiftui-assets"

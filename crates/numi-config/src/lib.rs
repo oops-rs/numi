@@ -13,8 +13,8 @@ use numi_diagnostics::Diagnostic;
 pub use discovery::{CONFIG_FILE_NAME, DiscoveryError, discover_config};
 pub use model::{
     ACCESS_LEVEL_VALUES, BUNDLE_MODE_VALUES, BuiltinTemplateConfig, BundleConfig, Config,
-    DEFAULT_ACCESS_LEVEL, DEFAULT_BUNDLE_MODE, DefaultsConfig, INPUT_KIND_VALUES, InputConfig,
-    JobConfig, TemplateConfig,
+    DEFAULT_ACCESS_LEVEL, DEFAULT_BUNDLE_MODE, DEFAULT_INCREMENTAL, DefaultsConfig,
+    INPUT_KIND_VALUES, InputConfig, JobConfig, TemplateConfig,
 };
 pub use workspace::{
     LoadedWorkspace, WORKSPACE_FILE_NAME, WorkspaceConfig, WorkspaceDiscoveryError, WorkspaceError,
@@ -61,6 +61,10 @@ impl std::error::Error for ConfigError {}
 
 pub fn parse_str(input: &str) -> Result<Config, ConfigError> {
     let value: toml::Value = toml::from_str(input).map_err(ConfigError::ParseToml)?;
+    let legacy_job_diagnostics = detect_legacy_jobs_array_syntax(&value);
+    if !legacy_job_diagnostics.is_empty() {
+        return Err(ConfigError::Invalid(legacy_job_diagnostics));
+    }
     let legacy_diagnostics = detect_legacy_flat_builtin_template_syntax(&value);
     if !legacy_diagnostics.is_empty() {
         return Err(ConfigError::Invalid(legacy_diagnostics));
@@ -76,13 +80,27 @@ pub fn parse_str(input: &str) -> Result<Config, ConfigError> {
     }
 }
 
-fn detect_legacy_flat_builtin_template_syntax(value: &toml::Value) -> Vec<Diagnostic> {
+fn detect_legacy_jobs_array_syntax(value: &toml::Value) -> Vec<Diagnostic> {
     value
         .get("jobs")
         .and_then(toml::Value::as_array)
+        .map(|_| {
+            vec![
+                Diagnostic::error("legacy `[[jobs]]` syntax is no longer supported").with_hint(
+                    "use named job tables such as `[jobs.assets]`, `[[jobs.assets.inputs]]`, and `[jobs.assets.template]`",
+                ),
+            ]
+        })
+        .unwrap_or_default()
+}
+
+fn detect_legacy_flat_builtin_template_syntax(value: &toml::Value) -> Vec<Diagnostic> {
+    value
+        .get("jobs")
+        .and_then(toml::Value::as_table)
         .into_iter()
         .flatten()
-        .filter_map(|job| {
+        .filter_map(|(job_name, job)| {
             let template = job.get("template")?.as_table()?;
             let builtin = template.get("builtin")?;
             let builtin_name = builtin.as_str()?;
@@ -90,12 +108,10 @@ fn detect_legacy_flat_builtin_template_syntax(value: &toml::Value) -> Vec<Diagno
             let mut diagnostic =
                 Diagnostic::error("legacy flat built-in template syntax is no longer supported")
                     .with_hint(format!(
-                        "use `[jobs.template.builtin] swift = \"...\"` instead; for example, replace `[jobs.template] builtin = \"{builtin_name}\"` with `[jobs.template.builtin] swift = \"{builtin_name}\"`"
+                        "use `[jobs.{job_name}.template.builtin] swift = \"...\"` instead; for example, replace `[jobs.{job_name}.template] builtin = \"{builtin_name}\"` with `[jobs.{job_name}.template.builtin] swift = \"{builtin_name}\"`"
                     ));
 
-            if let Some(job_name) = job.get("name").and_then(toml::Value::as_str) {
-                diagnostic = diagnostic.with_job(job_name);
-            }
+            diagnostic = diagnostic.with_job(job_name.to_owned());
 
             Some(diagnostic)
         })
@@ -156,6 +172,10 @@ pub fn resolve_config(config: &Config) -> Config {
         resolved.defaults.bundle.mode = Some(DEFAULT_BUNDLE_MODE.to_string());
     }
 
+    if resolved.defaults.incremental.is_none() {
+        resolved.defaults.incremental = Some(DEFAULT_INCREMENTAL);
+    }
+
     resolved
 }
 
@@ -202,27 +222,25 @@ access_level = "internal"
 [defaults.bundle]
 mode = "module"
 
-[[jobs]]
-name = "assets"
+[jobs.assets]
 output = "Generated/Assets.swift"
 
-[[jobs.inputs]]
+[[jobs.assets.inputs]]
 type = "xcassets"
 path = "Resources/Assets.xcassets"
 
-[jobs.template]
-[jobs.template.builtin]
+[jobs.assets.template]
+[jobs.assets.template.builtin]
 swift = "swiftui-assets"
 
-[[jobs]]
-name = "l10n"
+[jobs.l10n]
 output = "Generated/L10n.swift"
 
-[[jobs.inputs]]
+[[jobs.l10n.inputs]]
 type = "strings"
 path = "Resources/Localization"
 
-[jobs.template]
+[jobs.l10n.template]
 path = "Templates/l10n.stencil"
 "#,
         )
@@ -254,15 +272,14 @@ path = "Templates/l10n.stencil"
             r#"
 version = 1
 
-[[jobs]]
-name = "assets"
+[jobs.assets]
 output = "Generated/Assets.swift"
 
-[[jobs.inputs]]
+[[jobs.assets.inputs]]
 type = "xcassets"
 path = "Resources/Assets.xcassets"
 
-[jobs.template.builtin]
+[jobs.assets.template.builtin]
 swift = "swiftui-assets"
 "#,
         )
@@ -279,23 +296,49 @@ swift = "swiftui-assets"
     }
 
     #[test]
+    fn parses_incremental_generation_settings_from_defaults_and_job() {
+        let config = parse_str(
+            r#"
+version = 1
+
+[defaults]
+incremental = false
+
+[jobs.assets]
+output = "Generated/Assets.swift"
+incremental = true
+
+[[jobs.assets.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.assets.template.builtin]
+swift = "swiftui-assets"
+"#,
+        )
+        .expect("config should parse");
+
+        assert_eq!(config.defaults.incremental, Some(false));
+        assert_eq!(config.jobs[0].incremental, Some(true));
+    }
+
+    #[test]
     fn rejects_template_configs_that_set_both_builtin_and_path() {
         let error = parse_str(
             r#"
 version = 1
 
-[[jobs]]
-name = "assets"
+[jobs.assets]
 output = "Generated/Assets.swift"
 
-[[jobs.inputs]]
+[[jobs.assets.inputs]]
 type = "xcassets"
 path = "Resources/Assets.xcassets"
 
-[jobs.template]
+[jobs.assets.template]
 path = "Templates/assets.stencil"
 
-[jobs.template.builtin]
+[jobs.assets.template.builtin]
 swift = "swiftui-assets"
 "#,
         )
@@ -303,7 +346,7 @@ swift = "swiftui-assets"
 
         let message = error.to_string();
         assert!(message.contains("job template must set exactly one source"));
-        assert!(message.contains("set either `[jobs.template.builtin] swift = \"...\"` or `[jobs.template] path = \"...\"`"));
+        assert!(message.contains("set either `[jobs.<name>.template.builtin] swift = \"...\"` or `[jobs.<name>.template] path = \"...\"`"));
     }
 
     #[test]
@@ -312,26 +355,25 @@ swift = "swiftui-assets"
             r#"
 version = 1
 
-[[jobs]]
-name = "assets"
+[jobs.assets]
 output = "Generated/Assets.swift"
 
-[[jobs.inputs]]
+[[jobs.assets.inputs]]
 type = "xcassets"
 path = "Resources/Assets.xcassets"
 
-[jobs.template.builtin]
+[jobs.assets.template.builtin]
 "#,
         )
         .expect_err("empty built-in namespace should fail validation");
 
         let message = error.to_string();
         assert!(message.contains("job template builtin must set exactly one namespace"));
-        assert!(message.contains("set `[jobs.template.builtin] swift = \"...\"`"));
+        assert!(message.contains("set `[jobs.<name>.template.builtin] swift = \"...\"`"));
     }
 
     #[test]
-    fn rejects_legacy_flat_builtin_template_shape_with_migration_hint() {
+    fn rejects_legacy_jobs_array_syntax_with_migration_hint() {
         let error = parse_str(
             r#"
 version = 1
@@ -344,7 +386,32 @@ output = "Generated/Assets.swift"
 type = "xcassets"
 path = "Resources/Assets.xcassets"
 
-[jobs.template]
+[jobs.template.builtin]
+swift = "swiftui-assets"
+"#,
+        )
+        .expect_err("legacy jobs array syntax should fail with a migration diagnostic");
+
+        let message = error.to_string();
+        assert!(message.contains("legacy `[[jobs]]` syntax is no longer supported"));
+        assert!(message.contains("[jobs.assets]"));
+        assert!(message.contains("[[jobs.assets.inputs]]"));
+    }
+
+    #[test]
+    fn rejects_legacy_flat_builtin_template_shape_with_migration_hint() {
+        let error = parse_str(
+            r#"
+version = 1
+
+[jobs.assets]
+output = "Generated/Assets.swift"
+
+[[jobs.assets.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.assets.template]
 builtin = "swiftui-assets"
 "#,
         )
@@ -352,7 +419,7 @@ builtin = "swiftui-assets"
 
         let message = error.to_string();
         assert!(message.contains("legacy flat built-in template syntax is no longer supported"));
-        assert!(message.contains("[jobs.template.builtin] swift = \"...\""));
+        assert!(message.contains("[jobs.assets.template.builtin] swift = \"...\""));
         assert!(!message.contains("invalid type: string"));
     }
 
@@ -362,15 +429,14 @@ builtin = "swiftui-assets"
             r#"
 version = 1
 
-[[jobs]]
-name = "assets"
+[jobs.assets]
 output = "Generated/Assets.swift"
 
-[[jobs.inputs]]
+[[jobs.assets.inputs]]
 type = "xcassets"
 path = "Resources/Assets.xcassets"
 
-[jobs.template.builtin]
+[jobs.assets.template.builtin]
 swift = ""
 "#,
         )
@@ -387,15 +453,14 @@ swift = ""
             r#"
 version = 1
 
-[[jobs]]
-name = "assets"
+[jobs.assets]
 output = "Generated/Assets.swift"
 
-[[jobs.inputs]]
+[[jobs.assets.inputs]]
 type = "xcassets"
 path = "Resources/Assets.xcassets"
 
-[jobs.template.builtin]
+[jobs.assets.template.builtin]
 swift = "not-a-real-template"
 "#,
         )
@@ -412,18 +477,17 @@ swift = "not-a-real-template"
             r#"
 version = 1
 
-[[jobs]]
-name = "assets"
+[jobs.assets]
 output = "Generated/Assets.swift"
 
-[[jobs.inputs]]
+[[jobs.assets.inputs]]
 type = "xcassets"
 path = "Resources/Assets.xcassets"
 
-[jobs.template]
+[jobs.assets.template]
 path = "Templates/assets.jinja"
 
-[jobs.template.builtin]
+[jobs.assets.template.builtin]
 "#,
         )
         .expect("path template should remain valid when an empty builtin table is present");
@@ -450,6 +514,7 @@ path = "Templates/assets.jinja"
                 name: "assets".to_string(),
                 output: "Generated/Assets.swift".to_string(),
                 access_level: None,
+                incremental: None,
                 bundle: BundleConfig::default(),
                 inputs: vec![InputConfig {
                     kind: "xcassets".to_string(),
@@ -464,8 +529,8 @@ path = "Templates/assets.jinja"
 
         let serialized = toml::to_string(&config).expect("config should serialize");
 
-        assert!(!serialized.contains("[jobs.template]"));
-        assert!(!serialized.contains("[jobs.template.builtin]"));
+        assert!(!serialized.contains("[jobs.assets.template]"));
+        assert!(!serialized.contains("[jobs.assets.template.builtin]"));
         assert!(!serialized.contains("swift ="));
     }
 
@@ -507,17 +572,16 @@ access_level = "private"
 [defaults.bundle]
 mode = "feature"
 
-[[jobs]]
-name = "assets"
+[jobs.assets]
 output = "Generated/Assets.swift"
 access_level = "open"
 
-[[jobs.inputs]]
+[[jobs.assets.inputs]]
 type = "images"
 path = "Resources/Assets.xcassets"
 
-[jobs.template]
-[jobs.template.builtin]
+[jobs.assets.template]
+[jobs.assets.template.builtin]
 swift = "swiftui-assets"
 "#,
         )
@@ -536,15 +600,14 @@ swift = "swiftui-assets"
             r#"
 version = 1
 
-[[jobs]]
-name = "files"
+[jobs.files]
 output = "Generated/Files.swift"
 
-[[jobs.inputs]]
+[[jobs.files.inputs]]
 type = "files"
 path = "Resources"
 
-[jobs.template]
+[jobs.files.template]
 path = "Templates/files.stencil"
 "#,
         )
@@ -552,6 +615,29 @@ path = "Templates/files.stencil"
 
         assert_eq!(config.jobs.len(), 1);
         assert_eq!(config.jobs[0].inputs[0].kind, "files");
+    }
+
+    #[test]
+    fn accepts_fonts_as_valid_input_kind() {
+        let config = parse_str(
+            r#"
+version = 1
+
+[jobs.fonts]
+output = "Generated/Fonts.swift"
+
+[[jobs.fonts.inputs]]
+type = "fonts"
+path = "Resources/Fonts"
+
+[jobs.fonts.template]
+path = "Templates/fonts.jinja"
+"#,
+        )
+        .expect("config should parse");
+
+        assert_eq!(config.jobs.len(), 1);
+        assert_eq!(config.jobs[0].inputs[0].kind, "fonts");
     }
 
     #[test]
@@ -565,17 +651,16 @@ verison = 2
 access_level = "internal"
 accessLevel = "public"
 
-[[jobs]]
-name = "assets"
+[jobs.assets]
 output = "Generated/Assets.swift"
 
-[[jobs.inputs]]
+[[jobs.assets.inputs]]
 type = "xcassets"
 path = "Resources/Assets.xcassets"
 pth = "Resources/Typo.xcassets"
 
-[jobs.template]
-[jobs.template.builtin]
+[jobs.assets.template]
+[jobs.assets.template.builtin]
 swift = "swiftui-assets"
 "#,
         )
@@ -599,16 +684,15 @@ swift = "swiftui-assets"
             r#"
 version = 1
 
-[[jobs]]
-name = "assets"
+[jobs.assets]
 output = "Generated/Assets.swift"
 
-[[jobs.inputs]]
+[[jobs.assets.inputs]]
 type = "xcassets"
 path = "Resources/Assets.xcassets"
 
-[jobs.template]
-[jobs.template.builtin]
+[jobs.assets.template]
+[jobs.assets.template.builtin]
 swift = "swiftui-assets"
 "#,
         )
@@ -618,6 +702,7 @@ swift = "swiftui-assets"
 
         assert_eq!(resolved.defaults.access_level.as_deref(), Some("internal"));
         assert_eq!(resolved.defaults.bundle.mode.as_deref(), Some("module"));
+        assert_eq!(resolved.defaults.incremental, Some(true));
         assert!(resolved.jobs[0].bundle.is_empty());
     }
 

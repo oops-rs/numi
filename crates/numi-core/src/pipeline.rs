@@ -14,7 +14,7 @@ use std::{
 use crate::{
     context::{AssetTemplateContext, ContextError},
     output::{OutputError, WriteOutcome, output_is_stale, write_if_changed_atomic},
-    parse_l10n::{ParseL10nError, parse_strings},
+    parse_l10n::{ParseL10nError, parse_strings, parse_xcstrings},
     parse_xcassets::{ParseXcassetsError, parse_catalog},
     render::{RenderError, render_builtin, render_path},
 };
@@ -50,6 +50,10 @@ pub enum GenerateError {
         source: ParseXcassetsError,
     },
     ParseStrings {
+        job: String,
+        source: ParseL10nError,
+    },
+    ParseXcstrings {
         job: String,
         source: ParseL10nError,
     },
@@ -99,6 +103,9 @@ impl std::fmt::Display for GenerateError {
             }
             Self::ParseStrings { job, source } => {
                 write!(f, "failed to parse strings input for job `{job}`: {source}")
+            }
+            Self::ParseXcstrings { job, source } => {
+                write!(f, "failed to parse xcstrings input for job `{job}`: {source}")
             }
             Self::BuildContext { job, source } => {
                 write!(
@@ -257,10 +264,10 @@ fn build_context(
     defaults: &DefaultsConfig,
     job: &JobConfig,
 ) -> Result<AssetTemplateContext, GenerateError> {
-    let modules = build_modules(config_dir, job)?;
+    let BuildModulesResult { modules, warnings } = build_modules(config_dir, job)?;
     let _graph = ResourceGraph {
         modules: modules.clone(),
-        diagnostics: Vec::new(),
+        diagnostics: warnings,
         metadata: GraphMetadata {
             config_path: Some(to_utf8_path(config_path)?),
         },
@@ -284,11 +291,20 @@ fn build_context(
     })
 }
 
-fn build_modules(config_dir: &Path, job: &JobConfig) -> Result<Vec<ResourceModule>, GenerateError> {
+struct BuildModulesResult {
+    modules: Vec<ResourceModule>,
+    warnings: Vec<Diagnostic>,
+}
+
+fn build_modules(
+    config_dir: &Path,
+    job: &JobConfig,
+) -> Result<BuildModulesResult, GenerateError> {
     let mut modules = Vec::new();
     let mut asset_entries = Vec::new();
     let mut duplicate_table_sources = BTreeMap::<String, Utf8PathBuf>::new();
     let mut diagnostics = Vec::new();
+    let mut warnings = Vec::new();
 
     for input in &job.inputs {
         let input_path = config_dir.join(&input.path);
@@ -311,6 +327,12 @@ fn build_modules(config_dir: &Path, job: &JobConfig) -> Result<Vec<ResourceModul
 
                 for table in tables {
                     let table_name = table.table_name.clone();
+                    warnings.extend(
+                        table
+                            .warnings
+                            .into_iter()
+                            .map(|warning| warning.with_job(job.name.clone())),
+                    );
                     if let Some(first_source) = duplicate_table_sources
                         .insert(table_name.clone(), table.source_path.clone())
                     {
@@ -332,7 +354,54 @@ fn build_modules(config_dir: &Path, job: &JobConfig) -> Result<Vec<ResourceModul
                         .map_err(GenerateError::Diagnostics)?;
                     modules.push(ResourceModule {
                         id: table_name.clone(),
-                        kind: ModuleKind::Strings,
+                        kind: table.module_kind,
+                        name: swift_identifier(&table_name),
+                        entries,
+                        metadata: Metadata::from([(
+                            "tableName".to_string(),
+                            Value::String(table_name),
+                        )]),
+                    });
+                }
+            }
+            "xcstrings" => {
+                let tables = parse_xcstrings(&input_path).map_err(|source| {
+                    GenerateError::ParseXcstrings {
+                        job: job.name.clone(),
+                        source,
+                    }
+                })?;
+
+                for table in tables {
+                    let table_name = table.table_name.clone();
+                    warnings.extend(
+                        table
+                            .warnings
+                            .into_iter()
+                            .map(|warning| warning.with_job(job.name.clone())),
+                    );
+                    if let Some(first_source) = duplicate_table_sources
+                        .insert(table_name.clone(), table.source_path.clone())
+                    {
+                        diagnostics.push(
+                            Diagnostic::error(format!(
+                                "duplicate localization table `{table_name}` from directory-based `.xcstrings` input"
+                            ))
+                            .with_job(job.name.clone())
+                            .with_path(table.source_path.as_std_path())
+                            .with_hint(format!(
+                                "found `{}` and `{}`; merge these inputs before generation or select a single localized source",
+                                first_source,
+                                table.source_path
+                            )),
+                        );
+                        continue;
+                    }
+                    let entries = normalize_scope(&job.name, table.entries)
+                        .map_err(GenerateError::Diagnostics)?;
+                    modules.push(ResourceModule {
+                        id: table_name.clone(),
+                        kind: table.module_kind,
                         name: swift_identifier(&table_name),
                         entries,
                         metadata: Metadata::from([(
@@ -370,7 +439,7 @@ fn build_modules(config_dir: &Path, job: &JobConfig) -> Result<Vec<ResourceModul
         return Err(GenerateError::Diagnostics(diagnostics));
     }
 
-    Ok(modules)
+    Ok(BuildModulesResult { modules, warnings })
 }
 
 fn render_job(

@@ -1,16 +1,21 @@
 use camino::Utf8PathBuf;
-use numi_ir::{EntryKind, Metadata, RawEntry};
+use numi_diagnostics::{Diagnostic, Severity};
+use numi_ir::{EntryKind, Metadata, ModuleKind, RawEntry};
+use serde::Deserialize;
 use serde_json::Value;
 use std::{
+    collections::BTreeMap,
     fs, io,
     path::{Path, PathBuf},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StringsTable {
+pub struct LocalizationTable {
     pub table_name: String,
     pub source_path: Utf8PathBuf,
+    pub module_kind: ModuleKind,
     pub entries: Vec<RawEntry>,
+    pub warnings: Vec<Diagnostic>,
 }
 
 #[derive(Debug)]
@@ -41,7 +46,7 @@ impl std::fmt::Display for ParseL10nError {
             }
             Self::InvalidPath { path } => write!(
                 f,
-                "localization input {} must be a `.strings` file or a directory containing `.strings` files",
+                "localization input {} must be a `.strings` or `.xcstrings` file or a directory containing supported localization files",
                 path.display()
             ),
             Self::InvalidUtf8Path { path } => write!(
@@ -62,20 +67,34 @@ impl std::fmt::Display for ParseL10nError {
 
 impl std::error::Error for ParseL10nError {}
 
-pub fn parse_strings(path: &Path) -> Result<Vec<StringsTable>, ParseL10nError> {
+pub fn parse_strings(path: &Path) -> Result<Vec<LocalizationTable>, ParseL10nError> {
+    parse_localization(path, "strings", parse_strings_file)
+}
+
+pub fn parse_xcstrings(path: &Path) -> Result<Vec<LocalizationTable>, ParseL10nError> {
+    parse_localization(path, "xcstrings", parse_xcstrings_file)
+}
+
+fn parse_localization(
+    path: &Path,
+    extension: &str,
+    parse_file: fn(&Path) -> Result<LocalizationTable, ParseL10nError>,
+) -> Result<Vec<LocalizationTable>, ParseL10nError> {
     if path.is_file() {
-        return parse_strings_file(path).map(|table| vec![table]);
+        if path.extension().and_then(|ext| ext.to_str()) != Some(extension) {
+            return Err(ParseL10nError::InvalidPath {
+                path: path.to_path_buf(),
+            });
+        }
+        return parse_file(path).map(|table| vec![table]);
     }
 
     if path.is_dir() {
         let mut files = Vec::new();
-        collect_strings_files(path, &mut files)?;
+        collect_localization_files(path, extension, &mut files)?;
         files.sort();
 
-        return files
-            .into_iter()
-            .map(|file| parse_strings_file(&file))
-            .collect();
+        return files.into_iter().map(|file| parse_file(&file)).collect();
     }
 
     Err(ParseL10nError::InvalidPath {
@@ -83,7 +102,11 @@ pub fn parse_strings(path: &Path) -> Result<Vec<StringsTable>, ParseL10nError> {
     })
 }
 
-fn collect_strings_files(directory: &Path, files: &mut Vec<PathBuf>) -> Result<(), ParseL10nError> {
+fn collect_localization_files(
+    directory: &Path,
+    extension: &str,
+    files: &mut Vec<PathBuf>,
+) -> Result<(), ParseL10nError> {
     let read_dir = fs::read_dir(directory).map_err(|source| ParseL10nError::ReadDirectory {
         path: directory.to_path_buf(),
         source,
@@ -103,11 +126,11 @@ fn collect_strings_files(directory: &Path, files: &mut Vec<PathBuf>) -> Result<(
             })?;
 
         if file_type.is_dir() {
-            collect_strings_files(&path, files)?;
+            collect_localization_files(&path, extension, files)?;
             continue;
         }
 
-        if path.extension().and_then(|ext| ext.to_str()) == Some("strings") {
+        if path.extension().and_then(|ext| ext.to_str()) == Some(extension) {
             files.push(path);
         }
     }
@@ -115,7 +138,7 @@ fn collect_strings_files(directory: &Path, files: &mut Vec<PathBuf>) -> Result<(
     Ok(())
 }
 
-fn parse_strings_file(path: &Path) -> Result<StringsTable, ParseL10nError> {
+fn parse_strings_file(path: &Path) -> Result<LocalizationTable, ParseL10nError> {
     if path.extension().and_then(|ext| ext.to_str()) != Some("strings") {
         return Err(ParseL10nError::InvalidPath {
             path: path.to_path_buf(),
@@ -144,10 +167,91 @@ fn parse_strings_file(path: &Path) -> Result<StringsTable, ParseL10nError> {
         entry.source_path = source_path.clone();
     }
 
-    Ok(StringsTable {
+    Ok(LocalizationTable {
         table_name,
         source_path,
+        module_kind: ModuleKind::Strings,
         entries,
+        warnings: Vec::new(),
+    })
+}
+
+fn parse_xcstrings_file(path: &Path) -> Result<LocalizationTable, ParseL10nError> {
+    if path.extension().and_then(|ext| ext.to_str()) != Some("xcstrings") {
+        return Err(ParseL10nError::InvalidPath {
+            path: path.to_path_buf(),
+        });
+    }
+
+    let bytes = fs::read(path).map_err(|source| ParseL10nError::ReadFile {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let contents = decode_strings_bytes(&bytes, path)?;
+    let table_name = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .ok_or_else(|| ParseL10nError::InvalidUtf8Path {
+            path: path.to_path_buf(),
+        })?
+        .to_owned();
+
+    let source_path = Utf8PathBuf::from_path_buf(path.to_path_buf())
+        .map_err(|path| ParseL10nError::InvalidUtf8Path { path })?;
+    let catalog: XcstringsCatalog =
+        serde_json::from_str(&contents).map_err(|error| ParseL10nError::ParseFile {
+            path: path.to_path_buf(),
+            message: format!("invalid JSON: {error}"),
+        })?;
+
+    let mut entries = Vec::new();
+    let mut warnings = Vec::new();
+
+    for (key, record) in catalog.strings {
+        if let Some(reason) = record.unsupported_variation_reason() {
+            warnings.push(xcstrings_warning(path, &key, reason));
+            continue;
+        }
+
+        let Some(localization) = record
+            .selected_localization(catalog.source_language.as_deref())
+        else {
+            return Err(ParseL10nError::ParseFile {
+                path: path.to_path_buf(),
+                message: format!("xcstrings key `{key}` does not contain a supported string unit"),
+            });
+        };
+
+        let translation = localization.string_unit.as_ref().ok_or_else(|| ParseL10nError::ParseFile {
+            path: path.to_path_buf(),
+            message: format!("xcstrings key `{key}` does not contain a string unit"),
+        })?.value.clone();
+
+        let mut properties = Metadata::from([
+            ("key".to_string(), Value::String(key.clone())),
+            ("translation".to_string(), Value::String(translation)),
+        ]);
+
+        if let Some(placeholders) = build_placeholder_metadata(&localization.substitutions) {
+            properties.insert("placeholders".to_string(), Value::Array(placeholders));
+        }
+
+        entries.push(RawEntry {
+            path: key.clone(),
+            source_path: source_path.clone(),
+            kind: EntryKind::StringKey,
+            properties,
+        });
+    }
+
+    entries.sort_by(|left, right| left.path.cmp(&right.path));
+
+    Ok(LocalizationTable {
+        table_name,
+        source_path,
+        module_kind: ModuleKind::Xcstrings,
+        entries,
+        warnings,
     })
 }
 
@@ -194,6 +298,65 @@ fn decode_utf16_units(
         path: path.to_path_buf(),
         message: format!("invalid UTF-16: {error}"),
     })
+}
+
+fn build_placeholder_metadata(
+    substitutions: &BTreeMap<String, XcstringsSubstitution>,
+) -> Option<Vec<Value>> {
+    if substitutions.is_empty() {
+        return None;
+    }
+
+    let mut placeholders = Vec::with_capacity(substitutions.len());
+
+    for (name, substitution) in substitutions {
+        let mut placeholder = Metadata::new();
+        placeholder.insert("name".to_string(), Value::String(name.clone()));
+
+        if let Some(format_specifier) = substitution.format_specifier.as_ref() {
+            placeholder.insert(
+                "format".to_string(),
+                Value::String(format_specifier.clone()),
+            );
+
+            if let Some(swift_type) = infer_swift_type(format_specifier) {
+                placeholder.insert(
+                    "swiftType".to_string(),
+                    Value::String(swift_type.to_string()),
+                );
+            }
+        }
+
+        placeholders.push(Value::Object(placeholder.into_iter().collect()));
+    }
+
+    Some(placeholders)
+}
+
+fn infer_swift_type(format_specifier: &str) -> Option<&'static str> {
+    let kind = format_specifier
+        .strip_prefix('%')
+        .unwrap_or(format_specifier)
+        .chars()
+        .rev()
+        .find(|ch| ch.is_ascii_alphabetic() || *ch == '@')?;
+
+    match kind {
+        '@' => Some("String"),
+        'd' | 'i' | 'u' | 'o' | 'x' | 'X' => Some("Int"),
+        'f' | 'F' | 'e' | 'E' | 'g' | 'G' | 'a' | 'A' => Some("Double"),
+        _ => None,
+    }
+}
+
+fn xcstrings_warning(path: &Path, key: &str, reason: &str) -> Diagnostic {
+    Diagnostic {
+        severity: Severity::Warning,
+        message: format!("skipping xcstrings key `{key}`: {reason}"),
+        hint: None,
+        job: None,
+        path: Some(path.to_path_buf()),
+    }
 }
 
 struct StringsParser<'a> {
@@ -364,9 +527,172 @@ impl<'a> StringsParser<'a> {
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct XcstringsCatalog {
+    #[serde(rename = "sourceLanguage", default)]
+    source_language: Option<String>,
+    #[serde(default)]
+    strings: BTreeMap<String, XcstringsRecord>,
+}
+
+#[derive(Debug, Deserialize)]
+struct XcstringsRecord {
+    #[serde(default)]
+    localizations: BTreeMap<String, XcstringsLocalization>,
+    #[serde(flatten)]
+    other: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct XcstringsLocalization {
+    #[serde(rename = "stringUnit", default)]
+    string_unit: Option<XcstringsStringUnit>,
+    #[serde(default)]
+    substitutions: BTreeMap<String, XcstringsSubstitution>,
+    #[serde(default)]
+    variations: Option<XcstringsVariations>,
+    #[serde(flatten)]
+    other: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct XcstringsStringUnit {
+    value: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct XcstringsSubstitution {
+    #[serde(rename = "formatSpecifier", default)]
+    format_specifier: Option<String>,
+    #[serde(default)]
+    variations: Option<XcstringsVariations>,
+    #[serde(flatten)]
+    other: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct XcstringsVariations {
+    #[serde(default)]
+    plural: BTreeMap<String, Value>,
+    #[serde(default)]
+    device: BTreeMap<String, Value>,
+    #[serde(flatten)]
+    other: BTreeMap<String, Value>,
+}
+
+impl XcstringsRecord {
+    fn selected_localization(&self, source_language: Option<&str>) -> Option<&XcstringsLocalization> {
+        if let Some(source_language) = source_language {
+            if let Some(localization) = self.localizations.get(source_language) {
+                if localization.string_unit.is_some() {
+                    return Some(localization);
+                }
+            }
+        }
+
+        self.localizations
+            .values()
+            .find(|localization| localization.string_unit.is_some())
+    }
+
+    fn unsupported_variation_reason(&self) -> Option<&'static str> {
+        if self
+            .other
+            .get("variations")
+            .is_some_and(|value| !is_empty_variation_value(value))
+        {
+            return Some("unsupported variation tree");
+        }
+
+        for localization in self.localizations.values() {
+            if let Some(reason) = localization.unsupported_variation_reason() {
+                return Some(reason);
+            }
+        }
+
+        None
+    }
+}
+
+impl XcstringsLocalization {
+    fn unsupported_variation_reason(&self) -> Option<&'static str> {
+        if self
+            .variations
+            .as_ref()
+            .is_some_and(|variations| !variations.is_empty())
+        {
+            return Some(self.variations.as_ref().unwrap().reason());
+        }
+
+        for substitution in self.substitutions.values() {
+            if let Some(reason) = substitution.unsupported_variation_reason() {
+                return Some(reason);
+            }
+        }
+
+        if self
+            .other
+            .get("variations")
+            .is_some_and(|value| !is_empty_variation_value(value))
+        {
+            return Some("unsupported variation tree");
+        }
+
+        None
+    }
+}
+
+impl XcstringsSubstitution {
+    fn unsupported_variation_reason(&self) -> Option<&'static str> {
+        if self
+            .variations
+            .as_ref()
+            .is_some_and(|variations| !variations.is_empty())
+        {
+            return Some(self.variations.as_ref().unwrap().reason());
+        }
+
+        if self
+            .other
+            .get("variations")
+            .is_some_and(|value| !is_empty_variation_value(value))
+        {
+            return Some("unsupported variation tree");
+        }
+
+        None
+    }
+}
+
+impl XcstringsVariations {
+    fn is_empty(&self) -> bool {
+        self.plural.is_empty() && self.device.is_empty() && self.other.is_empty()
+    }
+
+    fn reason(&self) -> &'static str {
+        if !self.plural.is_empty() {
+            "unsupported plural variations"
+        } else if !self.device.is_empty() {
+            "unsupported device-specific variations"
+        } else {
+            "unsupported variation tree"
+        }
+    }
+}
+
+fn is_empty_variation_value(value: &Value) -> bool {
+    match value {
+        Value::Object(object) => object.is_empty(),
+        Value::Array(array) => array.is_empty(),
+        Value::Null => true,
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn make_temp_dir(test_name: &str) -> PathBuf {
@@ -491,6 +817,126 @@ mod tests {
 
         assert_eq!(tables.len(), 1);
         assert_eq!(tables[0].entries[0].properties["translation"], "Profile");
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn parses_xcstrings_plain_string_and_placeholders() {
+        let temp_dir = make_temp_dir("parse-xcstrings-plain");
+        let xcstrings_path = temp_dir.join("Localizable.xcstrings");
+        fs::write(
+            &xcstrings_path,
+            r#"{
+  "version": "1.0",
+  "sourceLanguage": "en",
+  "strings": {
+    "greeting.message": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hello %#@name@, you have %#@count@ messages"
+          },
+          "substitutions": {
+            "count": {
+              "formatSpecifier": "lld"
+            },
+            "name": {
+              "formatSpecifier": "@"
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"#,
+        )
+        .expect("xcstrings file should be written");
+
+        let tables = parse_xcstrings(&xcstrings_path).expect("xcstrings should parse");
+
+        assert_eq!(tables.len(), 1);
+        assert_eq!(tables[0].table_name, "Localizable");
+        assert_eq!(tables[0].module_kind, ModuleKind::Xcstrings);
+        assert_eq!(tables[0].entries.len(), 1);
+        assert_eq!(tables[0].entries[0].path, "greeting.message");
+        assert_eq!(
+            tables[0].entries[0].properties["key"],
+            Value::String("greeting.message".to_string())
+        );
+        assert_eq!(
+            tables[0].entries[0].properties["translation"],
+            Value::String("Hello %#@name@, you have %#@count@ messages".to_string())
+        );
+        assert_eq!(
+            tables[0].entries[0].properties["placeholders"],
+            json!([
+                {"name": "count", "format": "lld", "swiftType": "Int"},
+                {"name": "name", "format": "@", "swiftType": "String"}
+            ])
+        );
+        assert!(tables[0].warnings.is_empty());
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn skips_xcstrings_plural_variations_with_warning() {
+        let temp_dir = make_temp_dir("parse-xcstrings-plural");
+        let xcstrings_path = temp_dir.join("Localizable.xcstrings");
+        fs::write(
+            &xcstrings_path,
+            r#"{
+  "version": "1.0",
+  "sourceLanguage": "en",
+  "strings": {
+    "things.label": {
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld thing"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld things"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"#,
+        )
+        .expect("xcstrings file should be written");
+
+        let tables = parse_xcstrings(&xcstrings_path).expect("xcstrings should parse");
+
+        assert_eq!(tables.len(), 1);
+        assert_eq!(tables[0].module_kind, ModuleKind::Xcstrings);
+        assert!(tables[0].entries.is_empty());
+        assert_eq!(tables[0].warnings.len(), 1);
+        assert_eq!(tables[0].warnings[0].severity, Severity::Warning);
+        assert!(tables[0].warnings[0]
+            .message
+            .contains("things.label"));
+        assert!(tables[0].warnings[0]
+            .message
+            .contains("unsupported plural variations"));
+        assert_eq!(
+            tables[0].warnings[0].path,
+            Some(xcstrings_path.clone())
+        );
 
         fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
     }

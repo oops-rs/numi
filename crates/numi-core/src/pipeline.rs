@@ -354,12 +354,14 @@ fn build_modules(config_dir: &Path, job: &JobConfig) -> Result<BuildModulesResul
 
         match input.kind.as_str() {
             "xcassets" => {
-                asset_entries.extend(parse_catalog(&input_path).map_err(|source| {
+                let report = parse_catalog(&input_path).map_err(|source| {
                     GenerateError::ParseXcassets {
                         job: job.name.clone(),
                         source,
                     }
-                })?);
+                })?;
+                warnings.extend(report.warnings);
+                asset_entries.extend(report.entries);
             }
             "strings" => {
                 let tables =

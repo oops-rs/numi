@@ -1,25 +1,13 @@
 use camino::Utf8PathBuf;
+use numi_diagnostics::{Diagnostic, Severity};
 use numi_ir::{EntryKind, Metadata, RawEntry};
-use serde::Deserialize;
 use serde_json::Value;
-use std::{
-    fs, io,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
 pub enum ParseXcassetsError {
-    ReadDirectory {
-        path: PathBuf,
-        source: io::Error,
-    },
-    ReadFile {
-        path: PathBuf,
-        source: io::Error,
-    },
-    ParseJson {
-        path: PathBuf,
-        source: serde_json::Error,
+    ParseCatalog {
+        source: xcassets::ParseError,
     },
     InvalidCatalogPath {
         path: PathBuf,
@@ -29,27 +17,7 @@ pub enum ParseXcassetsError {
 impl std::fmt::Display for ParseXcassetsError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::ReadDirectory { path, source } => {
-                write!(
-                    f,
-                    "failed to read asset catalog directory {}: {source}",
-                    path.display()
-                )
-            }
-            Self::ReadFile { path, source } => {
-                write!(
-                    f,
-                    "failed to read asset contents {}: {source}",
-                    path.display()
-                )
-            }
-            Self::ParseJson { path, source } => {
-                write!(
-                    f,
-                    "failed to parse asset contents {}: {source}",
-                    path.display()
-                )
-            }
+            Self::ParseCatalog { source } => write!(f, "{source}"),
             Self::InvalidCatalogPath { path } => write!(
                 f,
                 "asset catalog path {} is not valid UTF-8 and cannot be represented in the IR",
@@ -61,158 +29,92 @@ impl std::fmt::Display for ParseXcassetsError {
 
 impl std::error::Error for ParseXcassetsError {}
 
-#[derive(Debug, Deserialize)]
-struct CatalogContents {
-    info: serde_json::Value,
-}
-
-#[derive(Debug, Deserialize)]
-struct ImageSetContents {
-    images: serde_json::Value,
-    info: serde_json::Value,
-}
-
-#[derive(Debug, Deserialize)]
-struct ColorSetContents {
-    colors: serde_json::Value,
-    info: serde_json::Value,
-}
-
-#[cfg(test)]
-#[derive(Debug)]
-struct ParseCatalogReport {
-    entries: Vec<RawEntry>,
-    warnings: Vec<numi_diagnostics::Diagnostic>,
-}
-
-pub fn parse_catalog(catalog_path: &Path) -> Result<Vec<RawEntry>, ParseXcassetsError> {
-    parse_catalog_entries(catalog_path)
-}
-
-#[cfg(test)]
-fn parse_catalog_with_warnings(
-    catalog_path: &Path,
-) -> Result<ParseCatalogReport, ParseXcassetsError> {
-    let raw_entries = parse_catalog_entries(catalog_path)?;
-
-    Ok(ParseCatalogReport {
-        entries: raw_entries,
-        warnings: Vec::new(),
-    })
-}
-
-fn parse_catalog_entries(
-    catalog_path: &Path,
-) -> Result<Vec<RawEntry>, ParseXcassetsError> {
-    validate_root_contents(catalog_path)?;
-
-    let mut raw_entries = Vec::new();
-    collect_entries(catalog_path, catalog_path, &mut raw_entries)?;
-    raw_entries.sort_by(|left, right| left.path.cmp(&right.path));
-    Ok(raw_entries)
-}
-
-fn validate_root_contents(catalog_path: &Path) -> Result<(), ParseXcassetsError> {
-    let contents_path = catalog_path.join("Contents.json");
-    let contents = read_json_file::<CatalogContents>(&contents_path)?;
-    let _ = contents.info;
-    Ok(())
-}
-
-fn collect_entries(
-    root: &Path,
-    current: &Path,
-    raw_entries: &mut Vec<RawEntry>,
-) -> Result<(), ParseXcassetsError> {
-    let read_dir = fs::read_dir(current).map_err(|source| ParseXcassetsError::ReadDirectory {
-        path: current.to_path_buf(),
-        source,
-    })?;
-
-    for entry in read_dir {
-        let entry = entry.map_err(|source| ParseXcassetsError::ReadDirectory {
-            path: current.to_path_buf(),
-            source,
-        })?;
-        let path = entry.path();
-        let file_type = entry
-            .file_type()
-            .map_err(|source| ParseXcassetsError::ReadDirectory {
-                path: path.clone(),
-                source,
-            })?;
-
-        if !file_type.is_dir() {
-            continue;
-        }
-
-        if path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.ends_with(".imageset"))
-        {
-            raw_entries.push(parse_imageset(root, &path)?);
-            continue;
-        }
-
-        if path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.ends_with(".colorset"))
-        {
-            raw_entries.push(parse_colorset(root, &path)?);
-            continue;
-        }
-
-        collect_entries(root, &path, raw_entries)?;
+impl From<xcassets::ParseError> for ParseXcassetsError {
+    fn from(source: xcassets::ParseError) -> Self {
+        Self::ParseCatalog { source }
     }
+}
 
+#[derive(Debug)]
+pub struct XcassetsReport {
+    pub entries: Vec<RawEntry>,
+    pub warnings: Vec<Diagnostic>,
+}
+
+pub fn parse_catalog(catalog_path: &Path) -> Result<XcassetsReport, ParseXcassetsError> {
+    let report = xcassets::parse_catalog(catalog_path).map_err(ParseXcassetsError::from)?;
+    let mut entries = Vec::new();
+    let mut warnings = map_xcassets_diagnostics(&report.diagnostics, catalog_path);
+
+    walk_nodes(
+        &report.catalog.children,
+        catalog_path,
+        &mut entries,
+        &mut warnings,
+    )?;
+    entries.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(XcassetsReport { entries, warnings })
+}
+
+fn walk_nodes(
+    nodes: &[xcassets::Node],
+    catalog_root: &Path,
+    entries: &mut Vec<RawEntry>,
+    warnings: &mut Vec<Diagnostic>,
+) -> Result<(), ParseXcassetsError> {
+    for node in nodes {
+        match node {
+            xcassets::Node::Group(group) => {
+                walk_nodes(&group.children, catalog_root, entries, warnings)?;
+            }
+            xcassets::Node::ImageSet(node) => entries.push(image_entry(node, catalog_root)?),
+            xcassets::Node::ColorSet(node) => entries.push(color_entry(node, catalog_root)?),
+            xcassets::Node::AppIconSet(node) => warnings.push(unsupported_node_warning(
+                catalog_root,
+                &node.relative_path,
+                "appiconset",
+            )),
+            xcassets::Node::Opaque(node) => warnings.push(unsupported_node_warning(
+                catalog_root,
+                &node.relative_path,
+                &node.folder_type,
+            )),
+        }
+    }
     Ok(())
 }
 
-fn parse_imageset(root: &Path, imageset_path: &Path) -> Result<RawEntry, ParseXcassetsError> {
-    let contents_path = imageset_path.join("Contents.json");
-    let contents = read_json_file::<ImageSetContents>(&contents_path)?;
-    let _ = (contents.images, contents.info);
-    let asset_name = asset_path(root, imageset_path, ".imageset")?;
+fn image_entry(
+    node: &xcassets::ImageSetNode,
+    catalog_root: &Path,
+) -> Result<RawEntry, ParseXcassetsError> {
+    let asset_name = asset_name_from_relative(&node.relative_path, ".imageset");
+    let source_path = utf8_path(&catalog_root.join(&node.relative_path))?;
 
     Ok(RawEntry {
         path: asset_name.clone(),
-        source_path: utf8_path(imageset_path)?,
+        source_path,
         kind: EntryKind::Image,
         properties: asset_properties(&asset_name),
     })
 }
 
-fn parse_colorset(root: &Path, colorset_path: &Path) -> Result<RawEntry, ParseXcassetsError> {
-    let contents_path = colorset_path.join("Contents.json");
-    let contents = read_json_file::<ColorSetContents>(&contents_path)?;
-    let _ = (contents.colors, contents.info);
-    let asset_name = asset_path(root, colorset_path, ".colorset")?;
+fn color_entry(
+    node: &xcassets::ColorSetNode,
+    catalog_root: &Path,
+) -> Result<RawEntry, ParseXcassetsError> {
+    let asset_name = asset_name_from_relative(&node.relative_path, ".colorset");
+    let source_path = utf8_path(&catalog_root.join(&node.relative_path))?;
 
     Ok(RawEntry {
         path: asset_name.clone(),
-        source_path: utf8_path(colorset_path)?,
+        source_path,
         kind: EntryKind::Color,
         properties: asset_properties(&asset_name),
     })
 }
 
-fn read_json_file<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, ParseXcassetsError> {
-    let contents = fs::read_to_string(path).map_err(|source| ParseXcassetsError::ReadFile {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    serde_json::from_str(&contents).map_err(|source| ParseXcassetsError::ParseJson {
-        path: path.to_path_buf(),
-        source,
-    })
-}
-
-fn asset_path(root: &Path, asset_dir: &Path, suffix: &str) -> Result<String, ParseXcassetsError> {
-    let relative = asset_dir
-        .strip_prefix(root)
-        .expect("asset directories should be under the catalog root");
+fn asset_name_from_relative(relative: &Path, suffix: &str) -> String {
     let mut components = relative
         .iter()
         .map(|component| component.to_string_lossy().into_owned())
@@ -224,7 +126,41 @@ fn asset_path(root: &Path, asset_dir: &Path, suffix: &str) -> Result<String, Par
         }
     }
 
-    Ok(components.join("/"))
+    components.join("/")
+}
+
+fn unsupported_node_warning(catalog_root: &Path, relative_path: &Path, kind: &str) -> Diagnostic {
+    Diagnostic {
+        severity: Severity::Warning,
+        message: format!("unsupported asset node kind `{kind}` was skipped"),
+        hint: None,
+        job: None,
+        path: Some(catalog_root.join(relative_path)),
+    }
+}
+
+fn map_xcassets_diagnostics(
+    diagnostics: &[xcassets::Diagnostic],
+    catalog_path: &Path,
+) -> Vec<Diagnostic> {
+    diagnostics
+        .iter()
+        .map(|diagnostic| {
+            let resolved_path = if diagnostic.path.as_os_str().is_empty() {
+                catalog_path.to_path_buf()
+            } else {
+                catalog_path.join(&diagnostic.path)
+            };
+
+            Diagnostic {
+                severity: Severity::Warning,
+                message: diagnostic.message.clone(),
+                hint: None,
+                job: None,
+                path: Some(resolved_path),
+            }
+        })
+        .collect()
 }
 
 fn utf8_path(path: &Path) -> Result<Utf8PathBuf, ParseXcassetsError> {
@@ -242,7 +178,10 @@ fn asset_properties(asset_name: &str) -> Metadata {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     fn make_temp_dir(test_name: &str) -> PathBuf {
         let unique = format!(
@@ -286,7 +225,7 @@ mod tests {
         )
         .expect("unsupported asset contents should be written");
 
-        let report = parse_catalog_with_warnings(&catalog_dir).expect("catalog should parse");
+        let report = parse_catalog(&catalog_dir).expect("catalog should parse");
         let warning = report
             .warnings
             .first()

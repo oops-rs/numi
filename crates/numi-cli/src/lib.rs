@@ -131,7 +131,7 @@ fn run_init(args: &InitArgs) -> Result<(), CliError> {
 }
 
 fn run_workspace_generate(args: &WorkspaceGenerateArgs) -> Result<(), CliError> {
-    let loaded = load_workspace_manifest(args.workspace.as_deref())?;
+    let loaded = load_workspace_manifest(args.workspace.as_deref(), "generate")?;
     let workspace_dir = workspace_dir(&loaded)?;
 
     for member in select_workspace_members(&loaded, &args.members)? {
@@ -145,7 +145,7 @@ fn run_workspace_generate(args: &WorkspaceGenerateArgs) -> Result<(), CliError> 
 }
 
 fn run_workspace_check(args: &WorkspaceCheckArgs) -> Result<(), CliError> {
-    let loaded = load_workspace_manifest(args.workspace.as_deref())?;
+    let loaded = load_workspace_manifest(args.workspace.as_deref(), "check")?;
     let workspace_dir = workspace_dir(&loaded)?;
     let mut stale_paths = Vec::new();
 
@@ -214,12 +214,25 @@ fn load_starter_config() -> Result<Cow<'static, str>, CliError> {
     }
 }
 
-fn load_workspace_manifest(explicit_path: Option<&Path>) -> Result<LoadedWorkspace, CliError> {
+fn load_workspace_manifest(
+    explicit_path: Option<&Path>,
+    command_name: &str,
+) -> Result<LoadedWorkspace, CliError> {
     let cwd = current_dir()?;
     let manifest_path = numi_config::discover_workspace(&cwd, explicit_path)
-        .map_err(|error| CliError::new(error.to_string()))?;
+        .map_err(|error| CliError::new(workspace_discovery_message(error, command_name)))?;
     numi_config::load_workspace_from_path(&manifest_path)
         .map_err(|error| CliError::new(error.to_string()))
+}
+
+fn workspace_discovery_message(
+    error: numi_config::WorkspaceDiscoveryError,
+    command_name: &str,
+) -> String {
+    let guidance = format!("numi workspace {command_name} --workspace <path>");
+    error
+        .to_string()
+        .replace("numi workspace locate --workspace <path>", &guidance)
 }
 
 fn workspace_dir(loaded: &LoadedWorkspace) -> Result<&Path, CliError> {

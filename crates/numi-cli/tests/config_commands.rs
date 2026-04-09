@@ -693,6 +693,84 @@ config = "packages/files/numi.toml"
 }
 
 #[test]
+fn workspace_generate_reports_missing_manifest_with_real_guidance() {
+    let root = make_temp_dir("workspace-generate-missing-manifest");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_numi"))
+        .args(["workspace", "generate"])
+        .current_dir(&root)
+        .output()
+        .expect("numi workspace generate should run");
+
+    assert!(!output.status.success(), "command unexpectedly succeeded");
+
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
+    assert!(
+        stderr.contains("No workspace manifest found"),
+        "stderr was: {stderr}"
+    );
+    assert!(
+        stderr.contains("numi workspace generate --workspace <path>"),
+        "stderr was: {stderr}"
+    );
+    assert!(
+        !stderr.contains("numi workspace locate"),
+        "stderr was: {stderr}"
+    );
+
+    fs::remove_dir_all(root).expect("temp dir should be removed");
+}
+
+#[test]
+fn workspace_check_reports_ambiguous_manifests_with_real_guidance() {
+    let root = make_temp_dir("workspace-check-ambiguous-manifests");
+    let app_dir = root.join("apps/App");
+    let core_dir = root.join("packages/Core");
+    fs::create_dir_all(&app_dir).expect("app dir should exist");
+    fs::create_dir_all(&core_dir).expect("core dir should exist");
+    write_workspace_manifest(
+        &app_dir,
+        "version = 1\n[[members]]\nconfig = \"apps/App/numi.toml\"\n",
+    );
+    write_workspace_manifest(
+        &core_dir,
+        "version = 1\n[[members]]\nconfig = \"packages/Core/numi.toml\"\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_numi"))
+        .args(["workspace", "check"])
+        .current_dir(&root)
+        .output()
+        .expect("numi workspace check should run");
+
+    assert!(!output.status.success(), "command unexpectedly succeeded");
+
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
+    assert!(
+        stderr.contains("Multiple workspace manifests found"),
+        "stderr was: {stderr}"
+    );
+    assert!(
+        stderr.contains("apps/App/numi-workspace.toml"),
+        "stderr was: {stderr}"
+    );
+    assert!(
+        stderr.contains("packages/Core/numi-workspace.toml"),
+        "stderr was: {stderr}"
+    );
+    assert!(
+        stderr.contains("numi workspace check --workspace <path>"),
+        "stderr was: {stderr}"
+    );
+    assert!(
+        !stderr.contains("numi workspace locate"),
+        "stderr was: {stderr}"
+    );
+
+    fs::remove_dir_all(root).expect("temp dir should be removed");
+}
+
+#[test]
 fn workspace_generate_can_select_one_member() {
     let temp_root = make_temp_dir("workspace-generate-select-one");
     let workspace_root = temp_root.join("workspace");
@@ -740,6 +818,90 @@ config = "packages/files/numi.toml"
     assert!(
         files_root.join("Generated/Files.swift").exists(),
         "selected member output was not generated"
+    );
+
+    fs::remove_dir_all(temp_root).expect("temp dir should be removed");
+}
+
+#[test]
+fn workspace_generate_honors_member_jobs_selection() {
+    let temp_root = make_temp_dir("workspace-generate-member-jobs");
+    let workspace_root = temp_root.join("workspace");
+    let member_root = workspace_root.join("apps/mixed");
+    fs::create_dir_all(member_root.join("Resources")).expect("resources dir should exist");
+
+    copy_dir_all(
+        &repo_root().join("fixtures/xcassets-basic/Resources/Assets.xcassets"),
+        &member_root.join("Resources/Assets.xcassets"),
+    );
+    copy_dir_all(
+        &repo_root().join("fixtures/files-basic/Resources/Fixtures"),
+        &member_root.join("Resources/Fixtures"),
+    );
+    fs::write(
+        member_root.join("numi.toml"),
+        r#"
+version = 1
+
+[[jobs]]
+name = "assets"
+output = "Generated/Assets.swift"
+
+[[jobs.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.template.builtin]
+swift = "swiftui-assets"
+
+[[jobs]]
+name = "files"
+output = "Generated/Files.swift"
+
+[[jobs.inputs]]
+type = "files"
+path = "Resources/Fixtures"
+
+[jobs.template.builtin]
+swift = "files"
+"#,
+    )
+    .expect("member config should be written");
+    write_workspace_manifest(
+        &workspace_root,
+        r#"
+version = 1
+
+[[members]]
+config = "apps/mixed/numi.toml"
+jobs = ["assets"]
+"#,
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_numi"))
+        .args([
+            "workspace",
+            "generate",
+            "--workspace",
+            "numi-workspace.toml",
+        ])
+        .current_dir(&workspace_root)
+        .output()
+        .expect("numi workspace generate should run");
+
+    assert!(
+        output.status.success(),
+        "command failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        member_root.join("Generated/Assets.swift").exists(),
+        "selected assets output was not generated"
+    );
+    assert!(
+        !member_root.join("Generated/Files.swift").exists(),
+        "unselected files output should not be generated"
     );
 
     fs::remove_dir_all(temp_root).expect("temp dir should be removed");

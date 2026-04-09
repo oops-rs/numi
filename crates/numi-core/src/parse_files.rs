@@ -8,26 +8,27 @@ use std::{
 
 #[derive(Debug)]
 pub enum ParseFilesError {
-    ReadDirectory {
-        path: PathBuf,
-        source: io::Error,
-    },
-    InvalidPath {
-        path: PathBuf,
-    },
-    InvalidUtf8Path {
-        path: PathBuf,
-    },
+    ReadDirectory { path: PathBuf, source: io::Error },
+    InvalidPath { path: PathBuf },
+    InvalidUtf8Path { path: PathBuf },
 }
 
 impl std::fmt::Display for ParseFilesError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::ReadDirectory { path, source } => {
-                write!(f, "failed to read files input directory {}: {source}", path.display())
+                write!(
+                    f,
+                    "failed to read files input directory {}: {source}",
+                    path.display()
+                )
             }
             Self::InvalidPath { path } => {
-                write!(f, "files input path {} is not a file or directory", path.display())
+                write!(
+                    f,
+                    "files input path {} is not a file or directory",
+                    path.display()
+                )
             }
             Self::InvalidUtf8Path { path } => {
                 write!(
@@ -59,7 +60,11 @@ pub fn parse_files(path: &Path) -> Result<Vec<RawEntry>, ParseFilesError> {
     })
 }
 
-fn collect_files(root: &Path, directory: &Path, entries: &mut Vec<RawEntry>) -> Result<(), ParseFilesError> {
+fn collect_files(
+    root: &Path,
+    directory: &Path,
+    entries: &mut Vec<RawEntry>,
+) -> Result<(), ParseFilesError> {
     let read_dir = fs::read_dir(directory).map_err(|source| ParseFilesError::ReadDirectory {
         path: directory.to_path_buf(),
         source,
@@ -76,10 +81,12 @@ fn collect_files(root: &Path, directory: &Path, entries: &mut Vec<RawEntry>) -> 
             continue;
         }
 
-        let file_type = entry.file_type().map_err(|source| ParseFilesError::ReadDirectory {
-            path: path.clone(),
-            source,
-        })?;
+        let file_type = entry
+            .file_type()
+            .map_err(|source| ParseFilesError::ReadDirectory {
+                path: path.clone(),
+                source,
+            })?;
 
         if file_type.is_dir() {
             collect_files(root, &path, entries)?;
@@ -132,10 +139,7 @@ fn parse_file_entry(root: &Path, file_path: &Path) -> Result<RawEntry, ParseFile
         properties: Metadata::from([
             ("relativePath".to_string(), Value::String(relative_path)),
             ("fileName".to_string(), Value::String(file_name)),
-            (
-                "pathExtension".to_string(),
-                Value::String(path_extension),
-            ),
+            ("pathExtension".to_string(), Value::String(path_extension)),
         ]),
     })
 }
@@ -163,10 +167,7 @@ fn parse_single_file_entry(file_path: &Path) -> Result<RawEntry, ParseFilesError
         properties: Metadata::from([
             ("relativePath".to_string(), Value::String(relative_path)),
             ("fileName".to_string(), Value::String(file_name)),
-            (
-                "pathExtension".to_string(),
-                Value::String(path_extension),
-            ),
+            ("pathExtension".to_string(), Value::String(path_extension)),
         ]),
     })
 }

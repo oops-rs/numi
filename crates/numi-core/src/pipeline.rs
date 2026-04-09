@@ -354,12 +354,11 @@ fn build_modules(config_dir: &Path, job: &JobConfig) -> Result<BuildModulesResul
 
         match input.kind.as_str() {
             "xcassets" => {
-                let report = parse_catalog(&input_path).map_err(|source| {
-                    GenerateError::ParseXcassets {
+                let report =
+                    parse_catalog(&input_path).map_err(|source| GenerateError::ParseXcassets {
                         job: job.name.clone(),
                         source,
-                    }
-                })?;
+                    })?;
                 warnings.extend(
                     report
                         .warnings
@@ -462,12 +461,11 @@ fn build_modules(config_dir: &Path, job: &JobConfig) -> Result<BuildModulesResul
                 }
             }
             "files" => {
-                let raw_entries = parse_files(&input_path).map_err(|source| {
-                    GenerateError::ParseFiles {
+                let raw_entries =
+                    parse_files(&input_path).map_err(|source| GenerateError::ParseFiles {
                         job: job.name.clone(),
                         source,
-                    }
-                })?;
+                    })?;
                 let entries =
                     normalize_scope(&job.name, raw_entries).map_err(GenerateError::Diagnostics)?;
                 let module_id = input_path
@@ -872,7 +870,10 @@ builtin = "files"
             "Onboarding/welcome-video.mp4"
         );
         assert_eq!(json["modules"][0]["entries"][1]["kind"], "data");
-        assert_eq!(json["modules"][0]["entries"][1]["properties"]["fileName"], "faq.pdf");
+        assert_eq!(
+            json["modules"][0]["entries"][1]["properties"]["fileName"],
+            "faq.pdf"
+        );
 
         fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
     }

@@ -981,9 +981,11 @@ mod tests {
         assert_eq!(tables[0].warnings.len(), 1);
         assert_eq!(tables[0].warnings[0].severity, Severity::Warning);
         assert!(tables[0].warnings[0].message.contains("things.label"));
-        assert!(tables[0].warnings[0]
-            .message
-            .contains("unsupported plural variations"));
+        assert!(
+            tables[0].warnings[0]
+                .message
+                .contains("unsupported plural variations")
+        );
         assert_eq!(tables[0].warnings[0].path, Some(xcstrings_path.clone()));
 
         fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
@@ -1026,9 +1028,11 @@ mod tests {
         assert_eq!(tables.len(), 1);
         assert!(tables[0].entries.is_empty());
         assert_eq!(tables[0].warnings.len(), 1);
-        assert!(tables[0].warnings[0]
-            .message
-            .contains("unsupported device-specific variations"));
+        assert!(
+            tables[0].warnings[0]
+                .message
+                .contains("unsupported device-specific variations")
+        );
 
         fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
     }
@@ -1070,9 +1074,11 @@ mod tests {
         assert_eq!(tables.len(), 1);
         assert!(tables[0].entries.is_empty());
         assert_eq!(tables[0].warnings.len(), 1);
-        assert!(tables[0].warnings[0]
-            .message
-            .contains("unsupported variation tree"));
+        assert!(
+            tables[0].warnings[0]
+                .message
+                .contains("unsupported variation tree")
+        );
 
         fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
     }

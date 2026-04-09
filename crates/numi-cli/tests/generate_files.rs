@@ -176,7 +176,10 @@ fn dump_context_emits_files_module_kind_and_properties() {
     assert_eq!(json["modules"][0]["name"], "Fixtures");
     assert_eq!(json["modules"][0]["entries"][0]["kind"], "namespace");
     assert_eq!(json["modules"][0]["entries"][0]["name"], "Onboarding");
-    assert_eq!(json["modules"][0]["entries"][0]["children"][0]["kind"], "data");
+    assert_eq!(
+        json["modules"][0]["entries"][0]["children"][0]["kind"],
+        "data"
+    );
     assert_eq!(
         json["modules"][0]["entries"][0]["children"][0]["properties"]["relativePath"],
         "Onboarding/welcome-video.mp4"

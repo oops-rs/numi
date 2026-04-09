@@ -394,7 +394,10 @@ mod tests {
 
         assert_eq!(serialized["modules"][0]["kind"], "files");
         assert_eq!(serialized["modules"][0]["name"], "Files");
-        assert_eq!(serialized["modules"][0]["entries"][0]["swiftIdentifier"], "Readme");
+        assert_eq!(
+            serialized["modules"][0]["entries"][0]["swiftIdentifier"],
+            "Readme"
+        );
         assert_eq!(serialized["modules"][0]["entries"][0]["kind"], "data");
         assert_eq!(
             serialized["modules"][0]["entries"][0]["properties"]["path"],

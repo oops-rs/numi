@@ -6,12 +6,8 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
 pub enum ParseXcassetsError {
-    ParseCatalog {
-        source: xcassets::ParseError,
-    },
-    InvalidCatalogPath {
-        path: PathBuf,
-    },
+    ParseCatalog { source: xcassets::ParseError },
+    InvalidCatalogPath { path: PathBuf },
 }
 
 impl std::fmt::Display for ParseXcassetsError {
@@ -273,11 +269,8 @@ mod tests {
         )
         .expect("valid imageset contents should be written");
 
-        fs::write(
-            broken_imageset_dir.join("Contents.json"),
-            r#"{"images": "#,
-        )
-        .expect("broken imageset contents should be written");
+        fs::write(broken_imageset_dir.join("Contents.json"), r#"{"images": "#)
+            .expect("broken imageset contents should be written");
 
         let report = parse_catalog(&catalog_dir).expect("catalog should parse");
 
@@ -319,7 +312,10 @@ mod tests {
             .warnings
             .iter()
             .filter(|warning| {
-                warning.path.as_ref().is_some_and(|path| path.ends_with("Widget.imagestack"))
+                warning
+                    .path
+                    .as_ref()
+                    .is_some_and(|path| path.ends_with("Widget.imagestack"))
             })
             .collect::<Vec<_>>();
 
@@ -368,12 +364,9 @@ mod tests {
         let report = parse_catalog(&catalog_dir).expect("catalog should parse");
 
         assert!(
-            report
-                .entries
-                .iter()
-                .any(|entry| {
-                    entry.kind == EntryKind::Image && entry.path == "Atlas.spriteatlas/Nested"
-                }),
+            report.entries.iter().any(|entry| {
+                entry.kind == EntryKind::Image && entry.path == "Atlas.spriteatlas/Nested"
+            }),
             "nested supported imageset should produce an entry"
         );
 

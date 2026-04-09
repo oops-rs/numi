@@ -388,7 +388,8 @@ builtin = "l10n"
     let generated = fs::read_to_string(working_root.join("Generated/L10n.swift"))
         .expect("generated l10n file should exist");
     assert!(
-        generated.contains("internal static let profileTitle = tr(\"Localizable\", \"profile.title\")")
+        generated
+            .contains("internal static let profileTitle = tr(\"Localizable\", \"profile.title\")")
     );
 
     fs::remove_dir_all(temp_root).expect("temp dir should be removed");

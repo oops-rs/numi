@@ -266,6 +266,7 @@ fn parse_xcstrings_file(path: &Path) -> Result<LocalizationTable, ParseL10nError
     }
 
     entries.sort_by(|left, right| left.path.cmp(&right.path));
+    warnings.sort_by(|left, right| left.message.cmp(&right.message));
 
     Ok(LocalizationTable {
         table_name,
@@ -1067,6 +1068,54 @@ mod tests {
         assert!(tables[0].warnings[0]
             .message
             .contains("unsupported variation tree"));
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn xcstrings_warnings_are_sorted_for_multiple_skipped_keys() {
+        let temp_dir = make_temp_dir("parse-xcstrings-warning-order");
+        let xcstrings_path = temp_dir.join("Localizable.xcstrings");
+        fs::write(
+            &xcstrings_path,
+            r#"{
+  "version": "1.0",
+  "sourceLanguage": "en",
+  "strings": {
+    "z.key": {
+      "localizations": {
+        "en": {}
+      }
+    },
+    "a.key": {
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld item"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"#,
+        )
+        .expect("xcstrings file should be written");
+
+        let tables = parse_xcstrings(&xcstrings_path).expect("xcstrings should parse");
+
+        assert_eq!(tables.len(), 1);
+        assert!(tables[0].entries.is_empty());
+        assert_eq!(tables[0].warnings.len(), 2);
+        assert!(tables[0].warnings[0].message.contains("a.key"));
+        assert!(tables[0].warnings[1].message.contains("z.key"));
 
         fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
     }

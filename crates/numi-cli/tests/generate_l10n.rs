@@ -321,6 +321,80 @@ fn generate_warns_and_succeeds_for_skipped_xcstrings_variations() {
 }
 
 #[test]
+fn generate_warns_and_succeeds_for_langcodec_skipped_xcstrings_entries() {
+    let temp_root = make_temp_dir("generate-xcstrings-langcodec-warning");
+    let working_root = temp_root.join("fixture");
+    let localization_root = working_root.join("Resources/Localization");
+    fs::create_dir_all(&localization_root).expect("localization directory should exist");
+    fs::write(
+        &working_root.join("numi.toml"),
+        r#"
+version = 1
+
+[[jobs]]
+name = "l10n"
+output = "Generated/L10n.swift"
+
+[[jobs.inputs]]
+type = "xcstrings"
+path = "Resources/Localization"
+
+[jobs.template]
+builtin = "l10n"
+"#,
+    )
+    .expect("config should be written");
+    fs::write(
+        localization_root.join("Localizable.xcstrings"),
+        r#"{
+  "version": "1.0",
+  "sourceLanguage": "en",
+  "strings": {
+    "profile.title": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Profile"
+          }
+        }
+      }
+    },
+    "Lv.%lld": {
+      "comment": "header only"
+    }
+  }
+}
+"#,
+    )
+    .expect("xcstrings file should be written");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_numi"))
+        .args(["generate", "--config", "numi.toml", "--job", "l10n"])
+        .current_dir(&working_root)
+        .output()
+        .expect("numi generate should run");
+
+    assert!(
+        output.status.success(),
+        "command failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("warning: skipping xcstrings key `Lv.%lld`"));
+
+    let generated = fs::read_to_string(working_root.join("Generated/L10n.swift"))
+        .expect("generated l10n file should exist");
+    assert!(
+        generated.contains("internal static let profileTitle = tr(\"Localizable\", \"profile.title\")")
+    );
+
+    fs::remove_dir_all(temp_root).expect("temp dir should be removed");
+}
+
+#[test]
 fn dump_context_emits_json_for_selected_job() {
     let fixture_root = repo_root().join("fixtures/l10n-basic");
 

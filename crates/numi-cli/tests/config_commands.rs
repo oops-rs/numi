@@ -315,27 +315,18 @@ builtin = "l10n"
   "version": "1.0",
   "sourceLanguage": "en",
   "strings": {
-    "things.label": {
+    "profile.title": {
       "localizations": {
         "en": {
-          "variations": {
-            "plural": {
-              "one": {
-                "stringUnit": {
-                  "state": "translated",
-                  "value": "%lld thing"
-                }
-              },
-              "other": {
-                "stringUnit": {
-                  "state": "translated",
-                  "value": "%lld things"
-                }
-              }
-            }
+          "stringUnit": {
+            "state": "translated",
+            "value": "Profile"
           }
         }
       }
+    },
+    "Lv.%lld": {
+      "comment": "header only"
     }
   }
 }
@@ -366,7 +357,11 @@ builtin = "l10n"
 
     let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
     assert!(
-        stderr.contains("warning: skipping xcstrings key `things.label`"),
+        stderr.contains("warning: skipping xcstrings key `Lv.%lld`"),
+        "stderr was: {stderr}"
+    );
+    assert!(
+        stderr.contains("does not contain a supported string unit"),
         "stderr was: {stderr}"
     );
     assert!(

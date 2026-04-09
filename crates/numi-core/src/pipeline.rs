@@ -625,6 +625,60 @@ builtin = "l10n"
     }
 
     #[test]
+    fn generate_accepts_strings_with_escaped_apostrophes_via_langcodec() {
+        let temp_dir = make_temp_dir("pipeline-strings-apostrophe");
+        let config_path = temp_dir.join("swiftgen.toml");
+        let localization_root = temp_dir.join("Resources/Localization/en.lproj");
+        fs::create_dir_all(&localization_root).expect("localization dir should exist");
+        fs::write(
+            localization_root.join("Localizable.strings"),
+            "\"invite.accept\" = \"Can\\'t accept the invitation\";\n",
+        )
+        .expect("strings file should be written");
+        fs::write(
+            &config_path,
+            r#"
+version = 1
+
+[[jobs]]
+name = "l10n"
+output = "Generated/L10n.swift"
+
+[[jobs.inputs]]
+type = "strings"
+path = "Resources/Localization"
+
+[jobs.template]
+builtin = "l10n"
+"#,
+        )
+        .expect("config should be written");
+
+        let report = generate(&config_path, None).expect("generation should succeed");
+        let generated_path = temp_dir.join("Generated/L10n.swift");
+        let generated = fs::read_to_string(&generated_path).expect("generated output should exist");
+
+        assert!(report.warnings.is_empty());
+        assert_eq!(
+            generated,
+            r#"import Foundation
+
+internal enum L10n {
+    internal enum Localizable {
+        internal static let inviteAccept = tr("Localizable", "invite.accept")
+    }
+}
+
+private func tr(_ table: String, _ key: String) -> String {
+    NSLocalizedString(key, tableName: table, bundle: .main, value: "", comment: "")
+}
+"#
+        );
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
     fn generate_renders_custom_template_includes_from_config_root() {
         let temp_dir = make_temp_dir("custom-template-shared-include");
         let config_path = temp_dir.join("numi.toml");

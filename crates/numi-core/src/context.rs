@@ -296,6 +296,8 @@ mod tests {
                             "translation".to_string(),
                             json!("Hello %#@name@, you have %#@count@ messages"),
                         ),
+                        ("status".to_string(), json!("translated")),
+                        ("comment".to_string(), json!("Greeting")),
                         (
                             "placeholders".to_string(),
                             json!([
@@ -335,6 +337,14 @@ mod tests {
         let serialized = serde_json::to_value(&context).expect("context should serialize");
 
         assert_eq!(serialized["modules"][0]["kind"], "xcstrings");
+        assert_eq!(
+            serialized["modules"][0]["entries"][0]["properties"]["status"],
+            "translated"
+        );
+        assert_eq!(
+            serialized["modules"][0]["entries"][0]["properties"]["comment"],
+            "Greeting"
+        );
         assert_eq!(
             serialized["modules"][0]["entries"][0]["properties"]["placeholders"],
             json!([

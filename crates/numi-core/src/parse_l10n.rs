@@ -208,8 +208,7 @@ fn parse_xcstrings_file(path: &Path) -> Result<LocalizationTable, ParseL10nError
     let mut warnings = Vec::new();
 
     for (key, record) in catalog.strings {
-        let Some(localization) = record
-            .selected_localization(catalog.source_language.as_deref())
+        let Some(localization) = record.selected_localization(catalog.source_language.as_deref())
         else {
             return Err(ParseL10nError::ParseFile {
                 path: path.to_path_buf(),
@@ -222,10 +221,15 @@ fn parse_xcstrings_file(path: &Path) -> Result<LocalizationTable, ParseL10nError
             continue;
         }
 
-        let translation = localization.string_unit.as_ref().ok_or_else(|| ParseL10nError::ParseFile {
-            path: path.to_path_buf(),
-            message: format!("xcstrings key `{key}` does not contain a string unit"),
-        })?.value.clone();
+        let translation = localization
+            .string_unit
+            .as_ref()
+            .ok_or_else(|| ParseL10nError::ParseFile {
+                path: path.to_path_buf(),
+                message: format!("xcstrings key `{key}` does not contain a string unit"),
+            })?
+            .value
+            .clone();
 
         let mut properties = Metadata::from([
             ("key".to_string(), Value::String(key.clone())),
@@ -579,7 +583,10 @@ struct XcstringsVariations {
 }
 
 impl XcstringsRecord {
-    fn selected_localization(&self, source_language: Option<&str>) -> Option<&XcstringsLocalization> {
+    fn selected_localization(
+        &self,
+        source_language: Option<&str>,
+    ) -> Option<&XcstringsLocalization> {
         if let Some(source_language) = source_language {
             if let Some(localization) = self.localizations.get(source_language) {
                 return Some(localization);
@@ -903,16 +910,13 @@ mod tests {
         assert!(tables[0].entries.is_empty());
         assert_eq!(tables[0].warnings.len(), 1);
         assert_eq!(tables[0].warnings[0].severity, Severity::Warning);
-        assert!(tables[0].warnings[0]
-            .message
-            .contains("things.label"));
-        assert!(tables[0].warnings[0]
-            .message
-            .contains("unsupported plural variations"));
-        assert_eq!(
-            tables[0].warnings[0].path,
-            Some(xcstrings_path.clone())
+        assert!(tables[0].warnings[0].message.contains("things.label"));
+        assert!(
+            tables[0].warnings[0]
+                .message
+                .contains("unsupported plural variations")
         );
+        assert_eq!(tables[0].warnings[0].path, Some(xcstrings_path.clone()));
 
         fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
     }

@@ -67,18 +67,22 @@ fn walk_nodes(
             xcassets::Node::Group(group) => {
                 walk_nodes(&group.children, catalog_root, entries, warnings)?;
             }
-            xcassets::Node::ImageSet(node) => entries.push(image_entry(node, catalog_root)?),
-            xcassets::Node::ColorSet(node) => entries.push(color_entry(node, catalog_root)?),
+            xcassets::Node::ImageSet(node) => {
+                if node.contents.is_some() {
+                    entries.push(image_entry(node, catalog_root)?);
+                }
+            }
+            xcassets::Node::ColorSet(node) => {
+                if node.contents.is_some() {
+                    entries.push(color_entry(node, catalog_root)?);
+                }
+            }
             xcassets::Node::AppIconSet(node) => warnings.push(unsupported_node_warning(
                 catalog_root,
                 &node.relative_path,
                 "appiconset",
             )),
-            xcassets::Node::Opaque(node) => warnings.push(unsupported_node_warning(
-                catalog_root,
-                &node.relative_path,
-                &node.folder_type,
-            )),
+            xcassets::Node::Opaque(_node) => {}
         }
     }
     Ok(())
@@ -241,6 +245,93 @@ mod tests {
             .as_ref()
             .expect("unsupported node warning should contain a path");
         assert!(warning_path.ends_with("AppIcon.appiconset"));
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn malformed_imageset_is_skipped_from_entries() {
+        let temp_dir = make_temp_dir("parse-xcassets-malformed-imageset");
+        let catalog_dir = temp_dir.join("Assets.xcassets");
+        let valid_imageset_dir = catalog_dir.join("Valid.imageset");
+        let broken_imageset_dir = catalog_dir.join("Broken.imageset");
+
+        fs::create_dir_all(&valid_imageset_dir).expect("valid imageset dir should exist");
+        fs::create_dir_all(&broken_imageset_dir).expect("broken imageset dir should exist");
+
+        fs::write(
+            catalog_dir.join("Contents.json"),
+            r#"{"info": {"author": "xcode", "version": 1}}"#,
+        )
+        .expect("catalog contents should be written");
+
+        fs::write(
+            valid_imageset_dir.join("Contents.json"),
+            r#"{"images": [], "info": {"author": "xcode", "version": 1}}"#,
+        )
+        .expect("valid imageset contents should be written");
+
+        fs::write(
+            broken_imageset_dir.join("Contents.json"),
+            r#"{"images": "#,
+        )
+        .expect("broken imageset contents should be written");
+
+        let report = parse_catalog(&catalog_dir).expect("catalog should parse");
+
+        assert_eq!(report.entries.len(), 1);
+        assert_eq!(report.entries[0].path, "Valid");
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|warning| warning.message.contains("invalid Contents.json")),
+            "malformed imageset should emit a parser warning"
+        );
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn unsupported_opaque_folder_emits_single_warning() {
+        let temp_dir = make_temp_dir("parse-xcassets-opaque-warning");
+        let catalog_dir = temp_dir.join("Assets.xcassets");
+        let opaque_dir = catalog_dir.join("Widget.imagestack");
+
+        fs::create_dir_all(&opaque_dir).expect("opaque folder should exist");
+
+        fs::write(
+            catalog_dir.join("Contents.json"),
+            r#"{"info": {"author": "xcode", "version": 1}}"#,
+        )
+        .expect("catalog contents should be written");
+
+        fs::write(
+            opaque_dir.join("Contents.json"),
+            r#"{"info": {"author": "xcode", "version": 1}}"#,
+        )
+        .expect("opaque folder contents should be written");
+
+        let report = parse_catalog(&catalog_dir).expect("catalog should parse");
+        let opaque_warnings = report
+            .warnings
+            .iter()
+            .filter(|warning| {
+                warning.path.as_ref().is_some_and(|path| path.ends_with("Widget.imagestack"))
+            })
+            .collect::<Vec<_>>();
+
+        assert!(report.entries.is_empty());
+        assert_eq!(opaque_warnings.len(), 1);
+        assert!(
+            opaque_warnings[0]
+                .message
+                .contains("unsupported folder type")
+                || opaque_warnings[0]
+                    .message
+                    .contains("unsupported asset node kind"),
+            "opaque warning should be present once"
+        );
 
         fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
     }

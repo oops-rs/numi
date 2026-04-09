@@ -2,6 +2,7 @@ pub mod cli;
 
 use std::{
     borrow::Cow,
+    collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
 };
@@ -175,9 +176,10 @@ fn run_generate_workspace(
 
     for member in workspace.members() {
         let config_path = workspace_dir.join(&member.config);
+        let selected_jobs = workspace_jobs(args, &member);
         let report = numi_core::generate_with_options(
             &config_path,
-            workspace_jobs(args, &member),
+            selected_jobs.as_deref(),
             numi_core::GenerateOptions {
                 incremental: args.incremental_override.resolve(),
             },
@@ -199,7 +201,8 @@ fn run_check_workspace(
 
     for member in workspace.members() {
         let config_path = workspace_dir.join(&member.config);
-        let report = numi_core::check(&config_path, workspace_jobs(args, &member))
+        let selected_jobs = workspace_jobs(args, &member);
+        let report = numi_core::check(&config_path, selected_jobs.as_deref())
             .map_err(|error| CliError::new(error.to_string()))?;
         print_warnings(&report.warnings);
         stale_paths.extend(
@@ -270,9 +273,7 @@ fn load_workspace_cli_manifest(explicit_path: Option<&Path>) -> Result<LoadedMan
     if let Some(explicit_path) = explicit_path {
         let manifest_path = numi_config::discover_workspace_ancestor(&cwd, Some(explicit_path))
             .map_err(workspace_manifest_discovery_error)?;
-        let loaded = numi_config::load_manifest_from_path(&manifest_path)
-            .map_err(|error| CliError::new(error.to_string()))?;
-        return require_workspace_manifest(loaded);
+        return load_workspace_manifest_candidate(&manifest_path);
     }
 
     let canonical_cwd = cwd
@@ -291,10 +292,8 @@ fn load_workspace_cli_manifest(explicit_path: Option<&Path>) -> Result<LoadedMan
                 candidate.display()
             ))
         })? {
-            ManifestKindSniff::WorkspaceLike => {
-                let loaded = numi_config::load_manifest_from_path(&candidate)
-                    .map_err(|error| CliError::new(error.to_string()))?;
-                return require_workspace_manifest(loaded);
+            ManifestKindSniff::WorkspaceLike | ManifestKindSniff::BrokenWorkspaceLike => {
+                return load_workspace_manifest_candidate(&candidate);
             }
             ManifestKindSniff::ConfigLike
             | ManifestKindSniff::Mixed
@@ -318,6 +317,16 @@ fn require_workspace_manifest(loaded: LoadedManifest) -> Result<LoadedManifest, 
             loaded.path.display()
         ))),
     }
+}
+
+fn load_workspace_manifest_candidate(path: &Path) -> Result<LoadedManifest, CliError> {
+    let loaded = numi_config::load_manifest_from_path(path).map_err(|error| {
+        CliError::new(format!(
+            "failed to load workspace manifest {}: {error}",
+            path.display()
+        ))
+    })?;
+    require_workspace_manifest(loaded)
 }
 
 fn workspace_manifest_discovery_error(error: numi_config::DiscoveryError) -> CliError {
@@ -392,12 +401,28 @@ fn workspace_member_jobs(member: &WorkspaceMember) -> Option<&[String]> {
     (!member.jobs.is_empty()).then_some(member.jobs.as_slice())
 }
 
-fn workspace_jobs<'a, T>(args: &'a T, member: &'a WorkspaceMember) -> Option<&'a [String]>
+fn workspace_jobs<T>(args: &T, member: &WorkspaceMember) -> Option<Vec<String>>
 where
     T: WorkspaceJobArgs,
 {
-    args.selected_jobs()
-        .or_else(|| workspace_member_jobs(member))
+    match (args.selected_jobs(), workspace_member_jobs(member)) {
+        (None, None) => None,
+        (Some(cli_jobs), None) => Some(cli_jobs.to_vec()),
+        (None, Some(member_jobs)) => Some(member_jobs.to_vec()),
+        (Some(cli_jobs), Some(member_jobs)) => {
+            let allowed_jobs = member_jobs
+                .iter()
+                .map(String::as_str)
+                .collect::<BTreeSet<_>>();
+            Some(
+                cli_jobs
+                    .iter()
+                    .filter(|job| allowed_jobs.contains(job.as_str()))
+                    .cloned()
+                    .collect(),
+            )
+        }
+    }
 }
 
 fn normalize_workspace_stale_path(path: &Path, workspace_dir: &Path) -> PathBuf {

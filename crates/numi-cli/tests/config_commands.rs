@@ -793,6 +793,53 @@ members = ["apps/assets", "packages/files"]
 }
 
 #[test]
+fn generate_workspace_reports_nearer_broken_workspace_manifest() {
+    let temp_root = make_temp_dir("generate-workspace-broken-nearer-workspace-manifest");
+    let workspace_root = temp_root.join("workspace");
+    let app_parent = workspace_root.join("apps");
+    let assets_root = app_parent.join("assets");
+    let files_root = workspace_root.join("packages/files");
+
+    copy_dir_all(&repo_root().join("fixtures/xcassets-basic"), &assets_root);
+    copy_dir_all(&repo_root().join("fixtures/files-basic"), &files_root);
+    write_manifest(
+        &workspace_root,
+        r#"
+version = 1
+
+[workspace]
+members = ["apps/assets", "packages/files"]
+"#,
+    );
+    fs::write(
+        app_parent.join("numi.toml"),
+        "version = 1\n[workspace]\nmembers = [\n",
+    )
+    .expect("broken nearer workspace manifest should be written");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_numi"))
+        .args(["generate", "--workspace"])
+        .current_dir(&assets_root)
+        .output()
+        .expect("numi generate --workspace should run");
+
+    assert!(!output.status.success(), "command unexpectedly succeeded");
+
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
+    assert!(stderr.contains("failed to parse"), "stderr was: {stderr}");
+    assert!(
+        !assets_root.join("Generated/Assets.swift").exists(),
+        "member output should not be generated when nearer workspace manifest is broken"
+    );
+    assert!(
+        !files_root.join("Generated/Files.swift").exists(),
+        "higher workspace output should not be generated when nearer workspace manifest is broken"
+    );
+
+    fs::remove_dir_all(temp_root).expect("temp dir should be removed");
+}
+
+#[test]
 fn generate_workspace_detects_inline_table_workspace_manifests() {
     let temp_root = make_temp_dir("generate-workspace-inline-table-manifest");
     let workspace_root = temp_root.join("workspace");
@@ -1014,6 +1061,91 @@ members = ["apps/assets", "packages/files"]
     assert!(
         stderr.contains("packages/files/Generated/Files.swift"),
         "stderr was: {stderr}"
+    );
+
+    fs::remove_dir_all(temp_root).expect("temp dir should be removed");
+}
+
+#[test]
+fn generate_workspace_cli_jobs_narrow_member_overrides() {
+    let temp_root = make_temp_dir("generate-workspace-cli-jobs-narrow-member-overrides");
+    let workspace_root = temp_root.join("workspace");
+    let member_root = workspace_root.join("apps/mixed");
+
+    fs::create_dir_all(member_root.join("Resources")).expect("member resources dir should exist");
+    copy_dir_all(
+        &repo_root().join("fixtures/xcassets-basic/Resources/Assets.xcassets"),
+        &member_root.join("Resources/Assets.xcassets"),
+    );
+    copy_dir_all(
+        &repo_root().join("fixtures/l10n-basic/Resources/Localization"),
+        &member_root.join("Resources/Localization"),
+    );
+    write_manifest(
+        &member_root,
+        r#"
+version = 1
+
+[jobs.assets]
+output = "Generated/Assets.swift"
+
+[[jobs.assets.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.assets.template.builtin]
+swift = "swiftui-assets"
+
+[jobs.l10n]
+output = "Generated/L10n.swift"
+
+[[jobs.l10n.inputs]]
+type = "strings"
+path = "Resources/Localization"
+
+[jobs.l10n.template.builtin]
+swift = "l10n"
+"#,
+    );
+    write_manifest(
+        &workspace_root,
+        r#"
+version = 1
+
+[workspace]
+members = ["apps/mixed"]
+
+[workspace.member_overrides."apps/mixed"]
+jobs = ["assets"]
+"#,
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_numi"))
+        .args([
+            "generate",
+            "--workspace",
+            "--job",
+            "assets",
+            "--job",
+            "l10n",
+        ])
+        .current_dir(&member_root)
+        .output()
+        .expect("numi generate --workspace should run");
+
+    assert!(
+        output.status.success(),
+        "command failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        member_root.join("Generated/Assets.swift").exists(),
+        "allowed member job should be generated"
+    );
+    assert!(
+        !member_root.join("Generated/L10n.swift").exists(),
+        "cli-selected jobs should be narrowed by the member override"
     );
 
     fs::remove_dir_all(temp_root).expect("temp dir should be removed");

@@ -39,6 +39,7 @@ pub enum Manifest {
 pub enum ManifestKindSniff {
     ConfigLike,
     WorkspaceLike,
+    BrokenWorkspaceLike,
     Mixed,
     Unknown,
     Unparsable,
@@ -119,6 +120,9 @@ pub fn parse_manifest_str(input: &str) -> Result<Manifest, ConfigError> {
         ManifestKindSniff::WorkspaceLike => workspace::parse_workspace_str(input)
             .map(Manifest::Workspace)
             .map_err(ConfigError::from),
+        ManifestKindSniff::BrokenWorkspaceLike => toml::from_str::<toml::Value>(input)
+            .map(|_| unreachable!("successful TOML parsing must produce a known sniff kind"))
+            .map_err(ConfigError::ParseToml),
         ManifestKindSniff::Mixed => Err(ConfigError::Invalid(vec![
             Diagnostic::error("manifest must not define both `jobs` and `workspace`")
                 .with_hint(
@@ -138,12 +142,10 @@ pub fn parse_manifest_str(input: &str) -> Result<Manifest, ConfigError> {
 }
 
 pub fn sniff_manifest_kind_str(input: &str) -> ManifestKindSniff {
-    let value: toml::Value = match toml::from_str(input) {
-        Ok(value) => value,
-        Err(_) => return ManifestKindSniff::Unparsable,
-    };
-
-    sniff_manifest_kind_value(&value)
+    match toml::from_str::<toml::Value>(input) {
+        Ok(value) => sniff_manifest_kind_value(&value),
+        Err(_) => sniff_manifest_kind_lossy(input),
+    }
 }
 
 pub fn sniff_manifest_kind_from_path(path: &Path) -> Result<ManifestKindSniff, std::io::Error> {
@@ -152,16 +154,172 @@ pub fn sniff_manifest_kind_from_path(path: &Path) -> Result<ManifestKindSniff, s
 }
 
 fn sniff_manifest_kind_value(value: &toml::Value) -> ManifestKindSniff {
-    let has_jobs = value.get("jobs").is_some();
-    let has_workspace = value.get("workspace").is_some();
-    let has_legacy_workspace_members = value.get("members").is_some();
+    classify_manifest_shape(
+        value.get("jobs").is_some(),
+        value.get("workspace").is_some() || value.get("members").is_some(),
+        false,
+    )
+}
 
-    match (has_jobs, has_workspace || has_legacy_workspace_members) {
-        (true, false) => ManifestKindSniff::ConfigLike,
-        (false, true) => ManifestKindSniff::WorkspaceLike,
-        (true, true) => ManifestKindSniff::Mixed,
-        (false, false) => ManifestKindSniff::Unknown,
+fn sniff_manifest_kind_lossy(input: &str) -> ManifestKindSniff {
+    let mut in_root = true;
+    let mut has_jobs = false;
+    let mut has_workspaceish = false;
+
+    for line in input.lines() {
+        let Some(trimmed) = strip_toml_comment(line) else {
+            continue;
+        };
+
+        if let Some(header) = parse_toml_table_header(trimmed) {
+            in_root = false;
+
+            if header.is_array {
+                if header.path.len() == 1 && header.path[0] == "members" {
+                    has_workspaceish = true;
+                }
+            } else if header
+                .path
+                .first()
+                .is_some_and(|segment| *segment == "workspace")
+            {
+                has_workspaceish = true;
+            }
+
+            continue;
+        }
+
+        if in_root
+            && let Some(path) = parse_toml_key_path_before_equals(trimmed)
+            && let Some(segment) = path.first().copied()
+        {
+            match segment {
+                "jobs" => has_jobs = true,
+                "workspace" | "members" => has_workspaceish = true,
+                _ => {}
+            }
+        }
     }
+
+    classify_manifest_shape(has_jobs, has_workspaceish, true)
+}
+
+fn classify_manifest_shape(
+    has_jobs: bool,
+    has_workspaceish: bool,
+    lossy: bool,
+) -> ManifestKindSniff {
+    match (has_jobs, has_workspaceish, lossy) {
+        (true, false, _) => ManifestKindSniff::ConfigLike,
+        (false, true, false) => ManifestKindSniff::WorkspaceLike,
+        (false, true, true) => ManifestKindSniff::BrokenWorkspaceLike,
+        (true, true, _) => ManifestKindSniff::Mixed,
+        (false, false, false) => ManifestKindSniff::Unknown,
+        (false, false, true) => ManifestKindSniff::Unparsable,
+    }
+}
+
+fn strip_toml_comment(line: &str) -> Option<&str> {
+    let mut in_basic = false;
+    let mut in_literal = false;
+    let mut escape = false;
+
+    for (index, ch) in line.char_indices() {
+        match ch {
+            '"' if !in_literal && !escape => in_basic = !in_basic,
+            '\'' if !in_basic => in_literal = !in_literal,
+            '#' if !in_basic && !in_literal => {
+                let trimmed = line[..index].trim();
+                return (!trimmed.is_empty()).then_some(trimmed);
+            }
+            _ => {}
+        }
+
+        escape = in_basic && ch == '\\' && !escape;
+        if ch != '\\' {
+            escape = false;
+        }
+    }
+
+    let trimmed = line.trim();
+    (!trimmed.is_empty()).then_some(trimmed)
+}
+
+struct TomlHeader<'a> {
+    is_array: bool,
+    path: Vec<&'a str>,
+}
+
+fn parse_toml_table_header(line: &str) -> Option<TomlHeader<'_>> {
+    if let Some(inner) = line
+        .strip_prefix("[[")
+        .and_then(|rest| rest.strip_suffix("]]"))
+    {
+        return Some(TomlHeader {
+            is_array: true,
+            path: parse_toml_path(inner)?,
+        });
+    }
+
+    line.strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+        .and_then(parse_toml_path)
+        .map(|path| TomlHeader {
+            is_array: false,
+            path,
+        })
+}
+
+fn parse_toml_key_path_before_equals(line: &str) -> Option<Vec<&str>> {
+    let mut in_basic = false;
+    let mut in_literal = false;
+    let mut escape = false;
+
+    for (index, ch) in line.char_indices() {
+        match ch {
+            '"' if !in_literal && !escape => in_basic = !in_basic,
+            '\'' if !in_basic => in_literal = !in_literal,
+            '=' if !in_basic && !in_literal => return parse_toml_path(&line[..index]),
+            _ => {}
+        }
+
+        escape = in_basic && ch == '\\' && !escape;
+        if ch != '\\' {
+            escape = false;
+        }
+    }
+
+    None
+}
+
+fn parse_toml_path(input: &str) -> Option<Vec<&str>> {
+    let path = input
+        .split('.')
+        .map(|segment| segment.trim())
+        .filter(|segment| !segment.is_empty())
+        .map(unquote_toml_key_segment)
+        .collect::<Vec<_>>();
+
+    (!path.is_empty()).then_some(path)
+}
+
+fn unquote_toml_key_segment(segment: &str) -> &str {
+    if segment.len() >= 2 {
+        if let Some(unquoted) = segment
+            .strip_prefix('"')
+            .and_then(|rest| rest.strip_suffix('"'))
+        {
+            return unquoted.trim();
+        }
+        if let Some(unquoted) = segment
+            .strip_prefix('\'')
+            .and_then(|rest| rest.strip_suffix('\''))
+        {
+            return unquoted.trim();
+        }
+    }
+
+    segment
 }
 
 fn detect_legacy_jobs_array_syntax(value: &toml::Value) -> Vec<Diagnostic> {
@@ -399,6 +557,34 @@ workspace={members=["AppUI"]}
     }
 
     #[test]
+    fn sniffs_broken_workspace_like_manifests_without_classifying_them_as_unknown() {
+        assert_eq!(
+            sniff_manifest_kind_str(
+                r#"
+version = 1
+[workspace]
+members = [
+"#
+            ),
+            ManifestKindSniff::BrokenWorkspaceLike
+        );
+    }
+
+    #[test]
+    fn sniffs_broken_mixed_manifests_as_mixed() {
+        assert_eq!(
+            sniff_manifest_kind_str(
+                r#"
+version = 1
+jobs = {}
+members = [
+"#
+            ),
+            ManifestKindSniff::Mixed
+        );
+    }
+
+    #[test]
     fn sniffs_legacy_top_level_members_manifest_as_workspace_like() {
         assert_eq!(
             sniff_manifest_kind_str(
@@ -426,7 +612,7 @@ members = [{ config = "AppUI/numi.toml" }]
     }
 
     #[test]
-    fn sniffs_unparsable_manifests_without_classifying_them() {
+    fn sniffs_workspaceish_unparsable_manifests_as_broken_workspace_like() {
         assert_eq!(
             sniff_manifest_kind_str(
                 r#"
@@ -434,7 +620,7 @@ version = 1
 members = [
 "#
             ),
-            ManifestKindSniff::Unparsable
+            ManifestKindSniff::BrokenWorkspaceLike
         );
     }
 

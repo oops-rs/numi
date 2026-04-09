@@ -11,8 +11,7 @@ use cli::{
 };
 use numi_config::CONFIG_FILE_NAME;
 
-const STARTER_CONFIG_FALLBACK: &str =
-    include_str!("../../../docs/examples/starter-swiftgen.toml");
+const STARTER_CONFIG_FALLBACK: &str = include_str!("../../../docs/examples/starter-numi.toml");
 
 #[derive(Debug)]
 pub struct CliError {

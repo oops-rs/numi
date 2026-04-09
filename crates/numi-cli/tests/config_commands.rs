@@ -251,11 +251,6 @@ fn check_returns_exit_code_2_for_stale_output_without_rewriting_file() {
     let fixture_root = repo_root().join("fixtures/xcassets-basic");
     let working_root = temp_root.join("fixture");
     copy_dir_all(&fixture_root, &working_root);
-    fs::copy(
-        working_root.join("swiftgen.toml"),
-        working_root.join("numi.toml"),
-    )
-    .expect("numi config should be created from fixture");
 
     let generated_path = working_root.join("Generated/Assets.swift");
     fs::create_dir_all(
@@ -431,11 +426,10 @@ fn init_creates_starter_numi_toml() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let created =
-        fs::read_to_string(root.join("numi.toml")).expect("starter config should exist");
+    let created = fs::read_to_string(root.join("numi.toml")).expect("starter config should exist");
     assert_eq!(
         created,
-        include_str!("../../../docs/examples/starter-swiftgen.toml")
+        include_str!("../../../docs/examples/starter-numi.toml")
     );
     assert!(
         created.contains("builtin = \"l10n\""),

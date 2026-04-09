@@ -360,7 +360,12 @@ fn build_modules(config_dir: &Path, job: &JobConfig) -> Result<BuildModulesResul
                         source,
                     }
                 })?;
-                warnings.extend(report.warnings);
+                warnings.extend(
+                    report
+                        .warnings
+                        .into_iter()
+                        .map(|warning| warning.with_job(job.name.clone())),
+                );
                 asset_entries.extend(report.entries);
             }
             "strings" => {

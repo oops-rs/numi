@@ -82,7 +82,9 @@ fn walk_nodes(
                 &node.relative_path,
                 "appiconset",
             )),
-            xcassets::Node::Opaque(_node) => {}
+            xcassets::Node::Opaque(node) => {
+                walk_nodes(&node.children, catalog_root, entries, warnings)?;
+            }
         }
     }
     Ok(())
@@ -331,6 +333,48 @@ mod tests {
                     .message
                     .contains("unsupported asset node kind"),
             "opaque warning should be present once"
+        );
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn supported_assets_nested_under_opaque_node_are_discovered() {
+        let temp_dir = make_temp_dir("parse-xcassets-opaque-nested-supported");
+        let catalog_dir = temp_dir.join("Assets.xcassets");
+        let opaque_dir = catalog_dir.join("Atlas.spriteatlas");
+        let nested_imageset_dir = opaque_dir.join("Nested.imageset");
+
+        fs::create_dir_all(&nested_imageset_dir).expect("nested imageset dir should exist");
+
+        fs::write(
+            catalog_dir.join("Contents.json"),
+            r#"{"info": {"author": "xcode", "version": 1}}"#,
+        )
+        .expect("catalog contents should be written");
+
+        fs::write(
+            opaque_dir.join("Contents.json"),
+            r#"{"info": {"author": "xcode", "version": 1}}"#,
+        )
+        .expect("opaque contents should be written");
+
+        fs::write(
+            nested_imageset_dir.join("Contents.json"),
+            r#"{"images": [], "info": {"author": "xcode", "version": 1}}"#,
+        )
+        .expect("nested imageset contents should be written");
+
+        let report = parse_catalog(&catalog_dir).expect("catalog should parse");
+
+        assert!(
+            report
+                .entries
+                .iter()
+                .any(|entry| {
+                    entry.kind == EntryKind::Image && entry.path == "Atlas.spriteatlas/Nested"
+                }),
+            "nested supported imageset should produce an entry"
         );
 
         fs::remove_dir_all(temp_dir).expect("temp dir should be removed");

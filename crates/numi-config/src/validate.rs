@@ -92,8 +92,12 @@ pub fn validate_config(config: &Config) -> Vec<Diagnostic> {
             );
         }
 
-        let template_sources =
-            usize::from(job.template.builtin.is_some()) + usize::from(job.template.path.is_some());
+        let template_sources = usize::from(
+            job.template
+                .builtin
+                .as_ref()
+                .is_some_and(|builtin| !builtin.is_empty()),
+        ) + usize::from(job.template.path.is_some());
         if template_sources != 1 {
             diagnostics.push(
                 Diagnostic::error("job template must set exactly one source")

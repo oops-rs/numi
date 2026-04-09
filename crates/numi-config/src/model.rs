@@ -54,7 +54,7 @@ pub struct InputConfig {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TemplateConfig {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "TemplateConfig::builtin_is_empty")]
     pub builtin: Option<BuiltinTemplateConfig>,
     pub path: Option<String>,
 }
@@ -63,6 +63,21 @@ pub struct TemplateConfig {
 #[serde(deny_unknown_fields)]
 pub struct BuiltinTemplateConfig {
     pub swift: Option<String>,
+}
+
+impl TemplateConfig {
+    fn builtin_is_empty(builtin: &Option<BuiltinTemplateConfig>) -> bool {
+        match builtin {
+            None => true,
+            Some(builtin) => builtin.is_empty(),
+        }
+    }
+}
+
+impl BuiltinTemplateConfig {
+    pub fn is_empty(&self) -> bool {
+        self.swift.is_none()
+    }
 }
 
 impl DefaultsConfig {

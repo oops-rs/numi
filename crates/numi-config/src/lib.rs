@@ -267,6 +267,33 @@ path = "Resources/Assets.xcassets"
     }
 
     #[test]
+    fn serializing_empty_builtin_namespace_omits_builtin_table() {
+        let config = Config {
+            version: 1,
+            defaults: DefaultsConfig::default(),
+            jobs: vec![JobConfig {
+                name: "assets".to_string(),
+                output: "Generated/Assets.swift".to_string(),
+                access_level: None,
+                bundle: BundleConfig::default(),
+                inputs: vec![InputConfig {
+                    kind: "xcassets".to_string(),
+                    path: "Resources/Assets.xcassets".to_string(),
+                }],
+                template: TemplateConfig {
+                    builtin: Some(BuiltinTemplateConfig { swift: None }),
+                    path: None,
+                },
+            }],
+        };
+
+        let serialized = toml::to_string(&config).expect("config should serialize");
+
+        assert!(!serialized.contains("[jobs.template.builtin]"));
+        assert!(!serialized.contains("swift ="));
+    }
+
+    #[test]
     fn rejects_invalid_v1_enum_values() {
         let error = parse_str(
             r#"

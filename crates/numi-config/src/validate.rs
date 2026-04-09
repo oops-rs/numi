@@ -4,7 +4,7 @@ use numi_diagnostics::Diagnostic;
 
 use crate::model::{
     ACCESS_LEVEL_VALUES, BUNDLE_MODE_VALUES, Config, INPUT_KIND_VALUES,
-    SWIFT_BUILTIN_TEMPLATE_VALUES,
+    SWIFT_BUILTIN_TEMPLATE_VALUES, TemplateConfig,
 };
 
 pub fn validate_config(config: &Config) -> Vec<Diagnostic> {
@@ -95,40 +95,61 @@ pub fn validate_config(config: &Config) -> Vec<Diagnostic> {
             );
         }
 
-        let template_sources = usize::from(
-            job.template
-                .builtin
-                .as_ref()
-                .is_some_and(|builtin| !builtin.is_empty()),
-        ) + usize::from(job.template.path.is_some());
-        if template_sources != 1 {
-            diagnostics.push(
-                Diagnostic::error("job template must set exactly one source")
-                    .with_job(job.name.clone())
-                    .with_hint("set either `[jobs.<name>.template.builtin] swift = \"...\"` or `[jobs.<name>.template] path = \"...\"`"),
-            );
-        }
-
-        if let Some(builtin) = &job.template.builtin {
-            if builtin.swift.is_none() && job.template.path.is_none() {
-                diagnostics.push(
-                    Diagnostic::error("job template builtin must set exactly one namespace")
-                        .with_job(job.name.clone())
-                        .with_hint("set `[jobs.<name>.template.builtin] swift = \"...\"`"),
-                );
-            } else if let Some(swift_builtin) = builtin.swift.as_deref() {
-                validate_allowed_value(
-                    &mut diagnostics,
-                    "jobs.template.builtin.swift",
-                    swift_builtin,
-                    SWIFT_BUILTIN_TEMPLATE_VALUES,
-                    Some(job.name.as_str()),
-                );
-            }
-        }
+        validate_template(
+            &mut diagnostics,
+            &job.template,
+            "job template",
+            &format!("jobs.{}.template", job.name),
+            Some(job.name.as_str()),
+        );
     }
 
     diagnostics
+}
+
+pub(crate) fn validate_template(
+    diagnostics: &mut Vec<Diagnostic>,
+    template: &TemplateConfig,
+    label: &str,
+    field_path: &str,
+    job: Option<&str>,
+) {
+    let template_sources = usize::from(
+        template
+            .builtin
+            .as_ref()
+            .is_some_and(|builtin| !builtin.is_empty()),
+    ) + usize::from(template.path.is_some());
+    if template_sources != 1 {
+        let diagnostic = Diagnostic::error(format!("{label} must set exactly one source"))
+            .with_hint(format!(
+                "set either `[{field_path}.builtin] swift = \"...\"` or `[{field_path}] path = \"...\"`"
+            ));
+        diagnostics.push(match job {
+            Some(job) => diagnostic.with_job(job.to_owned()),
+            None => diagnostic,
+        });
+    }
+
+    if let Some(builtin) = &template.builtin {
+        if builtin.swift.is_none() && template.path.is_none() {
+            let diagnostic =
+                Diagnostic::error(format!("{label} builtin must set exactly one namespace"))
+                    .with_hint(format!("set `[{field_path}.builtin] swift = \"...\"`"));
+            diagnostics.push(match job {
+                Some(job) => diagnostic.with_job(job.to_owned()),
+                None => diagnostic,
+            });
+        } else if let Some(swift_builtin) = builtin.swift.as_deref() {
+            validate_allowed_value(
+                diagnostics,
+                &format!("{field_path}.builtin.swift"),
+                swift_builtin,
+                SWIFT_BUILTIN_TEMPLATE_VALUES,
+                job,
+            );
+        }
+    }
 }
 
 fn validate_allowed_value(

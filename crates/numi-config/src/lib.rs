@@ -610,7 +610,7 @@ swift = "swiftui-assets"
 
         let message = error.to_string();
         assert!(message.contains("job template must set exactly one source"));
-        assert!(message.contains("set either `[jobs.<name>.template.builtin] swift = \"...\"` or `[jobs.<name>.template] path = \"...\"`"));
+        assert!(message.contains("set either `[jobs.assets.template.builtin] swift = \"...\"` or `[jobs.assets.template] path = \"...\"`"));
     }
 
     #[test]
@@ -633,7 +633,7 @@ path = "Resources/Assets.xcassets"
 
         let message = error.to_string();
         assert!(message.contains("job template builtin must set exactly one namespace"));
-        assert!(message.contains("set `[jobs.<name>.template.builtin] swift = \"...\"`"));
+        assert!(message.contains("set `[jobs.assets.template.builtin] swift = \"...\"`"));
     }
 
     #[test]
@@ -707,7 +707,7 @@ swift = ""
         .expect_err("empty swift builtin name should fail validation");
 
         let message = error.to_string();
-        assert!(message.contains("jobs.template.builtin.swift must be one of"));
+        assert!(message.contains("jobs.assets.template.builtin.swift must be one of"));
         assert!(message.contains("got ``"));
     }
 
@@ -731,7 +731,7 @@ swift = "not-a-real-template"
         .expect_err("unknown swift builtin name should fail validation");
 
         let message = error.to_string();
-        assert!(message.contains("jobs.template.builtin.swift must be one of"));
+        assert!(message.contains("jobs.assets.template.builtin.swift must be one of"));
         assert!(message.contains("not-a-real-template"));
     }
 

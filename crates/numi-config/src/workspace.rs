@@ -7,10 +7,7 @@ use std::{
 use numi_diagnostics::Diagnostic;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    ConfigError, DiscoveryError,
-    model::{SWIFT_BUILTIN_TEMPLATE_VALUES, TemplateConfig},
-};
+use crate::{ConfigError, DiscoveryError, model::TemplateConfig, validate::validate_template};
 
 pub const WORKSPACE_FILE_NAME: &str = "numi-workspace.toml";
 
@@ -313,9 +310,10 @@ fn validate_workspace(config: &RawWorkspaceManifest) -> Vec<Diagnostic> {
     for (job_name, job_defaults) in &config.workspace.defaults.jobs {
         validate_template(
             &mut diagnostics,
-            job_name,
             &job_defaults.template,
             "workspace default job template",
+            &format!("workspace.defaults.jobs.{job_name}.template"),
+            Some(job_name.as_str()),
         );
     }
 
@@ -393,64 +391,6 @@ fn is_config_path(member: &str) -> bool {
     Path::new(member)
         .extension()
         .is_some_and(|extension| extension == "toml")
-}
-
-fn validate_template(
-    diagnostics: &mut Vec<Diagnostic>,
-    job_name: &str,
-    template: &TemplateConfig,
-    label: &str,
-) {
-    let template_sources = usize::from(
-        template
-            .builtin
-            .as_ref()
-            .is_some_and(|builtin| !builtin.is_empty()),
-    ) + usize::from(template.path.is_some());
-
-    if template_sources != 1 {
-        diagnostics.push(
-            Diagnostic::error(format!("{label} must set exactly one source"))
-                .with_job(job_name.to_owned())
-                .with_hint(
-                    "set either `[workspace.defaults.jobs.<name>.template.builtin] swift = \"...\"` or `[workspace.defaults.jobs.<name>.template] path = \"...\"`",
-                ),
-        );
-    }
-
-    if let Some(builtin) = &template.builtin {
-        if builtin.swift.is_none() && template.path.is_none() {
-            diagnostics.push(
-                Diagnostic::error(format!("{label} builtin must set exactly one namespace"))
-                    .with_job(job_name.to_owned())
-                    .with_hint(
-                        "set `[workspace.defaults.jobs.<name>.template.builtin] swift = \"...\"`",
-                    ),
-            );
-        } else if let Some(swift_builtin) = builtin.swift.as_deref() {
-            if !SWIFT_BUILTIN_TEMPLATE_VALUES.contains(&swift_builtin) {
-                diagnostics.push(
-                    Diagnostic::error(format!(
-                        "workspace defaults template builtin.swift must be one of {} (got `{swift_builtin}`)",
-                        join_allowed_values(SWIFT_BUILTIN_TEMPLATE_VALUES)
-                    ))
-                    .with_job(job_name.to_owned())
-                    .with_hint(format!(
-                        "use one of: {}",
-                        join_allowed_values(SWIFT_BUILTIN_TEMPLATE_VALUES)
-                    )),
-                );
-            }
-        }
-    }
-}
-
-fn join_allowed_values(values: &[&str]) -> String {
-    values
-        .iter()
-        .map(|value| format!("`{value}`"))
-        .collect::<Vec<_>>()
-        .join(", ")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]

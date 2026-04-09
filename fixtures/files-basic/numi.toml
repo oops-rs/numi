@@ -8,5 +8,5 @@ output = "Generated/Files.swift"
 type = "files"
 path = "Resources/Fixtures"
 
-[jobs.template]
-builtin = "files"
+[jobs.template.builtin]
+swift = "files"

@@ -11,5 +11,5 @@ output = "Generated/L10n.swift"
 type = "strings"
 path = "Resources/Localization"
 
-[jobs.template]
-builtin = "l10n"
+[jobs.template.builtin]
+swift = "l10n"

@@ -8,5 +8,5 @@ output = "Generated/Assets.swift"
 type = "xcassets"
 path = "Resources/Assets.xcassets"
 
-[jobs.template]
-builtin = "swiftui-assets"
+[jobs.template.builtin]
+swift = "swiftui-assets"

@@ -61,8 +61,8 @@ output = "Generated/Assets.swift"
 type = "xcassets"
 path = "Resources/Assets.xcassets"
 
-[jobs.template]
-builtin = "swiftui-assets"
+[jobs.template.builtin]
+swift = "swiftui-assets"
 "#,
     )
     .expect("config should be written");
@@ -139,8 +139,8 @@ output = "Generated/Ancestor.swift"
 type = "xcassets"
 path = "Resources/Ancestor.xcassets"
 
-[jobs.template]
-builtin = "swiftui-assets"
+[jobs.template.builtin]
+swift = "swiftui-assets"
 "#,
     )
     .expect("ancestor config should be written");
@@ -159,8 +159,8 @@ output = "Generated/Explicit.swift"
 type = "strings"
 path = "Resources/Localization"
 
-[jobs.template]
-builtin = "l10n"
+[jobs.template.builtin]
+swift = "l10n"
 "#,
     )
     .expect("explicit config should be written");
@@ -217,8 +217,8 @@ output = "Generated/Assets.swift"
 type = "xcassets"
 path = "Resources/Assets.xcassets"
 
-[jobs.template]
-builtin = "swiftui-assets"
+[jobs.template.builtin]
+swift = "swiftui-assets"
 "#,
     )
     .expect("descendant config should be written");
@@ -304,8 +304,8 @@ output = "Generated/L10n.swift"
 type = "xcstrings"
 path = "Resources/Localization"
 
-[jobs.template]
-builtin = "l10n"
+[jobs.template.builtin]
+swift = "l10n"
 "#,
     )
     .expect("config should be written");
@@ -469,7 +469,11 @@ fn init_creates_starter_numi_toml() {
         include_str!("../../../docs/examples/starter-numi.toml")
     );
     assert!(
-        created.contains("builtin = \"l10n\""),
+        created.contains("[jobs.template.builtin]"),
+        "starter config was: {created}"
+    );
+    assert!(
+        created.contains("swift = \"l10n\""),
         "starter config was: {created}"
     );
     assert!(
@@ -524,8 +528,8 @@ output = "Generated/Assets.swift"
 type = "xcassets"
 path = "Resources/Assets.xcassets"
 
-[jobs.template]
-builtin = "swiftui-assets"
+[jobs.template.builtin]
+swift = "swiftui-assets"
 "#,
     )
     .expect("config should be written");
@@ -564,8 +568,8 @@ output = "Generated/L10n.swift"
 type = "strings"
 path = "Resources/Localization"
 
-[jobs.template]
-builtin = "l10n"
+[jobs.template.builtin]
+swift = "l10n"
 "#,
     )
     .expect("config should be written");
@@ -592,7 +596,11 @@ builtin = "l10n"
     assert!(stdout.contains("mode = \"module\""), "stdout was: {stdout}");
     assert!(stdout.contains("name = \"l10n\""), "stdout was: {stdout}");
     assert!(
-        stdout.contains("builtin = \"l10n\""),
+        stdout.contains("[jobs.template.builtin]"),
+        "stdout was: {stdout}"
+    );
+    assert!(
+        stdout.contains("swift = \"l10n\""),
         "stdout was: {stdout}"
     );
 
@@ -623,7 +631,11 @@ fn config_print_emits_files_builtin_and_input_kind() {
     assert!(stdout.contains("name = \"files\""), "stdout was: {stdout}");
     assert!(stdout.contains("type = \"files\""), "stdout was: {stdout}");
     assert!(
-        stdout.contains("builtin = \"files\""),
+        stdout.contains("[jobs.template.builtin]"),
+        "stdout was: {stdout}"
+    );
+    assert!(
+        stdout.contains("swift = \"files\""),
         "stdout was: {stdout}"
     );
     assert!(stdout.contains("mode = \"module\""), "stdout was: {stdout}");

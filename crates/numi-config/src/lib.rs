@@ -35,6 +35,15 @@ pub enum Manifest {
     Workspace(WorkspaceConfig),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManifestKindSniff {
+    ConfigLike,
+    WorkspaceLike,
+    Mixed,
+    Unknown,
+    Unparsable,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoadedManifest {
     pub path: PathBuf,
@@ -105,28 +114,53 @@ pub fn parse_str(input: &str) -> Result<Config, ConfigError> {
 }
 
 pub fn parse_manifest_str(input: &str) -> Result<Manifest, ConfigError> {
-    let value: toml::Value = toml::from_str(input).map_err(ConfigError::ParseToml)?;
-    let has_jobs = value.get("jobs").is_some();
-    let has_workspace = value.get("workspace").is_some();
-    let has_legacy_workspace_members = value.get("members").is_some();
-
-    match (has_jobs, has_workspace || has_legacy_workspace_members) {
-        (true, false) => parse_str(input).map(Manifest::Config),
-        (false, true) => workspace::parse_workspace_str(input)
+    match sniff_manifest_kind_str(input) {
+        ManifestKindSniff::ConfigLike => parse_str(input).map(Manifest::Config),
+        ManifestKindSniff::WorkspaceLike => workspace::parse_workspace_str(input)
             .map(Manifest::Workspace)
             .map_err(ConfigError::from),
-        (true, true) => Err(ConfigError::Invalid(vec![
+        ManifestKindSniff::Mixed => Err(ConfigError::Invalid(vec![
             Diagnostic::error("manifest must not define both `jobs` and `workspace`")
                 .with_hint(
                     "use `jobs` for a single-config manifest or `workspace` for a workspace manifest",
                 ),
         ])),
-        (false, false) => Err(ConfigError::Invalid(vec![
+        ManifestKindSniff::Unknown => Err(ConfigError::Invalid(vec![
             Diagnostic::error("manifest must define either `jobs` or `workspace`")
                 .with_hint(
                     "add `[jobs.<name>]` for a single-config manifest, `[workspace]` for a workspace manifest, or legacy `[[members]]` while migrating",
                 ),
         ])),
+        ManifestKindSniff::Unparsable => toml::from_str::<toml::Value>(input)
+            .map(|_| unreachable!("successful TOML parsing must produce a known sniff kind"))
+            .map_err(ConfigError::ParseToml),
+    }
+}
+
+pub fn sniff_manifest_kind_str(input: &str) -> ManifestKindSniff {
+    let value: toml::Value = match toml::from_str(input) {
+        Ok(value) => value,
+        Err(_) => return ManifestKindSniff::Unparsable,
+    };
+
+    sniff_manifest_kind_value(&value)
+}
+
+pub fn sniff_manifest_kind_from_path(path: &Path) -> Result<ManifestKindSniff, std::io::Error> {
+    let contents = fs::read_to_string(path)?;
+    Ok(sniff_manifest_kind_str(&contents))
+}
+
+fn sniff_manifest_kind_value(value: &toml::Value) -> ManifestKindSniff {
+    let has_jobs = value.get("jobs").is_some();
+    let has_workspace = value.get("workspace").is_some();
+    let has_legacy_workspace_members = value.get("members").is_some();
+
+    match (has_jobs, has_workspace || has_legacy_workspace_members) {
+        (true, false) => ManifestKindSniff::ConfigLike,
+        (false, true) => ManifestKindSniff::WorkspaceLike,
+        (true, true) => ManifestKindSniff::Mixed,
+        (false, false) => ManifestKindSniff::Unknown,
     }
 }
 
@@ -349,6 +383,59 @@ jobs = ["assets", "l10n"]
             }
             other => panic!("expected workspace manifest, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn sniffs_inline_table_workspace_manifest_as_workspace_like() {
+        assert_eq!(
+            sniff_manifest_kind_str(
+                r#"
+version = 1
+workspace={members=["AppUI"]}
+"#
+            ),
+            ManifestKindSniff::WorkspaceLike
+        );
+    }
+
+    #[test]
+    fn sniffs_legacy_top_level_members_manifest_as_workspace_like() {
+        assert_eq!(
+            sniff_manifest_kind_str(
+                r#"
+version = 1
+members = [{ config = "AppUI/numi.toml" }]
+"#
+            ),
+            ManifestKindSniff::WorkspaceLike
+        );
+    }
+
+    #[test]
+    fn sniffs_mixed_manifests_without_fully_loading_them() {
+        assert_eq!(
+            sniff_manifest_kind_str(
+                r#"
+version = 1
+jobs = {}
+members = [{ config = "AppUI/numi.toml" }]
+"#
+            ),
+            ManifestKindSniff::Mixed
+        );
+    }
+
+    #[test]
+    fn sniffs_unparsable_manifests_without_classifying_them() {
+        assert_eq!(
+            sniff_manifest_kind_str(
+                r#"
+version = 1
+members = [
+"#
+            ),
+            ManifestKindSniff::Unparsable
+        );
     }
 
     #[test]

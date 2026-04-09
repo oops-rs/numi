@@ -744,6 +744,55 @@ members = ["apps/assets", "packages/files"]
 }
 
 #[test]
+fn generate_workspace_skips_malformed_mixed_ancestors() {
+    let temp_root = make_temp_dir("generate-workspace-skips-malformed-mixed-ancestors");
+    let workspace_root = temp_root.join("workspace");
+    let app_parent = workspace_root.join("apps");
+    let assets_root = app_parent.join("assets");
+    let files_root = workspace_root.join("packages/files");
+
+    copy_dir_all(&repo_root().join("fixtures/xcassets-basic"), &assets_root);
+    copy_dir_all(&repo_root().join("fixtures/files-basic"), &files_root);
+    write_manifest(
+        &workspace_root,
+        r#"
+version = 1
+
+[workspace]
+members = ["apps/assets", "packages/files"]
+"#,
+    );
+    fs::write(
+        app_parent.join("numi.toml"),
+        "version = 1\njobs = {}\nmembers = [\n",
+    )
+    .expect("malformed mixed manifest should be written");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_numi"))
+        .args(["generate", "--workspace"])
+        .current_dir(&assets_root)
+        .output()
+        .expect("numi generate --workspace should run");
+
+    assert!(
+        output.status.success(),
+        "command failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        assets_root.join("Generated/Assets.swift").exists(),
+        "workspace assets output was not generated"
+    );
+    assert!(
+        files_root.join("Generated/Files.swift").exists(),
+        "workspace files output was not generated"
+    );
+
+    fs::remove_dir_all(temp_root).expect("temp dir should be removed");
+}
+
+#[test]
 fn generate_workspace_detects_inline_table_workspace_manifests() {
     let temp_root = make_temp_dir("generate-workspace-inline-table-manifest");
     let workspace_root = temp_root.join("workspace");

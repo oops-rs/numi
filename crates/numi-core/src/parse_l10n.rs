@@ -11,6 +11,7 @@ use langcodec::{
 };
 use numi_diagnostics::{Diagnostic, Severity};
 use numi_ir::{EntryKind, Metadata, ModuleKind, RawEntry};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     collections::BTreeMap,
@@ -18,7 +19,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LocalizationTable {
     pub table_name: String,
     pub source_path: Utf8PathBuf,

@@ -6,7 +6,7 @@ publish = false
 
 [dependencies]
 atomic-write-file = "0.3"
-camino = "1"
+camino = { version = "1", features = ["serde1"] }
 minijinja = "2"
 numi-config = { path = "../numi-config" }
 numi-diagnostics = { path = "../numi-diagnostics" }
@@ -14,6 +14,7 @@ numi-ir = { path = "../numi-ir" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 langcodec = "0.11.0"
+sha2 = "0.10"
 xcassets = "0.1.0"
 
 [dev-dependencies]

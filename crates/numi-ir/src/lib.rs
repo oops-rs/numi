@@ -4,19 +4,19 @@ pub use normalize::{RawEntry, normalize_scope, swift_identifier};
 
 use camino::Utf8PathBuf;
 use numi_diagnostics::Diagnostic;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub type Metadata = BTreeMap<String, serde_json::Value>;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResourceGraph {
     pub modules: Vec<ResourceModule>,
     pub diagnostics: Vec<Diagnostic>,
     pub metadata: GraphMetadata,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResourceModule {
     pub id: String,
     pub kind: ModuleKind,
@@ -25,7 +25,7 @@ pub struct ResourceModule {
     pub metadata: Metadata,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ModuleKind {
     Xcassets,
     Strings,
@@ -34,7 +34,7 @@ pub enum ModuleKind {
     Custom(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResourceEntry {
     pub id: String,
     pub name: String,
@@ -46,7 +46,7 @@ pub struct ResourceEntry {
     pub metadata: Metadata,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EntryKind {
     Namespace,
     Image,
@@ -58,7 +58,7 @@ pub enum EntryKind {
     Unknown,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GraphMetadata {
     pub config_path: Option<Utf8PathBuf>,
 }

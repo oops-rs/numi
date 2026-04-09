@@ -1,0 +1,437 @@
+use crate::{parse_l10n::LocalizationTable, parse_xcassets::XcassetsReport};
+use atomic_write_file::AtomicWriteFile;
+use numi_ir::RawEntry;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::{
+    fs, io,
+    io::Write,
+    path::{Path, PathBuf},
+};
+
+const CACHE_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CachedParseData {
+    Xcassets(XcassetsReport),
+    Strings(Vec<LocalizationTable>),
+    Xcstrings(Vec<LocalizationTable>),
+    Files(Vec<RawEntry>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct CacheRecord {
+    schema_version: u32,
+    fingerprint: String,
+    data: CachedParseData,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CacheKind {
+    Xcassets,
+    Strings,
+    Xcstrings,
+    Files,
+}
+
+#[derive(Debug)]
+pub enum CacheError {
+    CanonicalizePath { path: PathBuf, source: io::Error },
+    ReadDirectory { path: PathBuf, source: io::Error },
+    ReadFile { path: PathBuf, source: io::Error },
+    CreateDirectory { path: PathBuf, source: io::Error },
+    CreateTemp { path: PathBuf, source: io::Error },
+    WriteTemp { path: PathBuf, source: io::Error },
+    Commit { path: PathBuf, source: io::Error },
+    Serialize { path: PathBuf, source: serde_json::Error },
+}
+
+impl std::fmt::Display for CacheError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::CanonicalizePath { path, source } => {
+                write!(f, "failed to canonicalize cache input {}: {source}", path.display())
+            }
+            Self::ReadDirectory { path, source } => {
+                write!(f, "failed to read cache input directory {}: {source}", path.display())
+            }
+            Self::ReadFile { path, source } => {
+                write!(f, "failed to read cache input file {}: {source}", path.display())
+            }
+            Self::CreateDirectory { path, source } => {
+                write!(f, "failed to create cache directory {}: {source}", path.display())
+            }
+            Self::CreateTemp { path, source } => {
+                write!(f, "failed to create cache temp file {}: {source}", path.display())
+            }
+            Self::WriteTemp { path, source } => {
+                write!(f, "failed to write cache temp file {}: {source}", path.display())
+            }
+            Self::Commit { path, source } => {
+                write!(f, "failed to commit cache file {}: {source}", path.display())
+            }
+            Self::Serialize { path, source } => {
+                write!(f, "failed to serialize cache record {}: {source}", path.display())
+            }
+        }
+    }
+}
+
+impl std::error::Error for CacheError {}
+
+pub fn fingerprint_input(kind: CacheKind, path: &Path) -> Result<String, CacheError> {
+    let root = canonicalize(path)?;
+    let files = relevant_files(kind, &root)?;
+    let base = fingerprint_base(&root);
+    let mut hasher = Sha256::new();
+
+    hasher.update(kind.cache_key().as_bytes());
+    hasher.update(b"\0");
+    hasher.update(base.as_os_str().as_encoded_bytes());
+    hasher.update(b"\0");
+
+    for file in files {
+        let relative = file.strip_prefix(&base).unwrap_or(&file);
+        let contents = fs::read(&file).map_err(|source| CacheError::ReadFile {
+            path: file.clone(),
+            source,
+        })?;
+
+        hasher.update(relative.as_os_str().as_encoded_bytes());
+        hasher.update(b"\0");
+        hasher.update(&contents);
+        hasher.update(b"\0");
+    }
+
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+pub fn load(kind: CacheKind, path: &Path) -> Result<Option<CachedParseData>, CacheError> {
+    let fingerprint = fingerprint_input(kind, path)?;
+    let cache_path = cache_file_path(kind, path)?;
+    let bytes = match fs::read(&cache_path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Ok(None),
+    };
+
+    let record: CacheRecord = match serde_json::from_slice(&bytes) {
+        Ok(record) => record,
+        Err(_) => return Ok(None),
+    };
+
+    if record.schema_version != CACHE_SCHEMA_VERSION {
+        return Ok(None);
+    }
+
+    if record.fingerprint != fingerprint {
+        return Ok(None);
+    }
+
+    if !kind.matches(&record.data) {
+        return Ok(None);
+    }
+
+    Ok(Some(record.data))
+}
+
+pub fn store(
+    kind: CacheKind,
+    path: &Path,
+    fingerprint: &str,
+    data: &CachedParseData,
+) -> Result<(), CacheError> {
+    if !kind.matches(data) {
+        return Ok(());
+    }
+
+    let cache_path = cache_file_path(kind, path)?;
+    let parent = cache_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent).map_err(|source| CacheError::CreateDirectory {
+        path: parent.to_path_buf(),
+        source,
+    })?;
+
+    let payload = serde_json::to_vec(&CacheRecord {
+        schema_version: CACHE_SCHEMA_VERSION,
+        fingerprint: fingerprint.to_owned(),
+        data: data.clone(),
+    })
+    .map_err(|source| CacheError::Serialize {
+        path: cache_path.clone(),
+        source,
+    })?;
+
+    let mut atomic_file =
+        AtomicWriteFile::open(&cache_path).map_err(|source| CacheError::CreateTemp {
+            path: cache_path.clone(),
+            source,
+        })?;
+    atomic_file
+        .write_all(&payload)
+        .and_then(|_| atomic_file.sync_all())
+        .map_err(|source| CacheError::WriteTemp {
+            path: cache_path.clone(),
+            source,
+        })?;
+    atomic_file.commit().map_err(|source| CacheError::Commit {
+        path: cache_path,
+        source,
+    })?;
+
+    Ok(())
+}
+
+fn cache_root() -> PathBuf {
+    std::env::temp_dir()
+        .join("numi-cache")
+        .join(format!("parsed-v{}", CACHE_SCHEMA_VERSION))
+}
+
+fn cache_file_path(kind: CacheKind, path: &Path) -> Result<PathBuf, CacheError> {
+    let canonical = canonicalize(path)?;
+    let mut hasher = Sha256::new();
+    hasher.update(kind.cache_key().as_bytes());
+    hasher.update(b"\0");
+    hasher.update(canonical.as_os_str().as_encoded_bytes());
+
+    Ok(cache_root().join(format!("{:x}.json", hasher.finalize())))
+}
+
+fn relevant_files(kind: CacheKind, path: &Path) -> Result<Vec<PathBuf>, CacheError> {
+    if path.is_file() {
+        return Ok(if is_relevant_file(kind, path) {
+            vec![path.to_path_buf()]
+        } else {
+            Vec::new()
+        });
+    }
+
+    if !path.is_dir() {
+        return Ok(Vec::new());
+    }
+
+    let mut files = Vec::new();
+    collect_relevant_files(kind, path, &mut files)?;
+    files.sort_by(|left, right| {
+        let left_rel = left.strip_prefix(path).unwrap_or(left);
+        let right_rel = right.strip_prefix(path).unwrap_or(right);
+        left_rel.cmp(right_rel)
+    });
+    Ok(files)
+}
+
+fn collect_relevant_files(
+    kind: CacheKind,
+    directory: &Path,
+    files: &mut Vec<PathBuf>,
+) -> Result<(), CacheError> {
+    let read_dir = fs::read_dir(directory).map_err(|source| CacheError::ReadDirectory {
+        path: directory.to_path_buf(),
+        source,
+    })?;
+
+    for entry in read_dir {
+        let entry = entry.map_err(|source| CacheError::ReadDirectory {
+            path: directory.to_path_buf(),
+            source,
+        })?;
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .map_err(|source| CacheError::ReadDirectory {
+                path: path.clone(),
+                source,
+            })?;
+
+        if file_type.is_dir() {
+            collect_relevant_files(kind, &path, files)?;
+            continue;
+        }
+
+        if file_type.is_file() && is_relevant_file(kind, &path) {
+            files.push(path);
+        }
+    }
+
+    Ok(())
+}
+
+fn is_relevant_file(kind: CacheKind, path: &Path) -> bool {
+    match kind {
+        CacheKind::Xcassets => path.is_file(),
+        CacheKind::Strings => path.extension().and_then(|ext| ext.to_str()) == Some("strings"),
+        CacheKind::Xcstrings => {
+            path.extension().and_then(|ext| ext.to_str()) == Some("xcstrings")
+        }
+        CacheKind::Files => {
+            // Keep cache relevance aligned with parse_files: only `.DS_Store` is excluded today.
+            path.is_file() && path.file_name().is_none_or(|name| name != ".DS_Store")
+        }
+    }
+}
+
+fn canonicalize(path: &Path) -> Result<PathBuf, CacheError> {
+    fs::canonicalize(path).map_err(|source| CacheError::CanonicalizePath {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+fn fingerprint_base(path: &Path) -> PathBuf {
+    if path.is_file() {
+        path.parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf()
+    } else {
+        path.to_path_buf()
+    }
+}
+
+impl CacheKind {
+    fn cache_key(self) -> &'static str {
+        match self {
+            Self::Xcassets => "xcassets",
+            Self::Strings => "strings",
+            Self::Xcstrings => "xcstrings",
+            Self::Files => "files",
+        }
+    }
+
+    fn matches(self, data: &CachedParseData) -> bool {
+        matches!(
+            (self, data),
+            (Self::Xcassets, CachedParseData::Xcassets(_))
+                | (Self::Strings, CachedParseData::Strings(_))
+                | (Self::Xcstrings, CachedParseData::Xcstrings(_))
+                | (Self::Files, CachedParseData::Files(_))
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use camino::Utf8PathBuf;
+    use numi_diagnostics::{Diagnostic, Severity};
+    use numi_ir::{EntryKind, Metadata, RawEntry};
+    use serde_json::Value;
+    use std::{
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    fn make_temp_dir(test_name: &str) -> PathBuf {
+        let unique = format!(
+            "numi-{test_name}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock should be after epoch")
+                .as_nanos()
+        );
+        let path = std::env::temp_dir().join(unique);
+        fs::create_dir_all(&path).expect("temp dir should be created");
+        path
+    }
+
+    fn sample_xcassets_report(source_root: &std::path::Path) -> crate::parse_xcassets::XcassetsReport {
+        crate::parse_xcassets::XcassetsReport {
+            entries: vec![RawEntry {
+                path: "Brand/Primary".to_string(),
+                source_path: Utf8PathBuf::from_path_buf(source_root.join("Assets.xcassets"))
+                    .expect("utf8 path"),
+                kind: EntryKind::Color,
+                properties: Metadata::from([(
+                    "assetName".to_string(),
+                    Value::String("Brand/Primary".to_string()),
+                )]),
+            }],
+            warnings: vec![Diagnostic {
+                severity: Severity::Warning,
+                message: "warning".to_string(),
+                hint: Some("hint".to_string()),
+                job: Some("assets".to_string()),
+                path: Some(source_root.join("Assets.xcassets")),
+            }],
+        }
+    }
+
+    #[test]
+    fn fingerprint_changes_when_matching_file_contents_change() {
+        let temp_dir = make_temp_dir("parse-cache-fingerprint-change");
+        let strings_path = temp_dir.join("Localizable.strings");
+        fs::write(&strings_path, "\"title\" = \"Before\";\n").expect("strings file should exist");
+
+        let before = fingerprint_input(CacheKind::Strings, &strings_path)
+            .expect("initial fingerprint should succeed");
+
+        fs::write(&strings_path, "\"title\" = \"After\";\n").expect("strings file should mutate");
+
+        let after = fingerprint_input(CacheKind::Strings, &strings_path)
+            .expect("updated fingerprint should succeed");
+
+        assert_ne!(before, after);
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn fingerprint_ignores_non_matching_files_for_strings_directory() {
+        let temp_dir = make_temp_dir("parse-cache-fingerprint-ignore");
+        let l10n_dir = temp_dir.join("Localization");
+        fs::create_dir_all(&l10n_dir).expect("l10n dir should exist");
+        fs::write(
+            l10n_dir.join("Localizable.strings"),
+            "\"title\" = \"Hello\";\n",
+        )
+        .expect("strings file should exist");
+        fs::write(l10n_dir.join("preview.png"), "not-part-of-strings-cache")
+            .expect("noise file should exist");
+
+        let before = fingerprint_input(CacheKind::Strings, &l10n_dir)
+            .expect("fingerprint should succeed");
+
+        fs::write(l10n_dir.join("preview.png"), "mutated-noise")
+            .expect("noise file should mutate");
+
+        let after = fingerprint_input(CacheKind::Strings, &l10n_dir)
+            .expect("fingerprint should still succeed");
+
+        assert_eq!(before, after);
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn cache_record_round_trips_xcassets_payload() {
+        let temp_dir = make_temp_dir("parse-cache-round-trip");
+        let catalog_path = temp_dir.join("Assets.xcassets");
+        fs::create_dir_all(&catalog_path).expect("catalog should exist");
+        fs::write(catalog_path.join("Contents.json"), "{\"info\":{\"author\":\"xcode\",\"version\":1}}")
+            .expect("catalog contents should exist");
+
+        let fingerprint = fingerprint_input(CacheKind::Xcassets, &catalog_path)
+            .expect("fingerprint should succeed");
+        let report = sample_xcassets_report(&temp_dir);
+
+        store(
+            CacheKind::Xcassets,
+            &catalog_path,
+            &fingerprint,
+            &CachedParseData::Xcassets(report.clone()),
+        )
+        .expect("cache store should succeed");
+
+        let loaded = load(CacheKind::Xcassets, &catalog_path).expect("cache load should succeed");
+
+        assert_eq!(loaded, Some(CachedParseData::Xcassets(report)));
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+}

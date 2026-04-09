@@ -1,10 +1,10 @@
 use crate::{EntryKind, Metadata, ResourceEntry};
 use camino::Utf8PathBuf;
 use numi_diagnostics::Diagnostic;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RawEntry {
     pub path: String,
     pub source_path: Utf8PathBuf,

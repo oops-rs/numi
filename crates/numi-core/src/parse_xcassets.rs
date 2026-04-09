@@ -1,6 +1,7 @@
 use camino::Utf8PathBuf;
 use numi_diagnostics::{Diagnostic, Severity};
 use numi_ir::{EntryKind, Metadata, RawEntry};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
@@ -31,7 +32,7 @@ impl From<xcassets::ParseError> for ParseXcassetsError {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct XcassetsReport {
     pub entries: Vec<RawEntry>,
     pub warnings: Vec<Diagnostic>,

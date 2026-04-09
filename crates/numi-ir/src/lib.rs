@@ -1,6 +1,8 @@
 pub mod normalize;
 
-pub use normalize::{RawEntry, normalize_scope, swift_identifier};
+pub use normalize::{
+    RawEntry, normalize_flat_entries_preserve_order, normalize_scope, swift_identifier,
+};
 
 use camino::Utf8PathBuf;
 use numi_diagnostics::Diagnostic;
@@ -31,6 +33,7 @@ pub enum ModuleKind {
     Strings,
     Xcstrings,
     Files,
+    Fonts,
     Custom(String),
 }
 

@@ -2,11 +2,12 @@ use camino::Utf8PathBuf;
 use numi_config::{BundleConfig, DefaultsConfig, JobConfig};
 use numi_diagnostics::Diagnostic;
 use numi_ir::{
-    GraphMetadata, Metadata, ModuleKind, ResourceGraph, ResourceModule, normalize_scope,
-    swift_identifier,
+    GraphMetadata, Metadata, ModuleKind, ResourceGraph, ResourceModule,
+    normalize_flat_entries_preserve_order, normalize_scope, swift_identifier,
 };
 use serde_json::Value;
 use std::{
+    cmp::Ordering,
     collections::BTreeMap,
     path::{Path, PathBuf},
 };
@@ -16,6 +17,7 @@ use crate::{
     output::{OutputError, WriteOutcome, output_is_stale, write_if_changed_atomic},
     parse_cache::{self, CacheKind, CachedParseData},
     parse_files::{ParseFilesError, parse_files},
+    parse_fonts::{ParseFontsError, parse_font_entries},
     parse_l10n::{LocalizationTable, ParseL10nError, parse_strings, parse_xcstrings},
     parse_xcassets::{ParseXcassetsError, parse_catalog},
     render::{RenderError, render_builtin, render_path},
@@ -69,6 +71,10 @@ pub enum GenerateError {
     ParseFiles {
         job: String,
         source: ParseFilesError,
+    },
+    ParseFonts {
+        job: String,
+        source: ParseFontsError,
     },
     BuildContext {
         job: String,
@@ -125,6 +131,9 @@ impl std::fmt::Display for GenerateError {
             }
             Self::ParseFiles { job, source } => {
                 write!(f, "failed to parse files input for job `{job}`: {source}")
+            }
+            Self::ParseFonts { job, source } => {
+                write!(f, "failed to parse fonts input for job `{job}`: {source}")
             }
             Self::BuildContext { job, source } => {
                 write!(
@@ -246,10 +255,9 @@ fn generate_job(
     defaults: &DefaultsConfig,
     job: &JobConfig,
 ) -> Result<JobExecution, GenerateError> {
+    let output_path = config_dir.join(&job.output);
     let (context, warnings) = build_context(config_path, config_dir, defaults, job)?;
     let rendered = render_job(config_dir, job, &context)?;
-
-    let output_path = config_dir.join(&job.output);
     let outcome = write_if_changed_atomic(&output_path, &rendered).map_err(|source| {
         GenerateError::WriteOutput {
             job: job.name.clone(),
@@ -392,7 +400,7 @@ fn build_modules(config_dir: &Path, job: &JobConfig) -> Result<BuildModulesResul
                         );
                         continue;
                     }
-                    let entries = normalize_scope(&job.name, table.entries)
+                    let entries = normalize_flat_entries_preserve_order(&job.name, table.entries)
                         .map_err(GenerateError::Diagnostics)?;
                     modules.push(ResourceModule {
                         id: table_name.clone(),
@@ -450,8 +458,9 @@ fn build_modules(config_dir: &Path, job: &JobConfig) -> Result<BuildModulesResul
             }
             "files" => {
                 let raw_entries = load_or_parse_files(&input_path, &job.name)?;
-                let entries =
+                let mut entries =
                     normalize_scope(&job.name, raw_entries).map_err(GenerateError::Diagnostics)?;
+                annotate_swiftgen_file_sort_keys(&mut entries);
                 let module_id = input_path
                     .file_stem()
                     .or_else(|| input_path.file_name())
@@ -466,6 +475,34 @@ fn build_modules(config_dir: &Path, job: &JobConfig) -> Result<BuildModulesResul
                     metadata: Metadata::new(),
                 });
             }
+            "fonts" => {
+                let parsed_fonts = parse_font_entries(&input_path).map_err(|source| {
+                    GenerateError::ParseFonts {
+                        job: job.name.clone(),
+                        source,
+                    }
+                })?;
+                let raw_entries = parsed_fonts
+                    .iter()
+                    .cloned()
+                    .map(crate::parse_fonts::ParsedFontEntry::into_raw_entry)
+                    .collect::<Vec<_>>();
+                let entries =
+                    normalize_scope(&job.name, raw_entries).map_err(GenerateError::Diagnostics)?;
+                let module_id = input_path
+                    .file_stem()
+                    .or_else(|| input_path.file_name())
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("Fonts")
+                    .to_string();
+                modules.push(ResourceModule {
+                    id: module_id.clone(),
+                    kind: ModuleKind::Fonts,
+                    name: swift_identifier(&module_id),
+                    entries,
+                    metadata: build_font_module_metadata(&parsed_fonts),
+                });
+            }
             other => {
                 return Err(GenerateError::UnsupportedJob {
                     job: job.name.clone(),
@@ -476,8 +513,10 @@ fn build_modules(config_dir: &Path, job: &JobConfig) -> Result<BuildModulesResul
     }
 
     if !asset_entries.is_empty() {
-        let entries =
+        let mut entries =
             normalize_scope(&job.name, asset_entries).map_err(GenerateError::Diagnostics)?;
+        sort_entries_for_assets(&mut entries);
+        annotate_swiftgen_sort_keys(&mut entries);
         modules.insert(
             0,
             ResourceModule {
@@ -495,6 +534,218 @@ fn build_modules(config_dir: &Path, job: &JobConfig) -> Result<BuildModulesResul
     }
 
     Ok(BuildModulesResult { modules, warnings })
+}
+
+fn annotate_swiftgen_sort_keys(entries: &mut [numi_ir::ResourceEntry]) {
+    for entry in entries {
+        entry.metadata.insert(
+            "sortKey".to_string(),
+            Value::String(swiftgen_sort_key(&entry.swift_identifier)),
+        );
+        annotate_swiftgen_sort_keys(&mut entry.children);
+    }
+}
+
+fn annotate_swiftgen_file_sort_keys(entries: &mut [numi_ir::ResourceEntry]) {
+    let sibling_names = entries
+        .iter()
+        .map(|entry| entry.name.to_ascii_lowercase())
+        .collect::<Vec<_>>();
+
+    for entry in entries {
+        entry.metadata.insert(
+            "sortKey".to_string(),
+            Value::String(swiftgen_file_sort_key(&entry.name, &sibling_names)),
+        );
+        annotate_swiftgen_file_sort_keys(&mut entry.children);
+    }
+}
+
+fn swiftgen_file_sort_key(name: &str, sibling_names: &[String]) -> String {
+    let _ = sibling_names;
+    name.to_ascii_lowercase()
+}
+
+fn sort_entries_for_assets(entries: &mut [numi_ir::ResourceEntry]) {
+    for entry in entries.iter_mut() {
+        sort_entries_for_assets(&mut entry.children);
+    }
+    entries.sort_by(compare_asset_entries);
+}
+
+fn compare_asset_entries(
+    left: &numi_ir::ResourceEntry,
+    right: &numi_ir::ResourceEntry,
+) -> Ordering {
+    compare_asset_names(&left.name, &right.name).then_with(|| left.id.cmp(&right.id))
+}
+
+fn compare_asset_names(left: &str, right: &str) -> Ordering {
+    match (left.strip_suffix(".9"), right.strip_suffix(".9")) {
+        (Some(base), None) if base == right => Ordering::Less,
+        (None, Some(base)) if left == base => Ordering::Greater,
+        _ => left.cmp(right),
+    }
+}
+
+fn swiftgen_sort_key(identifier: &str) -> String {
+    let identifier = identifier
+        .strip_prefix('`')
+        .and_then(|trimmed| trimmed.strip_suffix('`'))
+        .unwrap_or(identifier);
+    let chars = identifier.chars().collect::<Vec<_>>();
+    if chars.is_empty() || !chars[0].is_ascii_uppercase() {
+        return identifier.to_ascii_lowercase();
+    }
+
+    let mut prefix_len = 1;
+    while prefix_len < chars.len() && chars[prefix_len].is_ascii_uppercase() {
+        prefix_len += 1;
+    }
+
+    let lower_count = if prefix_len == chars.len() {
+        prefix_len
+    } else if prefix_len == 1 {
+        1
+    } else {
+        prefix_len - 1
+    };
+
+    let mut lowered = String::with_capacity(identifier.len());
+    for ch in &chars[..lower_count] {
+        lowered.push(ch.to_ascii_lowercase());
+    }
+    for ch in &chars[lower_count..] {
+        lowered.push(*ch);
+    }
+    lowered.to_ascii_lowercase()
+}
+
+fn build_font_module_metadata(parsed_fonts: &[crate::parse_fonts::ParsedFontEntry]) -> Metadata {
+    #[derive(Clone)]
+    struct CanonicalFont {
+        file_name: String,
+        relative_path: String,
+        family_name: String,
+        style_name: String,
+        full_name: String,
+        post_script_name: String,
+    }
+
+    let mut unique_fonts = BTreeMap::<String, CanonicalFont>::new();
+    for font in parsed_fonts {
+        let (family_name, style_name) = canonicalize_font_family_and_style(
+            &font.family_name,
+            &font.style_name,
+            &font.post_script_name,
+        );
+        unique_fonts.insert(
+            font.post_script_name.clone(),
+            CanonicalFont {
+                file_name: font.file_name.clone(),
+                relative_path: font.relative_path.clone(),
+                family_name,
+                style_name,
+                full_name: font.full_name.clone(),
+                post_script_name: font.post_script_name.clone(),
+            },
+        );
+    }
+
+    let mut families = BTreeMap::<String, Vec<CanonicalFont>>::new();
+    for font in unique_fonts.into_values() {
+        families
+            .entry(font.family_name.clone())
+            .or_default()
+            .push(font);
+    }
+
+    let mut family_items = Vec::new();
+    for (family_name, mut fonts) in families {
+        fonts.sort_by(|left, right| left.post_script_name.cmp(&right.post_script_name));
+        let display_name = if fonts.len() == 1
+            && fonts[0].style_name != "Regular"
+            && fonts[0].full_name.ends_with(&fonts[0].style_name)
+            && fonts[0].full_name != family_name
+        {
+            fonts[0].full_name.clone()
+        } else {
+            family_name.clone()
+        };
+        family_items.push(Value::Object(
+            [
+                ("name".to_string(), Value::String(display_name.clone())),
+                (
+                    "swiftIdentifier".to_string(),
+                    Value::String(swift_identifier(&display_name)),
+                ),
+                (
+                    "fonts".to_string(),
+                    Value::Array(
+                        fonts
+                            .into_iter()
+                            .map(|font| {
+                                Value::Object(
+                                    [
+                                        (
+                                            "postScriptName".to_string(),
+                                            Value::String(font.post_script_name.clone()),
+                                        ),
+                                        (
+                                            "styleName".to_string(),
+                                            Value::String(font.style_name.clone()),
+                                        ),
+                                        (
+                                            "familyName".to_string(),
+                                            Value::String(display_name.clone()),
+                                        ),
+                                        (
+                                            "fileName".to_string(),
+                                            Value::String(font.file_name.clone()),
+                                        ),
+                                        (
+                                            "relativePath".to_string(),
+                                            Value::String(font.relative_path.clone()),
+                                        ),
+                                    ]
+                                    .into_iter()
+                                    .collect(),
+                                )
+                            })
+                            .collect(),
+                    ),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        ));
+    }
+
+    Metadata::from([("families".to_string(), Value::Array(family_items))])
+}
+
+fn canonicalize_font_family_and_style(
+    family_name: &str,
+    style_name: &str,
+    post_script_name: &str,
+) -> (String, String) {
+    if style_name != "Regular" {
+        return (family_name.to_string(), style_name.to_string());
+    }
+
+    let Some((_, post_script_style)) = post_script_name.rsplit_once('-') else {
+        return (family_name.to_string(), style_name.to_string());
+    };
+
+    if post_script_style == "Regular" {
+        return (family_name.to_string(), style_name.to_string());
+    }
+
+    if let Some(prefix) = family_name.strip_suffix(&format!(" {post_script_style}")) {
+        return (prefix.to_string(), post_script_style.to_string());
+    }
+
+    (family_name.to_string(), style_name.to_string())
 }
 
 fn load_or_parse_xcassets(
@@ -732,7 +983,7 @@ mod tests {
         parse_xcassets::XcassetsReport,
     };
     use camino::Utf8PathBuf;
-    use numi_ir::{EntryKind, Metadata, ModuleKind, RawEntry};
+    use numi_ir::{EntryKind, Metadata, ModuleKind, RawEntry, ResourceEntry, swift_identifier};
     use serde_json::json;
     use sha2::{Digest, Sha256};
     use std::{
@@ -757,22 +1008,110 @@ mod tests {
         path
     }
 
+    fn entry(name: &str, kind: EntryKind) -> ResourceEntry {
+        ResourceEntry {
+            id: name.to_string(),
+            name: name.to_string(),
+            source_path: Utf8PathBuf::from("fixture"),
+            swift_identifier: swift_identifier(name),
+            kind,
+            children: Vec::new(),
+            properties: Metadata::new(),
+            metadata: Metadata::new(),
+        }
+    }
+
+    #[test]
+    fn file_sort_keys_match_case_insensitive_name_ordering() {
+        let sibling_names = [
+            "YouTubePlayer.html",
+            "youtube_embed.html",
+            "backgroundMusic.mp3",
+            "backHome.mp3",
+            "miniSlot",
+            "Spy",
+            "greedy_drawing.mp3",
+            "greedy_drawing_end.MP3",
+            "jackpot_select.mp3",
+            "jackpot_select_luxury.mp3",
+            "play_center_list_item_new_tag.svga",
+            "play_center_list_item_new_tag_ar.svga",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+
+        let mut ordered = sibling_names
+            .iter()
+            .map(|name| (name.as_str(), swiftgen_file_sort_key(name, &sibling_names)))
+            .collect::<Vec<_>>();
+        ordered.sort_by(|left, right| left.1.cmp(&right.1).then_with(|| left.0.cmp(right.0)));
+
+        assert_eq!(
+            ordered
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect::<Vec<_>>(),
+            vec![
+                "backgroundMusic.mp3",
+                "backHome.mp3",
+                "greedy_drawing.mp3",
+                "greedy_drawing_end.MP3",
+                "jackpot_select.mp3",
+                "jackpot_select_luxury.mp3",
+                "miniSlot",
+                "play_center_list_item_new_tag.svga",
+                "play_center_list_item_new_tag_ar.svga",
+                "Spy",
+                "youtube_embed.html",
+                "YouTubePlayer.html",
+            ]
+        );
+    }
+
+    #[test]
+    fn assets_sort_only_moves_nine_patch_before_base() {
+        let mut entries = vec![
+            entry("bet_bubble tips_up", EntryKind::Image),
+            entry("bet_bubble_tips", EntryKind::Image),
+            entry("bet_bubble_tips_down", EntryKind::Image),
+            entry("room_task_list_bg", EntryKind::Image),
+            entry("room_task_list_bg.9", EntryKind::Image),
+        ];
+
+        sort_entries_for_assets(&mut entries);
+
+        let ids = entries
+            .iter()
+            .map(|entry| entry.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ids,
+            vec![
+                "bet_bubble tips_up",
+                "bet_bubble_tips",
+                "bet_bubble_tips_down",
+                "room_task_list_bg.9",
+                "room_task_list_bg",
+            ]
+        );
+    }
+
     fn write_strings_job_config(config_path: &Path) {
         fs::write(
             config_path,
             r#"
 version = 1
 
-[[jobs]]
-name = "l10n"
+[jobs.l10n]
 output = "Generated/L10n.swift"
 
-[[jobs.inputs]]
+[[jobs.l10n.inputs]]
 type = "strings"
 path = "Resources/Localization"
 
-[jobs.template]
-[jobs.template.builtin]
+[jobs.l10n.template]
+[jobs.l10n.template.builtin]
 swift = "l10n"
 "#,
         )
@@ -785,16 +1124,15 @@ swift = "l10n"
             r#"
 version = 1
 
-[[jobs]]
-name = "l10n"
+[jobs.l10n]
 output = "Generated/L10n.swift"
 
-[[jobs.inputs]]
+[[jobs.l10n.inputs]]
 type = "xcstrings"
 path = "Resources/Localization"
 
-[jobs.template]
-[jobs.template.builtin]
+[jobs.l10n.template]
+[jobs.l10n.template.builtin]
 swift = "l10n"
 "#,
         )
@@ -807,16 +1145,15 @@ swift = "l10n"
             r#"
 version = 1
 
-[[jobs]]
-name = "files"
+[jobs.files]
 output = "Generated/Files.swift"
 
-[[jobs.inputs]]
+[[jobs.files.inputs]]
 type = "files"
 path = "Resources/Fixtures"
 
-[jobs.template]
-[jobs.template.builtin]
+[jobs.files.template]
+[jobs.files.template.builtin]
 swift = "files"
 "#,
         )
@@ -925,16 +1262,15 @@ swift = "files"
             r#"
 version = 1
 
-[[jobs]]
-name = "l10n"
+[jobs.l10n]
 output = "Generated/L10n.swift"
 
-[[jobs.inputs]]
+[[jobs.l10n.inputs]]
 type = "strings"
 path = "Resources/Localization"
 
-[jobs.template]
-[jobs.template.builtin]
+[jobs.l10n.template]
+[jobs.l10n.template.builtin]
 swift = "l10n"
 "#,
         )
@@ -966,16 +1302,15 @@ swift = "l10n"
             r#"
 version = 1
 
-[[jobs]]
-name = "l10n"
+[jobs.l10n]
 output = "Generated/L10n.swift"
 
-[[jobs.inputs]]
+[[jobs.l10n.inputs]]
 type = "strings"
 path = "Resources/Localization"
 
-[jobs.template]
-[jobs.template.builtin]
+[jobs.l10n.template]
+[jobs.l10n.template.builtin]
 swift = "l10n"
 "#,
         )
@@ -1035,15 +1370,14 @@ private func tr(_ table: String, _ key: String) -> String {
             r#"
 version = 1
 
-[[jobs]]
-name = "l10n"
+[jobs.l10n]
 output = "Generated/L10n.swift"
 
-[[jobs.inputs]]
+[[jobs.l10n.inputs]]
 type = "strings"
 path = "Resources/Localization"
 
-[jobs.template]
+[jobs.l10n.template]
 path = "Templates/main.jinja"
 "#,
         )
@@ -1075,16 +1409,15 @@ path = "Templates/main.jinja"
             r#"
 version = 1
 
-[[jobs]]
-name = "files"
+[jobs.files]
 output = "Generated/Files.swift"
 
-[[jobs.inputs]]
+[[jobs.files.inputs]]
 type = "files"
 path = "Resources/Fixtures"
 
-[jobs.template]
-[jobs.template.builtin]
+[jobs.files.template]
+[jobs.files.template.builtin]
 swift = "files"
 "#,
         )
@@ -1137,16 +1470,15 @@ private func file(_ path: String) -> URL {
             r#"
 version = 1
 
-[[jobs]]
-name = "files"
+[jobs.files]
 output = "Generated/Files.swift"
 
-[[jobs.inputs]]
+[[jobs.files.inputs]]
 type = "files"
 path = "Resources/Fixtures"
 
-[jobs.template]
-[jobs.template.builtin]
+[jobs.files.template]
+[jobs.files.template.builtin]
 swift = "files"
 "#,
         )
@@ -1196,16 +1528,15 @@ swift = "files"
                 r#"
 version = 1
 
-[[jobs]]
-name = "assets"
+[jobs.assets]
 output = "Generated/Assets.swift"
 
-[[jobs.inputs]]
+[[jobs.assets.inputs]]
 type = "xcassets"
 path = "Resources/Assets.xcassets"
 
-[jobs.template]
-[jobs.template.builtin]
+[jobs.assets.template]
+[jobs.assets.template.builtin]
 swift = "swiftui-assets"
 "#,
             )

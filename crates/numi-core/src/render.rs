@@ -44,14 +44,18 @@ pub fn render_builtin(
     builtin_name: &str,
     context: &AssetTemplateContext,
 ) -> Result<String, RenderError> {
-    let template_source = match builtin_name {
-        "swiftui-assets" => SWIFTUI_ASSETS_TEMPLATE,
-        "l10n" => L10N_TEMPLATE,
-        "files" => FILES_TEMPLATE,
-        other => return Err(RenderError::UnknownBuiltin(other.to_owned())),
-    };
+    let template_source = builtin_template_source(builtin_name)?;
 
     render_template_source(builtin_name, template_source, context)
+}
+
+pub fn builtin_template_source(builtin_name: &str) -> Result<&'static str, RenderError> {
+    match builtin_name {
+        "swiftui-assets" => Ok(SWIFTUI_ASSETS_TEMPLATE),
+        "l10n" => Ok(L10N_TEMPLATE),
+        "files" => Ok(FILES_TEMPLATE),
+        other => Err(RenderError::UnknownBuiltin(other.to_owned())),
+    }
 }
 
 pub fn render_path(
@@ -257,6 +261,7 @@ fn safe_template_join(base: &Path, include_name: &str) -> Option<PathBuf> {
     Some(path)
 }
 
+
 fn lower_first(value: String) -> String {
     if let Some(inner) = value
         .strip_prefix('`')
@@ -265,16 +270,32 @@ fn lower_first(value: String) -> String {
         return format!("`{}`", lower_first(inner.to_owned()));
     }
 
-    let mut chars = value.chars();
-    match chars.next() {
-        Some(first) if first.is_ascii_uppercase() => {
-            let mut lowered = String::new();
-            lowered.push(first.to_ascii_lowercase());
-            lowered.push_str(chars.as_str());
-            lowered
-        }
-        Some(_) | None => value,
+    let chars = value.chars().collect::<Vec<_>>();
+    if chars.is_empty() || !chars[0].is_ascii_uppercase() {
+        return value;
     }
+
+    let mut prefix_len = 1;
+    while prefix_len < chars.len() && chars[prefix_len].is_ascii_uppercase() {
+        prefix_len += 1;
+    }
+
+    let lower_count = if prefix_len == chars.len() {
+        prefix_len
+    } else if prefix_len == 1 {
+        1
+    } else {
+        prefix_len - 1
+    };
+
+    let mut lowered = String::with_capacity(value.len());
+    for ch in &chars[..lower_count] {
+        lowered.push(ch.to_ascii_lowercase());
+    }
+    for ch in &chars[lower_count..] {
+        lowered.push(*ch);
+    }
+    lowered
 }
 
 fn string_literal(value: String) -> String {

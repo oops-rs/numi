@@ -167,21 +167,41 @@ fn parse_strings_file(path: &Path) -> Result<LocalizationTable, ParseL10nError> 
 
     let source_path = Utf8PathBuf::from_path_buf(path.to_path_buf())
         .map_err(|path| ParseL10nError::InvalidUtf8Path { path })?;
-    let mut entries = Vec::with_capacity(strings.pairs.len());
+    let mut pairs = Vec::<(String, Metadata)>::new();
     for pair in strings.pairs {
         let key = decode_strings_translation_escapes(path, &pair.key)?;
         let translation = decode_strings_translation_escapes(path, &pair.value)?;
-        entries.push(RawEntry {
-            path: key.clone(),
+        let mut properties = Metadata::from([
+            ("key".to_string(), Value::String(key.clone())),
+            (
+                "translation".to_string(),
+                Value::String(translation.clone()),
+            ),
+        ]);
+        if let Some(placeholders) = build_strings_placeholder_metadata(&translation) {
+            properties.insert("placeholders".to_string(), Value::Array(placeholders));
+        }
+        pairs.push((key, properties));
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    let mut deduped = Vec::new();
+    for (key, properties) in pairs.into_iter().rev() {
+        if seen.insert(key.clone()) {
+            deduped.push((key, properties));
+        }
+    }
+    deduped.reverse();
+
+    let entries = deduped
+        .into_iter()
+        .map(|(key, properties)| RawEntry {
+            path: key,
             source_path: source_path.clone(),
             kind: EntryKind::StringKey,
-            properties: Metadata::from([
-                ("key".to_string(), Value::String(key)),
-                ("translation".to_string(), Value::String(translation)),
-            ]),
-        });
-    }
-    entries.sort_by(|left, right| left.path.cmp(&right.path));
+            properties,
+        })
+        .collect::<Vec<_>>();
 
     Ok(LocalizationTable {
         table_name,
@@ -527,6 +547,133 @@ fn build_placeholder_metadata(
     Some(placeholders)
 }
 
+fn build_strings_placeholder_metadata(translation: &str) -> Option<Vec<Value>> {
+    let placeholders = extract_printf_placeholders(translation);
+    if placeholders.is_empty() {
+        return None;
+    }
+
+    Some(
+        placeholders
+            .into_iter()
+            .map(|format| {
+                let mut placeholder = Metadata::new();
+                placeholder.insert("format".to_string(), Value::String(format.clone()));
+                if let Some(swift_type) = infer_swift_type(&format) {
+                    placeholder.insert(
+                        "swiftType".to_string(),
+                        Value::String(swift_type.to_string()),
+                    );
+                }
+                Value::Object(placeholder.into_iter().collect())
+            })
+            .collect(),
+    )
+}
+
+fn extract_printf_placeholders(translation: &str) -> Vec<String> {
+    let chars = translation.chars().collect::<Vec<_>>();
+    let mut placeholders = Vec::new();
+    let mut positional = BTreeMap::<usize, String>::new();
+    let mut saw_positional = false;
+    let mut index = 0;
+
+    while index < chars.len() {
+        if chars[index] != '%' {
+            index += 1;
+            continue;
+        }
+
+        if chars.get(index + 1) == Some(&'%') {
+            index += 2;
+            continue;
+        }
+
+        let mut cursor = index + 1;
+        let position_start = cursor;
+        while chars.get(cursor).is_some_and(|ch| ch.is_ascii_digit()) {
+            cursor += 1;
+        }
+        let position = if cursor > position_start && chars.get(cursor) == Some(&'$') {
+            saw_positional = true;
+            let position = chars[position_start..cursor]
+                .iter()
+                .collect::<String>()
+                .parse::<usize>()
+                .ok();
+            cursor += 1;
+            position
+        } else {
+            cursor = index + 1;
+            None
+        };
+
+        while chars
+            .get(cursor)
+            .is_some_and(|ch| matches!(ch, '-' | '+' | ' ' | '#' | '0' | '\''))
+        {
+            cursor += 1;
+        }
+
+        if chars.get(cursor) == Some(&'*') {
+            cursor += 1;
+        } else {
+            while chars.get(cursor).is_some_and(|ch| ch.is_ascii_digit()) {
+                cursor += 1;
+            }
+        }
+
+        if chars.get(cursor) == Some(&'.') {
+            cursor += 1;
+            if chars.get(cursor) == Some(&'*') {
+                cursor += 1;
+            } else {
+                while chars.get(cursor).is_some_and(|ch| ch.is_ascii_digit()) {
+                    cursor += 1;
+                }
+            }
+        }
+
+        let modifier_start = cursor;
+        if chars.get(cursor) == Some(&'h') && chars.get(cursor + 1) == Some(&'h') {
+            cursor += 2;
+        } else if chars.get(cursor) == Some(&'l') && chars.get(cursor + 1) == Some(&'l') {
+            cursor += 2;
+        } else if chars
+            .get(cursor)
+            .is_some_and(|ch| matches!(ch, 'h' | 'l' | 'L' | 'q' | 'z' | 't' | 'j'))
+        {
+            cursor += 1;
+        }
+
+        let Some(kind) = chars
+            .get(cursor)
+            .copied()
+            .filter(|ch| ch.is_ascii_alphabetic() || *ch == '@')
+        else {
+            index += 1;
+            continue;
+        };
+
+        let mut format = chars[modifier_start..cursor].iter().collect::<String>();
+        format.push(kind);
+
+        if let Some(position) = position {
+            positional.entry(position).or_insert(format);
+        } else {
+            placeholders.push(format);
+        }
+
+        index = cursor + 1;
+    }
+
+    if saw_positional {
+        positional.into_values().collect()
+    } else {
+        placeholders
+    }
+}
+
 fn infer_swift_type(format_specifier: &str) -> Option<&'static str> {
     let kind = format_specifier
         .strip_prefix('%')
@@ -539,6 +686,7 @@ fn infer_swift_type(format_specifier: &str) -> Option<&'static str> {
         '@' => Some("String"),
         'd' | 'i' | 'u' | 'o' | 'x' | 'X' => Some("Int"),
         'f' | 'F' | 'e' | 'E' | 'g' | 'G' | 'a' | 'A' => Some("Double"),
+        'p' => Some("UnsafeRawPointer"),
         _ => None,
     }
 }

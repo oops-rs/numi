@@ -39,6 +39,7 @@ pub struct EntryTemplateContext {
     pub kind: String,
     pub children: Vec<EntryTemplateContext>,
     pub properties: Metadata,
+    pub metadata: Metadata,
 }
 
 #[derive(Debug)]
@@ -102,6 +103,7 @@ impl ModuleTemplateContext {
             kind: match &module.kind {
                 ModuleKind::Xcassets => "xcassets".to_string(),
                 ModuleKind::Files => "files".to_string(),
+                ModuleKind::Fonts => "fonts".to_string(),
                 ModuleKind::Strings => "strings".to_string(),
                 ModuleKind::Xcstrings => "xcstrings".to_string(),
                 other => return Err(ContextError::unsupported_module(other)),
@@ -128,6 +130,7 @@ impl EntryTemplateContext {
             EntryKind::Image => "image".to_string(),
             EntryKind::Color => "color".to_string(),
             EntryKind::StringKey => "string".to_string(),
+            EntryKind::Font => "font".to_string(),
             EntryKind::Data => "data".to_string(),
             other => return Err(ContextError::unsupported_entry(other, &entry.id)),
         };
@@ -142,6 +145,7 @@ impl EntryTemplateContext {
                 .map(Self::from_resource_entry)
                 .collect::<Result<Vec<_>, _>>()?,
             properties: entry.properties.clone(),
+            metadata: entry.metadata.clone(),
         })
     }
 }

@@ -88,6 +88,54 @@ pub fn normalize_scope(
     Ok(root.into_root_entries())
 }
 
+pub fn normalize_flat_entries_preserve_order(
+    job_name: &str,
+    raw_entries: Vec<RawEntry>,
+) -> Result<Vec<ResourceEntry>, Vec<Diagnostic>> {
+    let mut diagnostics = Vec::new();
+    let mut seen = BTreeMap::<String, (String, String)>::new();
+    let mut entries = Vec::with_capacity(raw_entries.len());
+
+    for raw in raw_entries {
+        let name = raw.path.clone();
+        let identifier = swift_identifier(&name);
+        if let Some((first_name, first_path)) = seen.get(&identifier) {
+            diagnostics.push(
+                Diagnostic::error(format!(
+                    "identifier collision in job `{job_name}` within scope `<root>`: `{}` ({}) and `{}` ({}) both normalize to `{}`",
+                    first_name, first_path, name, raw.path, identifier
+                ))
+                .with_job(job_name)
+                .with_path(raw.source_path.as_std_path()),
+            );
+            continue;
+        }
+
+        seen.insert(identifier, (name.clone(), raw.path.clone()));
+        entries.push(raw.into_entry_with_name(name));
+    }
+
+    if !diagnostics.is_empty() {
+        diagnostics.sort_by(|left, right| {
+            left.path
+                .as_ref()
+                .map(|path| path.as_os_str())
+                .cmp(&right.path.as_ref().map(|path| path.as_os_str()))
+                .then_with(|| left.message.cmp(&right.message))
+        });
+        return Err(diagnostics);
+    }
+
+    entries.sort_by(|left, right| {
+        left.id
+            .to_ascii_lowercase()
+            .cmp(&right.id.to_ascii_lowercase())
+            .then_with(|| left.id.cmp(&right.id))
+    });
+
+    Ok(entries)
+}
+
 #[derive(Default)]
 struct NamespaceNode {
     namespaces: BTreeMap<String, NamespaceNode>,
@@ -252,6 +300,10 @@ impl RawEntry {
             .next()
             .unwrap_or(&self.path)
             .to_string();
+        self.into_entry_with_name(name)
+    }
+
+    fn into_entry_with_name(self, name: String) -> ResourceEntry {
         ResourceEntry {
             id: self.path,
             name: name.clone(),

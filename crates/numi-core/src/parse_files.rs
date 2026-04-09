@@ -125,6 +125,13 @@ fn parse_file_entry(root: &Path, file_path: &Path) -> Result<RawEntry, ParseFile
             path: file_path.to_path_buf(),
         })?
         .to_owned();
+    let file_stem = file_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .ok_or_else(|| ParseFilesError::InvalidUtf8Path {
+            path: file_path.to_path_buf(),
+        })?
+        .to_owned();
     let path_extension = file_path
         .extension()
         .and_then(|extension| extension.to_str())
@@ -139,6 +146,7 @@ fn parse_file_entry(root: &Path, file_path: &Path) -> Result<RawEntry, ParseFile
         properties: Metadata::from([
             ("relativePath".to_string(), Value::String(relative_path)),
             ("fileName".to_string(), Value::String(file_name)),
+            ("fileStem".to_string(), Value::String(file_stem)),
             ("pathExtension".to_string(), Value::String(path_extension)),
         ]),
     })
@@ -153,6 +161,13 @@ fn parse_single_file_entry(file_path: &Path) -> Result<RawEntry, ParseFilesError
         })?
         .to_owned();
     let file_name = relative_path.clone();
+    let file_stem = file_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .ok_or_else(|| ParseFilesError::InvalidUtf8Path {
+            path: file_path.to_path_buf(),
+        })?
+        .to_owned();
     let path_extension = file_path
         .extension()
         .and_then(|extension| extension.to_str())
@@ -167,6 +182,7 @@ fn parse_single_file_entry(file_path: &Path) -> Result<RawEntry, ParseFilesError
         properties: Metadata::from([
             ("relativePath".to_string(), Value::String(relative_path)),
             ("fileName".to_string(), Value::String(file_name)),
+            ("fileStem".to_string(), Value::String(file_stem)),
             ("pathExtension".to_string(), Value::String(path_extension)),
         ]),
     })
@@ -215,6 +231,10 @@ mod tests {
             Value::String("Single.txt".to_string())
         );
         assert_eq!(
+            entries[0].properties["fileStem"],
+            Value::String("Single".to_string())
+        );
+        assert_eq!(
             entries[0].properties["pathExtension"],
             Value::String("txt".to_string())
         );
@@ -245,6 +265,10 @@ mod tests {
         assert_eq!(
             entries[0].properties["fileName"],
             Value::String("alpha.json".to_string())
+        );
+        assert_eq!(
+            entries[0].properties["fileStem"],
+            Value::String("alpha".to_string())
         );
         assert_eq!(
             entries[0].properties["pathExtension"],

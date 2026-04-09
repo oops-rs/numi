@@ -18,8 +18,8 @@ pub use model::{
 };
 pub use workspace::{
     LoadedWorkspace, WORKSPACE_FILE_NAME, WorkspaceConfig, WorkspaceDefaults,
-    WorkspaceDiscoveryError, WorkspaceError, WorkspaceJobDefaults, WorkspaceMemberOverride,
-    WorkspaceSettings, discover_workspace, load_workspace_from_path,
+    WorkspaceDiscoveryError, WorkspaceError, WorkspaceJobDefaults, WorkspaceMember,
+    WorkspaceMemberOverride, WorkspaceSettings, discover_workspace, load_workspace_from_path,
 };
 
 #[derive(Debug)]
@@ -325,6 +325,14 @@ jobs = ["assets", "l10n"]
                 assert_eq!(workspace.version, 1);
                 assert_eq!(workspace.workspace.members, vec!["AppUI", "Core"]);
                 assert_eq!(
+                    workspace
+                        .members
+                        .iter()
+                        .map(|member| member.config.as_str())
+                        .collect::<Vec<_>>(),
+                    vec!["AppUI/numi.toml", "Core/numi.toml"]
+                );
+                assert_eq!(
                     workspace.workspace.defaults.jobs["l10n"]
                         .template
                         .builtin
@@ -417,6 +425,52 @@ swift = "l10n"
                 .as_ref()
                 .and_then(|builtin| builtin.swift.as_deref()),
             Some("l10n")
+        );
+    }
+
+    #[test]
+    fn rejects_workspace_member_overrides_for_undeclared_members() {
+        let error = parse_manifest_str(
+            r#"
+version = 1
+
+[workspace]
+members = ["AppUI"]
+
+[workspace.member_overrides.Core]
+jobs = ["assets"]
+"#,
+        )
+        .expect_err("undeclared member override should fail validation");
+
+        assert!(
+            error
+                .to_string()
+                .contains("workspace.member_overrides keys must match declared members")
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_workspace_default_job_template_shape() {
+        let error = parse_manifest_str(
+            r#"
+version = 1
+
+[workspace]
+members = ["AppUI"]
+
+[workspace.defaults.jobs.l10n.template]
+path = "Templates/l10n.stencil"
+[workspace.defaults.jobs.l10n.template.builtin]
+swift = "l10n"
+"#,
+        )
+        .expect_err("invalid workspace default template should fail validation");
+
+        assert!(
+            error
+                .to_string()
+                .contains("workspace default job template must set exactly one source")
         );
     }
 
@@ -764,6 +818,16 @@ path = "Templates/assets.jinja"
                     ),
                 ]),
             },
+            members: vec![
+                WorkspaceMember {
+                    config: "App/numi.toml".to_string(),
+                    jobs: Vec::new(),
+                },
+                WorkspaceMember {
+                    config: "Core/numi.toml".to_string(),
+                    jobs: vec!["assets".to_string()],
+                },
+            ],
         };
 
         let serialized = toml::to_string(&workspace).expect("workspace should serialize");
@@ -952,6 +1016,40 @@ jobs = ["assets", "l10n"]
     }
 
     #[test]
+    fn parses_legacy_workspace_manifest_for_compatibility() {
+        let temp_dir = create_temp_dir("parse-legacy-workspace-manifest");
+        let manifest_path = temp_dir.join("numi-workspace.toml");
+        write_file(
+            &manifest_path,
+            r#"
+version = 1
+
+[[members]]
+config = "App/numi.toml"
+jobs = ["assets", "l10n"]
+
+[[members]]
+config = "Core/numi.toml"
+"#,
+        );
+
+        let loaded =
+            load_workspace_from_path(&manifest_path).expect("legacy workspace should parse");
+
+        assert_eq!(loaded.config.workspace.members, vec!["App", "Core"]);
+        assert_eq!(
+            loaded
+                .config
+                .members
+                .iter()
+                .map(|member| member.config.as_str())
+                .collect::<Vec<_>>(),
+            vec!["App/numi.toml", "Core/numi.toml"]
+        );
+        assert_eq!(loaded.config.members[0].jobs, vec!["assets", "l10n"]);
+    }
+
+    #[test]
     fn rejects_duplicate_workspace_members() {
         let temp_dir = create_temp_dir("duplicate-workspace-members");
         let manifest_path = temp_dir.join("numi-workspace.toml");
@@ -979,7 +1077,7 @@ members = ["App", "App"]
     fn rejects_empty_workspace_members() {
         let temp_dir = create_temp_dir("empty-workspace-members");
         let manifest_path = temp_dir.join("numi-workspace.toml");
-        write_file(&manifest_path, "version = 1\n[workspace]\nmembers = []\n");
+        write_file(&manifest_path, "version = 1\n[workspace]\n");
 
         let error = load_workspace_from_path(&manifest_path)
             .expect_err("workspace manifest requires at least one member");

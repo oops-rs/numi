@@ -2,7 +2,10 @@ use std::collections::HashSet;
 
 use numi_diagnostics::Diagnostic;
 
-use crate::model::{ACCESS_LEVEL_VALUES, BUNDLE_MODE_VALUES, Config, INPUT_KIND_VALUES};
+use crate::model::{
+    ACCESS_LEVEL_VALUES, BUNDLE_MODE_VALUES, Config, INPUT_KIND_VALUES,
+    SWIFT_BUILTIN_TEMPLATE_VALUES,
+};
 
 pub fn validate_config(config: &Config) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
@@ -112,6 +115,14 @@ pub fn validate_config(config: &Config) -> Vec<Diagnostic> {
                     Diagnostic::error("job template builtin must set exactly one namespace")
                         .with_job(job.name.clone())
                         .with_hint("set `[jobs.template.builtin] swift = \"...\"`"),
+                );
+            } else if let Some(swift_builtin) = builtin.swift.as_deref() {
+                validate_allowed_value(
+                    &mut diagnostics,
+                    "jobs.template.builtin.swift",
+                    swift_builtin,
+                    SWIFT_BUILTIN_TEMPLATE_VALUES,
+                    Some(job.name.as_str()),
                 );
             }
         }

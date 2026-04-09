@@ -779,7 +779,7 @@ numi/
 │   ├── numi-render-minijinja/
 │   └── numi-builtin-templates/
 ├── templates/
-│   └── builtin/
+│   └── swift/
 ├── fixtures/
 │   ├── xcassets-basic/
 │   ├── l10n-basic/

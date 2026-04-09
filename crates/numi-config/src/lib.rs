@@ -267,6 +267,56 @@ path = "Resources/Assets.xcassets"
     }
 
     #[test]
+    fn rejects_empty_swift_builtin_template_name() {
+        let error = parse_str(
+            r#"
+version = 1
+
+[[jobs]]
+name = "assets"
+output = "Generated/Assets.swift"
+
+[[jobs.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.template.builtin]
+swift = ""
+"#,
+        )
+        .expect_err("empty swift builtin name should fail validation");
+
+        let message = error.to_string();
+        assert!(message.contains("jobs.template.builtin.swift must be one of"));
+        assert!(message.contains("got ``"));
+    }
+
+    #[test]
+    fn rejects_unknown_swift_builtin_template_name() {
+        let error = parse_str(
+            r#"
+version = 1
+
+[[jobs]]
+name = "assets"
+output = "Generated/Assets.swift"
+
+[[jobs.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.template.builtin]
+swift = "not-a-real-template"
+"#,
+        )
+        .expect_err("unknown swift builtin name should fail validation");
+
+        let message = error.to_string();
+        assert!(message.contains("jobs.template.builtin.swift must be one of"));
+        assert!(message.contains("not-a-real-template"));
+    }
+
+    #[test]
     fn serializing_empty_builtin_namespace_omits_builtin_table() {
         let config = Config {
             version: 1,

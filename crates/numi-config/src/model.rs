@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 pub const ACCESS_LEVEL_VALUES: &[&str] = &["internal", "public"];
 pub const BUNDLE_MODE_VALUES: &[&str] = &["module", "main", "custom"];
 pub const INPUT_KIND_VALUES: &[&str] = &["xcassets", "strings", "xcstrings", "files"];
+pub const SWIFT_BUILTIN_TEMPLATE_VALUES: &[&str] = &["swiftui-assets", "l10n", "files"];
 pub const DEFAULT_ACCESS_LEVEL: &str = "internal";
 pub const DEFAULT_BUNDLE_MODE: &str = "module";
 

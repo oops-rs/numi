@@ -744,8 +744,8 @@ members = ["apps/assets", "packages/files"]
 }
 
 #[test]
-fn generate_workspace_skips_malformed_mixed_ancestors() {
-    let temp_root = make_temp_dir("generate-workspace-skips-malformed-mixed-ancestors");
+fn generate_workspace_reports_nearer_mixed_manifest() {
+    let temp_root = make_temp_dir("generate-workspace-reports-nearer-mixed-manifest");
     let workspace_root = temp_root.join("workspace");
     let app_parent = workspace_root.join("apps");
     let assets_root = app_parent.join("assets");
@@ -774,19 +774,19 @@ members = ["apps/assets", "packages/files"]
         .output()
         .expect("numi generate --workspace should run");
 
+    assert!(!output.status.success(), "command unexpectedly succeeded");
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
     assert!(
-        output.status.success(),
-        "command failed:\nstdout={}\nstderr={}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+        stderr.contains("manifest must not define both `jobs` and `workspace`"),
+        "stderr was: {stderr}"
     );
     assert!(
-        assets_root.join("Generated/Assets.swift").exists(),
-        "workspace assets output was not generated"
+        !assets_root.join("Generated/Assets.swift").exists(),
+        "member output should not be generated when nearer mixed manifest is invalid"
     );
     assert!(
-        files_root.join("Generated/Files.swift").exists(),
-        "workspace files output was not generated"
+        !files_root.join("Generated/Files.swift").exists(),
+        "higher workspace output should not be generated when nearer mixed manifest is invalid"
     );
 
     fs::remove_dir_all(temp_root).expect("temp dir should be removed");

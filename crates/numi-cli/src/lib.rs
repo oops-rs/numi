@@ -292,11 +292,12 @@ fn load_workspace_cli_manifest(explicit_path: Option<&Path>) -> Result<LoadedMan
                 candidate.display()
             ))
         })? {
-            ManifestKindSniff::WorkspaceLike | ManifestKindSniff::BrokenWorkspaceLike => {
+            ManifestKindSniff::WorkspaceLike
+            | ManifestKindSniff::BrokenWorkspaceLike
+            | ManifestKindSniff::Mixed => {
                 return load_workspace_manifest_candidate(&candidate);
             }
             ManifestKindSniff::ConfigLike
-            | ManifestKindSniff::Mixed
             | ManifestKindSniff::Unknown
             | ManifestKindSniff::Unparsable => continue,
         }

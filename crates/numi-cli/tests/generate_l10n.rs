@@ -185,6 +185,60 @@ fn repeated_l10n_generate_is_byte_stable() {
 }
 
 #[test]
+fn repeated_xcstrings_l10n_generate_is_byte_stable() {
+    let temp_root = make_temp_dir("generate-xcstrings-stable");
+    let fixture_root = repo_root().join("fixtures/xcstrings-basic");
+    let working_root = temp_root.join("fixture");
+    copy_dir_all(&fixture_root, &working_root);
+
+    let first = Command::new(env!("CARGO_BIN_EXE_numi"))
+        .args(["generate", "--config", "swiftgen.toml", "--job", "l10n"])
+        .current_dir(&working_root)
+        .output()
+        .expect("first numi generate should run");
+
+    assert!(
+        first.status.success(),
+        "first command failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&first.stdout),
+        String::from_utf8_lossy(&first.stderr)
+    );
+
+    let generated_path = working_root.join("Generated/L10n.swift");
+    let first_bytes = fs::read(&generated_path).expect("first generated l10n file should exist");
+    let first_modified = fs::metadata(&generated_path)
+        .expect("first generated l10n metadata should exist")
+        .modified()
+        .expect("first generated l10n mtime should exist");
+
+    thread::sleep(Duration::from_millis(20));
+
+    let second = Command::new(env!("CARGO_BIN_EXE_numi"))
+        .args(["generate", "--config", "swiftgen.toml", "--job", "l10n"])
+        .current_dir(&working_root)
+        .output()
+        .expect("second numi generate should run");
+
+    assert!(
+        second.status.success(),
+        "second command failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&second.stdout),
+        String::from_utf8_lossy(&second.stderr)
+    );
+
+    let second_bytes = fs::read(&generated_path).expect("second generated l10n file should exist");
+    let second_modified = fs::metadata(&generated_path)
+        .expect("second generated l10n metadata should exist")
+        .modified()
+        .expect("second generated l10n mtime should exist");
+
+    assert_eq!(first_bytes, second_bytes);
+    assert_eq!(first_modified, second_modified);
+
+    fs::remove_dir_all(temp_root).expect("temp dir should be removed");
+}
+
+#[test]
 fn generate_warns_and_succeeds_for_skipped_xcstrings_variations() {
     let temp_root = make_temp_dir("generate-xcstrings-warning");
     let working_root = temp_root.join("fixture");

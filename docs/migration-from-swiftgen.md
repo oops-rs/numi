@@ -32,7 +32,7 @@ The SwiftGen MVP concepts map directly onto Numi's current config surface:
 Current built-ins cover the MVP resource types:
 
 - `swiftui-assets` for SwiftUI-friendly asset accessors
-- `l10n` for `.strings` localization accessors
+- `l10n` for `.strings` and `.xcstrings` localization accessors
 
 If a SwiftGen setup relied on a custom Stencil template, the closest Numi migration path is to move that output shape into a custom Minijinja template and validate it with `numi dump-context`.
 

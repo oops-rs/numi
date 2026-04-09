@@ -8,8 +8,9 @@ use std::{
 
 use cli::{
     CheckArgs, Cli, Command, ConfigSubcommand, GenerateArgs, InitArgs, LocateArgs, PrintArgs,
+    WorkspaceCheckArgs, WorkspaceGenerateArgs, WorkspaceSubcommand,
 };
-use numi_config::CONFIG_FILE_NAME;
+use numi_config::{CONFIG_FILE_NAME, LoadedWorkspace, WorkspaceMember};
 
 const STARTER_CONFIG_FALLBACK: &str = include_str!("../../../docs/examples/starter-numi.toml");
 
@@ -59,6 +60,10 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         Command::Config(config) => match config.command {
             ConfigSubcommand::Locate(args) => run_config_locate(&args),
             ConfigSubcommand::Print(args) => run_config_print(&args),
+        },
+        Command::Workspace(workspace) => match workspace.command {
+            WorkspaceSubcommand::Generate(args) => run_workspace_generate(&args),
+            WorkspaceSubcommand::Check(args) => run_workspace_check(&args),
         },
         Command::DumpContext(args) => {
             let config_path = discover_config_path(args.config.as_deref())?;
@@ -125,6 +130,53 @@ fn run_init(args: &InitArgs) -> Result<(), CliError> {
     Ok(())
 }
 
+fn run_workspace_generate(args: &WorkspaceGenerateArgs) -> Result<(), CliError> {
+    let loaded = load_workspace_manifest(args.workspace.as_deref())?;
+    let workspace_dir = workspace_dir(&loaded)?;
+
+    for member in select_workspace_members(&loaded, &args.members)? {
+        let config_path = workspace_dir.join(&member.config);
+        let report = numi_core::generate(&config_path, workspace_member_jobs(member))
+            .map_err(|error| CliError::new(error.to_string()))?;
+        print_warnings(&report.warnings);
+    }
+
+    Ok(())
+}
+
+fn run_workspace_check(args: &WorkspaceCheckArgs) -> Result<(), CliError> {
+    let loaded = load_workspace_manifest(args.workspace.as_deref())?;
+    let workspace_dir = workspace_dir(&loaded)?;
+    let mut stale_paths = Vec::new();
+
+    for member in select_workspace_members(&loaded, &args.members)? {
+        let config_path = workspace_dir.join(&member.config);
+        let report = numi_core::check(&config_path, workspace_member_jobs(member))
+            .map_err(|error| CliError::new(error.to_string()))?;
+        print_warnings(&report.warnings);
+        stale_paths.extend(
+            report
+                .stale_paths
+                .iter()
+                .map(|path| normalize_workspace_stale_path(path.as_std_path(), &workspace_dir)),
+        );
+    }
+
+    if stale_paths.is_empty() {
+        Ok(())
+    } else {
+        let lines = stale_paths
+            .iter()
+            .map(display_path)
+            .collect::<Vec<_>>()
+            .join("\n");
+        Err(CliError::with_exit_code(
+            format!("stale generated outputs:\n{lines}"),
+            2,
+        ))
+    }
+}
+
 fn run_config_locate(args: &LocateArgs) -> Result<(), CliError> {
     let config_path = discover_config_path(args.config.as_deref())?;
     println!("{}", display_path(&config_path));
@@ -162,6 +214,27 @@ fn load_starter_config() -> Result<Cow<'static, str>, CliError> {
     }
 }
 
+fn load_workspace_manifest(explicit_path: Option<&Path>) -> Result<LoadedWorkspace, CliError> {
+    let cwd = current_dir()?;
+    let manifest_path = numi_config::discover_workspace(&cwd, explicit_path)
+        .map_err(|error| CliError::new(error.to_string()))?;
+    numi_config::load_workspace_from_path(&manifest_path)
+        .map_err(|error| CliError::new(error.to_string()))
+}
+
+fn workspace_dir(loaded: &LoadedWorkspace) -> Result<&Path, CliError> {
+    loaded
+        .path
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .ok_or_else(|| {
+            CliError::new(format!(
+                "workspace manifest {} has no parent directory",
+                loaded.path.display()
+            ))
+        })
+}
+
 fn discover_config_path(explicit_path: Option<&Path>) -> Result<PathBuf, CliError> {
     let cwd = current_dir()?;
     numi_config::discover_config(&cwd, explicit_path)
@@ -170,6 +243,65 @@ fn discover_config_path(explicit_path: Option<&Path>) -> Result<PathBuf, CliErro
 
 fn selected_jobs(jobs: &[String]) -> Option<&[String]> {
     (!jobs.is_empty()).then_some(jobs)
+}
+
+fn workspace_member_jobs(member: &WorkspaceMember) -> Option<&[String]> {
+    (!member.jobs.is_empty()).then_some(member.jobs.as_slice())
+}
+
+fn select_workspace_members<'a>(
+    loaded: &'a LoadedWorkspace,
+    selected_members: &[String],
+) -> Result<Vec<&'a WorkspaceMember>, CliError> {
+    if selected_members.is_empty() {
+        return Ok(loaded.config.members.iter().collect());
+    }
+
+    let mut missing = selected_members
+        .iter()
+        .filter(|selected| {
+            !loaded
+                .config
+                .members
+                .iter()
+                .any(|member| member.config == **selected)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+
+    if !missing.is_empty() {
+        missing.sort();
+        missing.dedup();
+        let valid_members = loaded
+            .config
+            .members
+            .iter()
+            .map(|member| format!("  - {}", member.config))
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err(CliError::new(format!(
+            "unknown workspace member selection(s): {}\nvalid workspace members:\n{}",
+            missing.join(", "),
+            valid_members
+        )));
+    }
+
+    Ok(loaded
+        .config
+        .members
+        .iter()
+        .filter(|member| {
+            selected_members
+                .iter()
+                .any(|selected| selected == &member.config)
+        })
+        .collect())
+}
+
+fn normalize_workspace_stale_path(path: &Path, workspace_dir: &Path) -> PathBuf {
+    path.strip_prefix(workspace_dir)
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn print_warnings<T: std::fmt::Display>(warnings: &[T]) {

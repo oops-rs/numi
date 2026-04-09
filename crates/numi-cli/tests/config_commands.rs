@@ -42,6 +42,10 @@ fn copy_dir_all(source: &Path, destination: &Path) {
     }
 }
 
+fn write_workspace_manifest(root: &Path, contents: &str) {
+    fs::write(root.join("numi-workspace.toml"), contents).expect("workspace manifest should exist");
+}
+
 #[test]
 fn config_locate_finds_nearest_ancestor() {
     let root = make_temp_dir("nearest-ancestor");
@@ -633,6 +637,185 @@ fn config_print_emits_files_builtin_and_input_kind() {
     );
     assert!(stdout.contains("swift = \"files\""), "stdout was: {stdout}");
     assert!(stdout.contains("mode = \"module\""), "stdout was: {stdout}");
+
+    fs::remove_dir_all(temp_root).expect("temp dir should be removed");
+}
+
+#[test]
+fn workspace_generate_runs_multiple_member_configs() {
+    let temp_root = make_temp_dir("workspace-generate-multiple");
+    let workspace_root = temp_root.join("workspace");
+    let assets_root = workspace_root.join("apps/assets");
+    let files_root = workspace_root.join("packages/files");
+
+    copy_dir_all(&repo_root().join("fixtures/xcassets-basic"), &assets_root);
+    copy_dir_all(&repo_root().join("fixtures/files-basic"), &files_root);
+    write_workspace_manifest(
+        &workspace_root,
+        r#"
+version = 1
+
+[[members]]
+config = "apps/assets/numi.toml"
+
+[[members]]
+config = "packages/files/numi.toml"
+"#,
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_numi"))
+        .args([
+            "workspace",
+            "generate",
+            "--workspace",
+            "numi-workspace.toml",
+        ])
+        .current_dir(&workspace_root)
+        .output()
+        .expect("numi workspace generate should run");
+
+    assert!(
+        output.status.success(),
+        "command failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        assets_root.join("Generated/Assets.swift").exists(),
+        "assets output was not generated"
+    );
+    assert!(
+        files_root.join("Generated/Files.swift").exists(),
+        "files output was not generated"
+    );
+
+    fs::remove_dir_all(temp_root).expect("temp dir should be removed");
+}
+
+#[test]
+fn workspace_generate_can_select_one_member() {
+    let temp_root = make_temp_dir("workspace-generate-select-one");
+    let workspace_root = temp_root.join("workspace");
+    let assets_root = workspace_root.join("apps/assets");
+    let files_root = workspace_root.join("packages/files");
+
+    copy_dir_all(&repo_root().join("fixtures/xcassets-basic"), &assets_root);
+    copy_dir_all(&repo_root().join("fixtures/files-basic"), &files_root);
+    write_workspace_manifest(
+        &workspace_root,
+        r#"
+version = 1
+
+[[members]]
+config = "apps/assets/numi.toml"
+
+[[members]]
+config = "packages/files/numi.toml"
+"#,
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_numi"))
+        .args([
+            "workspace",
+            "generate",
+            "--workspace",
+            "numi-workspace.toml",
+            "--member",
+            "packages/files/numi.toml",
+        ])
+        .current_dir(&workspace_root)
+        .output()
+        .expect("numi workspace generate should run");
+
+    assert!(
+        output.status.success(),
+        "command failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !assets_root.join("Generated/Assets.swift").exists(),
+        "unselected member should not have generated output"
+    );
+    assert!(
+        files_root.join("Generated/Files.swift").exists(),
+        "selected member output was not generated"
+    );
+
+    fs::remove_dir_all(temp_root).expect("temp dir should be removed");
+}
+
+#[test]
+fn workspace_check_returns_exit_code_2_when_any_member_is_stale() {
+    let temp_root = make_temp_dir("workspace-check-stale");
+    let workspace_root = temp_root.join("workspace");
+    let assets_root = workspace_root.join("apps/assets");
+    let files_root = workspace_root.join("packages/files");
+
+    copy_dir_all(&repo_root().join("fixtures/xcassets-basic"), &assets_root);
+    copy_dir_all(&repo_root().join("fixtures/files-basic"), &files_root);
+    write_workspace_manifest(
+        &workspace_root,
+        r#"
+version = 1
+
+[[members]]
+config = "apps/assets/numi.toml"
+
+[[members]]
+config = "packages/files/numi.toml"
+"#,
+    );
+
+    let stale_assets_output = assets_root.join("Generated/Assets.swift");
+    fs::create_dir_all(
+        stale_assets_output
+            .parent()
+            .expect("generated file should have parent"),
+    )
+    .expect("generated directory should exist");
+    fs::write(&stale_assets_output, "// stale output\n").expect("stale output should be written");
+
+    let generate_output = Command::new(env!("CARGO_BIN_EXE_numi"))
+        .args([
+            "workspace",
+            "generate",
+            "--workspace",
+            "numi-workspace.toml",
+            "--member",
+            "packages/files/numi.toml",
+        ])
+        .current_dir(&workspace_root)
+        .output()
+        .expect("numi workspace generate should run");
+    assert!(
+        generate_output.status.success(),
+        "setup generate failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&generate_output.stdout),
+        String::from_utf8_lossy(&generate_output.stderr)
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_numi"))
+        .args(["workspace", "check", "--workspace", "numi-workspace.toml"])
+        .current_dir(&workspace_root)
+        .output()
+        .expect("numi workspace check should run");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "unexpected status: {output:?}"
+    );
+
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
+    assert!(
+        stderr.contains("apps/assets/Generated/Assets.swift"),
+        "stderr was: {stderr}"
+    );
+    assert!(
+        !stderr.contains("packages/files/Generated/Files.swift"),
+        "stderr was: {stderr}"
+    );
 
     fs::remove_dir_all(temp_root).expect("temp dir should be removed");
 }

@@ -21,6 +21,7 @@ pub enum Command {
     Check(CheckArgs),
     Init(InitArgs),
     Config(ConfigCommand),
+    Workspace(WorkspaceCommand),
     #[command(name = "dump-context")]
     DumpContext(DumpContextArgs),
 }
@@ -35,6 +36,18 @@ pub struct ConfigCommand {
 pub enum ConfigSubcommand {
     Locate(LocateArgs),
     Print(PrintArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct WorkspaceCommand {
+    #[command(subcommand)]
+    pub command: WorkspaceSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum WorkspaceSubcommand {
+    Generate(WorkspaceGenerateArgs),
+    Check(WorkspaceCheckArgs),
 }
 
 #[derive(Debug, Args)]
@@ -57,6 +70,22 @@ pub struct CheckArgs {
     pub config: Option<PathBuf>,
     #[arg(long = "job")]
     pub jobs: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct WorkspaceGenerateArgs {
+    #[arg(long = "workspace")]
+    pub workspace: Option<PathBuf>,
+    #[arg(long = "member")]
+    pub members: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct WorkspaceCheckArgs {
+    #[arg(long = "workspace")]
+    pub workspace: Option<PathBuf>,
+    #[arg(long = "member")]
+    pub members: Vec<String>,
 }
 
 #[derive(Debug, Args)]

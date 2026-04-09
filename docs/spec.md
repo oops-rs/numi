@@ -705,10 +705,9 @@ error: identifier collision in job `assets`
 
 ### 15.4 Measurement
 The project should include benchmark fixtures for:
-- Single asset catalog project
-- Multi-module repo config discovery
-- Mixed assets + l10n generation
-- Unchanged re-run performance
+- single asset catalog repeated generation
+- mixed assets + localization repeated generation
+- ambiguous multi-module repo config discovery from a repo root
 
 ## 16. Filesystem and Repo Integration
 

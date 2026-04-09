@@ -249,6 +249,14 @@ Useful fixtures:
 - `fixtures/xcassets-basic`
 - `fixtures/l10n-basic`
 - `fixtures/xcstrings-basic`
+- `fixtures/multimodule-repo`
+- `fixtures/bench-mixed-large`
+
+Benchmark scenarios currently measured:
+
+- repeated generation for a single asset fixture
+- repeated generation for a mixed assets + localization fixture
+- ambiguous multimodule config discovery from a repo root
 
 ## Current Status
 

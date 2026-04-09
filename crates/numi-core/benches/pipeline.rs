@@ -1,9 +1,21 @@
 use criterion::{Criterion, criterion_group, criterion_main};
+use numi_config::DiscoveryError;
 use std::{
     fs,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
+
+struct PreparedFixture {
+    temp_root: PathBuf,
+    working_root: PathBuf,
+}
+
+impl PreparedFixture {
+    fn config_path(&self) -> PathBuf {
+        self.working_root.join("numi.toml")
+    }
+}
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -42,21 +54,67 @@ fn copy_dir_all(source: &Path, destination: &Path) {
     }
 }
 
-fn benchmark_generate_assets(c: &mut Criterion) {
-    let temp_root = make_temp_dir("pipeline-assets");
-    let fixture_root = repo_root().join("fixtures/xcassets-basic");
+fn prepare_fixture(fixture_name: &str, bench_name: &str) -> PreparedFixture {
+    let temp_root = make_temp_dir(bench_name);
+    let fixture_root = repo_root().join("fixtures").join(fixture_name);
     let working_root = temp_root.join("fixture");
     copy_dir_all(&fixture_root, &working_root);
-    let config_path = working_root.join("numi.toml");
+    PreparedFixture {
+        temp_root,
+        working_root,
+    }
+}
 
+fn cleanup_fixture(fixture: PreparedFixture) {
+    fs::remove_dir_all(fixture.temp_root).expect("temp dir should be removed");
+}
+
+fn benchmark_generate_assets_repeated_fixture(c: &mut Criterion) {
+    let fixture = prepare_fixture("xcassets-basic", "pipeline-assets-basic");
+    let config_path = fixture.config_path();
     numi_core::generate(&config_path, None).expect("fixture warm-up generate should succeed");
 
-    c.bench_function("generate_assets_fixture", |b| {
+    c.bench_function("generate_assets_repeated_fixture", |b| {
         b.iter(|| numi_core::generate(&config_path, None).expect("fixture generate should work"));
     });
 
-    fs::remove_dir_all(temp_root).expect("temp dir should be removed");
+    cleanup_fixture(fixture);
 }
 
-criterion_group!(benches, benchmark_generate_assets);
+fn benchmark_generate_mixed_large_repeated_fixture(c: &mut Criterion) {
+    let fixture = prepare_fixture("bench-mixed-large", "pipeline-mixed-large");
+    let config_path = fixture.config_path();
+
+    numi_core::generate(&config_path, None).expect("fixture warm-up generate should succeed");
+
+    c.bench_function("generate_mixed_large_repeated_fixture", |b| {
+        b.iter(|| numi_core::generate(&config_path, None).expect("fixture generate should work"));
+    });
+
+    cleanup_fixture(fixture);
+}
+
+fn benchmark_discover_multimodule_root_ambiguous_fixture(c: &mut Criterion) {
+    let fixture = prepare_fixture("multimodule-repo", "pipeline-discover-multimodule");
+    let discovery_result = numi_config::discover_config(&fixture.working_root, None);
+    assert!(
+        matches!(discovery_result, Err(DiscoveryError::Ambiguous { .. })),
+        "fixture root should remain ambiguous"
+    );
+
+    c.bench_function("discover_multimodule_root_ambiguous_fixture", |b| {
+        b.iter(|| {
+            let _ = numi_config::discover_config(&fixture.working_root, None);
+        });
+    });
+
+    cleanup_fixture(fixture);
+}
+
+criterion_group!(
+    benches,
+    benchmark_generate_assets_repeated_fixture,
+    benchmark_generate_mixed_large_repeated_fixture,
+    benchmark_discover_multimodule_root_ambiguous_fixture
+);
 criterion_main!(benches);

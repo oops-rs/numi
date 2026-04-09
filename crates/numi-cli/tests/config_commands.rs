@@ -275,6 +275,106 @@ fn check_returns_exit_code_2_for_stale_output_without_rewriting_file() {
 }
 
 #[test]
+fn check_warns_and_returns_exit_code_2_for_stale_xcstrings_output() {
+    let temp_root = make_temp_dir("check-xcstrings-warning-stale");
+    let working_root = temp_root.join("fixture");
+    let localization_root = working_root.join("Resources/Localization");
+    fs::create_dir_all(&localization_root).expect("localization directory should exist");
+    fs::write(
+        working_root.join("swiftgen.toml"),
+        r#"
+version = 1
+
+[[jobs]]
+name = "l10n"
+output = "Generated/L10n.swift"
+
+[[jobs.inputs]]
+type = "xcstrings"
+path = "Resources/Localization"
+
+[jobs.template]
+builtin = "l10n"
+"#,
+    )
+    .expect("config should be written");
+    fs::write(
+        localization_root.join("Localizable.xcstrings"),
+        r#"{
+  "version": "1.0",
+  "sourceLanguage": "en",
+  "strings": {
+    "things.label": {
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld thing"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld things"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"#,
+    )
+    .expect("xcstrings file should be written");
+
+    let generated_path = working_root.join("Generated/L10n.swift");
+    fs::create_dir_all(
+        generated_path
+            .parent()
+            .expect("generated file should have parent"),
+    )
+    .expect("generated directory should exist");
+    fs::write(&generated_path, "// stale output\n").expect("stale output should be written");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_numi"))
+        .args(["check", "--config", "swiftgen.toml", "--job", "l10n"])
+        .current_dir(&working_root)
+        .output()
+        .expect("numi check should run");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "unexpected status: {output:?}"
+    );
+
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
+    assert!(
+        stderr.contains("warning: skipping xcstrings key `things.label`"),
+        "stderr was: {stderr}"
+    );
+    assert!(
+        stderr.contains("stale generated outputs:"),
+        "stderr was: {stderr}"
+    );
+    assert!(
+        stderr.contains("Generated/L10n.swift"),
+        "stderr was: {stderr}"
+    );
+    assert_eq!(
+        fs::read_to_string(&generated_path).expect("generated file should still exist"),
+        "// stale output\n"
+    );
+
+    fs::remove_dir_all(temp_root).expect("temp dir should be removed");
+}
+
+#[test]
 fn init_refuses_to_overwrite_existing_config_without_force() {
     let root = make_temp_dir("init-refuse-overwrite");
     let existing = root.join("swiftgen.toml");

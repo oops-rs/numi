@@ -381,6 +381,48 @@ builtin = "l10n"
 }
 
 #[test]
+fn check_returns_exit_code_2_for_stale_files_output_without_rewriting_file() {
+    let temp_root = make_temp_dir("check-files-stale");
+    let fixture_root = repo_root().join("fixtures/files-basic");
+    let working_root = temp_root.join("fixture");
+    copy_dir_all(&fixture_root, &working_root);
+
+    let generated_path = working_root.join("Generated/Files.swift");
+    fs::create_dir_all(
+        generated_path
+            .parent()
+            .expect("generated file should have parent"),
+    )
+    .expect("generated directory should exist");
+    fs::write(&generated_path, "// stale files output\n")
+        .expect("stale files output should be written");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_numi"))
+        .args(["check", "--config", "numi.toml", "--job", "files"])
+        .current_dir(&working_root)
+        .output()
+        .expect("numi check should run");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "unexpected status: {output:?}"
+    );
+
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
+    assert!(
+        stderr.contains("Generated/Files.swift"),
+        "stderr was: {stderr}"
+    );
+    assert_eq!(
+        fs::read_to_string(&generated_path).expect("generated file should still exist"),
+        "// stale files output\n"
+    );
+
+    fs::remove_dir_all(temp_root).expect("temp dir should be removed");
+}
+
+#[test]
 fn init_refuses_to_overwrite_existing_config_without_force() {
     let root = make_temp_dir("init-refuse-overwrite");
     let existing = root.join("numi.toml");
@@ -555,4 +597,33 @@ builtin = "l10n"
     );
 
     fs::remove_dir_all(root).expect("temp dir should be removed");
+}
+
+#[test]
+fn config_print_emits_files_builtin_and_input_kind() {
+    let temp_root = make_temp_dir("config-print-files");
+    let fixture_root = repo_root().join("fixtures/files-basic");
+    let working_root = temp_root.join("fixture");
+    copy_dir_all(&fixture_root, &working_root);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_numi"))
+        .args(["config", "print", "--config", "numi.toml"])
+        .current_dir(&working_root)
+        .output()
+        .expect("numi config print should run");
+
+    assert!(
+        output.status.success(),
+        "command failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+    assert!(stdout.contains("name = \"files\""), "stdout was: {stdout}");
+    assert!(stdout.contains("type = \"files\""), "stdout was: {stdout}");
+    assert!(stdout.contains("builtin = \"files\""), "stdout was: {stdout}");
+    assert!(stdout.contains("mode = \"module\""), "stdout was: {stdout}");
+
+    fs::remove_dir_all(temp_root).expect("temp dir should be removed");
 }

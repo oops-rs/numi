@@ -468,6 +468,32 @@ path = "Templates/assets.jinja"
     }
 
     #[test]
+    fn serializing_workspace_member_without_jobs_omits_jobs_field() {
+        let workspace = WorkspaceConfig {
+            version: 1,
+            members: vec![
+                WorkspaceMember {
+                    config: "App/numi.toml".to_string(),
+                    jobs: Vec::new(),
+                },
+                WorkspaceMember {
+                    config: "Core/numi.toml".to_string(),
+                    jobs: vec!["assets".to_string()],
+                },
+            ],
+        };
+
+        let serialized = toml::to_string(&workspace).expect("workspace should serialize");
+
+        assert!(!serialized.contains("config = \"App/numi.toml\"\njobs = []"));
+        assert!(serialized.contains("config = \"Core/numi.toml\"\njobs = [\"assets\"]"));
+
+        let reparsed = toml::from_str::<WorkspaceConfig>(&serialized)
+            .expect("serialized workspace should parse back");
+        assert_eq!(reparsed, workspace);
+    }
+
+    #[test]
     fn rejects_invalid_v1_enum_values() {
         let error = parse_str(
             r#"
@@ -811,5 +837,69 @@ jobs = ["assets", "assets"]
         let error = discover_workspace(&temp_dir, Some(&explicit))
             .expect_err("missing explicit workspace manifest should be reported");
         assert!(error.to_string().contains("workspace manifest not found"));
+    }
+
+    #[test]
+    fn discovers_config_manifest_with_original_rules() {
+        let ancestor_root = create_temp_dir("config-discovery-ancestor");
+        let ancestor_manifest = ancestor_root.join("numi.toml");
+        write_file(&ancestor_manifest, "version = 1\njobs = []\n");
+
+        let nested = ancestor_root.join("apps/ios/App");
+        fs::create_dir_all(&nested).expect("nested directory should exist");
+
+        let discovered =
+            discover_config(&nested, None).expect("ancestor config manifest should be discovered");
+        assert_eq!(
+            discovered,
+            ancestor_manifest
+                .canonicalize()
+                .expect("manifest path should canonicalize")
+        );
+
+        let descendant_root = create_temp_dir("config-discovery-descendant");
+        let descendant_manifest = descendant_root.join("apps/App/numi.toml");
+        write_file(&descendant_manifest, "version = 1\njobs = []\n");
+
+        let discovered = discover_config(&descendant_root, None)
+            .expect("single descendant config manifest should be discovered");
+        assert_eq!(
+            discovered,
+            descendant_manifest
+                .canonicalize()
+                .expect("manifest path should canonicalize")
+        );
+
+        let ambiguous_root = create_temp_dir("config-discovery-ambiguous");
+        write_file(
+            &ambiguous_root.join("apps/App/numi.toml"),
+            "version = 1\njobs = []\n",
+        );
+        write_file(
+            &ambiguous_root.join("packages/Core/numi.toml"),
+            "version = 1\njobs = []\n",
+        );
+
+        let error = discover_config(&ambiguous_root, None)
+            .expect_err("multiple descendant config manifests should be ambiguous");
+
+        match error {
+            DiscoveryError::Ambiguous { root, matches } => {
+                assert_eq!(
+                    root,
+                    ambiguous_root
+                        .canonicalize()
+                        .expect("path should canonicalize")
+                );
+                assert_eq!(
+                    matches,
+                    vec![
+                        PathBuf::from("apps/App/numi.toml"),
+                        PathBuf::from("packages/Core/numi.toml"),
+                    ]
+                );
+            }
+            other => panic!("expected ambiguous discovery error, got {other:?}"),
+        }
     }
 }

@@ -22,7 +22,7 @@ pub struct WorkspaceConfig {
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceMember {
     pub config: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub jobs: Vec<String>,
 }
 

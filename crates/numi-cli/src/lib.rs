@@ -349,7 +349,7 @@ fn manifest_text_declares_workspace(contents: &str) -> bool {
         if in_root
             && parse_toml_key_path_before_equals(trimmed)
                 .and_then(|path| path.first().copied())
-                .is_some_and(|segment| segment == "workspace")
+                .is_some_and(|segment| segment == "workspace" || segment == "members")
         {
             return true;
         }

@@ -1151,23 +1151,30 @@ config = "Core/numi.toml"
     }
 
     #[test]
-    fn accepts_workspace_root_member() {
-        let workspace = parse_manifest_str(
-            r#"
+    fn rejects_workspace_root_members_under_unified_manifest_model() {
+        for member in [".", "./"] {
+            let error = parse_manifest_str(&format!(
+                r#"
 version = 1
 
 [workspace]
-members = ["."]
-"#,
-        )
-        .expect("workspace root member should be valid");
+members = ["{member}"]
+"#
+            ))
+            .expect_err("workspace root member should be rejected");
 
-        let Manifest::Workspace(workspace) = workspace else {
-            panic!("expected workspace manifest");
-        };
-
-        assert_eq!(workspace.workspace.members, vec!["."]);
-        assert_eq!(workspace.members()[0].config, "numi.toml");
+            let message = error.to_string();
+            assert!(
+                message.contains("workspace.members entries must not point at the workspace root"),
+                "message was: {message}"
+            );
+            assert!(
+                message.contains(
+                    "declare member directories like `AppUI` or `Core`; the workspace root numi.toml is the workspace manifest, not a member config"
+                ),
+                "message was: {message}"
+            );
+        }
     }
 
     #[test]

@@ -187,6 +187,17 @@ fn validate_workspace(config: &WorkspaceConfig) -> Vec<Diagnostic> {
             continue;
         };
 
+        if normalized_member == "." {
+            diagnostics.push(
+                Diagnostic::error("workspace.members entries must not point at the workspace root")
+                    .with_hint(
+                        "declare member directories like `AppUI` or `Core`; the workspace root numi.toml is the workspace manifest, not a member config",
+                    )
+                    .with_path(PathBuf::from(member)),
+            );
+            continue;
+        }
+
         if is_config_path(member) {
             diagnostics.push(
                 Diagnostic::error("workspace.members entries must be relative member roots")

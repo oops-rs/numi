@@ -8,6 +8,7 @@ Today it supports:
 - `.xcassets` inputs
 - `.strings` inputs
 - `.xcstrings` inputs
+- `type = "files"` inputs for file-oriented helpers
 - shipped Swift templates for SwiftUI assets, localization, and file helpers
 - custom Minijinja templates, including `{% include %}` support
 
@@ -81,7 +82,6 @@ output = "Generated/Assets.swift"
 type = "xcassets"
 path = "Resources/Assets.xcassets"
 
-[jobs.template]
 [jobs.template.builtin]
 swift = "swiftui-assets"
 
@@ -93,7 +93,6 @@ output = "Generated/L10n.swift"
 type = "strings"
 path = "Resources/Localization"
 
-[jobs.template]
 [jobs.template.builtin]
 swift = "l10n"
 ```
@@ -109,7 +108,6 @@ output = "Generated/L10n.swift"
 type = "xcstrings"
 path = "Resources/Localization"
 
-[jobs.template]
 [jobs.template.builtin]
 swift = "l10n"
 ```
@@ -219,6 +217,11 @@ The stable context contract is documented in [docs/context-schema.md](docs/conte
 - `modules[].kind` remains `xcstrings` in template context
 - `entry.properties.placeholders` is included only when placeholder metadata exists
 - unsupported variation-bearing records are skipped with warnings
+
+`files`
+
+- file-oriented inputs are supported with the shipped `files` Swift template
+- templates receive file metadata in the stable context contract documented in [docs/context-schema.md](docs/context-schema.md)
 
 ## Developer Workflow
 

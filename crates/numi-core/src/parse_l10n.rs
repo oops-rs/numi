@@ -217,6 +217,11 @@ fn parse_xcstrings_file(path: &Path) -> Result<LocalizationTable, ParseL10nError
     let mut warnings = Vec::new();
 
     for (key, item) in xcstrings.strings {
+        if key.is_empty() {
+            warnings.push(xcstrings_warning(path, &key, "has an empty key"));
+            continue;
+        }
+
         let Some(localization) = select_localization(&item, xcstrings.source_language.as_str())
         else {
             warnings.push(xcstrings_warning(
@@ -1268,7 +1273,58 @@ mod tests {
         let warning = tables[0]
             .warnings
             .iter()
-            .find(|warning| warning.message.contains("string unit"))
+            .find(|warning| warning.message.contains("empty key"))
+            .expect("expected warning for empty key");
+        assert_eq!(warning.path, Some(xcstrings_path.clone()));
+        assert_eq!(warning.severity, Severity::Warning);
+    }
+
+    #[test]
+    fn xcstrings_with_empty_key_and_empty_string_unit_becomes_warning() {
+        let temp_dir = ScopedTempDir::new("parse-xcstrings-empty-key-string-unit");
+        let xcstrings_path = temp_dir.path().join("Localizable.xcstrings");
+        fs::write(
+            &xcstrings_path,
+            r#"{
+  "version": "1.0",
+  "sourceLanguage": "en",
+  "strings": {
+    "": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": ""
+          }
+        }
+      },
+      "shouldTranslate": false
+    }
+  }
+}
+"#,
+        )
+        .expect("xcstrings file should be written");
+
+        let result = parse_xcstrings(&xcstrings_path);
+
+        assert!(
+            result.is_ok(),
+            "{}",
+            match result {
+                Err(error) => format!("expected warnings, got parse error: {error}"),
+                Ok(_) => "".to_string(),
+            }
+        );
+
+        let tables = result.expect("parse should now warn instead of error");
+        assert_eq!(tables.len(), 1);
+        assert!(tables[0].entries.is_empty());
+        assert_eq!(tables[0].warnings.len(), 1);
+        let warning = tables[0]
+            .warnings
+            .iter()
+            .find(|warning| warning.message.contains("empty key"))
             .expect("expected warning for empty key");
         assert_eq!(warning.path, Some(xcstrings_path.clone()));
         assert_eq!(warning.severity, Severity::Warning);

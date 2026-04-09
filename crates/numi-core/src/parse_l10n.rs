@@ -168,7 +168,7 @@ fn parse_strings_file(path: &Path) -> Result<LocalizationTable, ParseL10nError> 
         .map_err(|path| ParseL10nError::InvalidUtf8Path { path })?;
     let mut entries = Vec::with_capacity(strings.pairs.len());
     for pair in strings.pairs {
-        let key = pair.key;
+        let key = decode_strings_translation_escapes(path, &pair.key)?;
         let translation = decode_strings_translation_escapes(path, &pair.value)?;
         entries.push(RawEntry {
             path: key.clone(),
@@ -210,8 +210,8 @@ fn parse_xcstrings_file(path: &Path) -> Result<LocalizationTable, ParseL10nError
 
     let source_path = Utf8PathBuf::from_path_buf(path.to_path_buf())
         .map_err(|path| ParseL10nError::InvalidUtf8Path { path })?;
-    let placeholder_formats =
-        parse_xcstrings_placeholder_formats(path, xcstrings.source_language.as_str())?;
+    let adapter_metadata =
+        parse_xcstrings_adapter_metadata(path, xcstrings.source_language.as_str())?;
 
     let mut entries = Vec::new();
     let mut warnings = Vec::new();
@@ -227,7 +227,11 @@ fn parse_xcstrings_file(path: &Path) -> Result<LocalizationTable, ParseL10nError
             continue;
         };
 
-        if let Some(reason) = unsupported_variation_reason(localization) {
+        if let Some(reason) = adapter_metadata
+            .get(&key)
+            .and_then(|metadata| metadata.variation_reason)
+            .or_else(|| unsupported_variation_reason(localization))
+        {
             warnings.push(xcstrings_warning(path, &key, reason));
             continue;
         }
@@ -247,8 +251,8 @@ fn parse_xcstrings_file(path: &Path) -> Result<LocalizationTable, ParseL10nError
             ("translation".to_string(), Value::String(translation)),
         ]);
 
-        if let Some(substitutions) = placeholder_formats.get(&key) {
-            if let Some(placeholders) = build_placeholder_metadata(substitutions) {
+        if let Some(metadata) = adapter_metadata.get(&key) {
+            if let Some(placeholders) = build_placeholder_metadata(&metadata.placeholder_specs) {
                 properties.insert("placeholders".to_string(), Value::Array(placeholders));
             }
         }
@@ -285,10 +289,21 @@ fn map_langcodec_error(path: &Path, error: LangcodecError) -> ParseL10nError {
     }
 }
 
-fn parse_xcstrings_placeholder_formats(
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct PlaceholderMetadataSpec {
+    format_specifier: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct XcstringsEntryMetadata {
+    placeholder_specs: BTreeMap<String, PlaceholderMetadataSpec>,
+    variation_reason: Option<&'static str>,
+}
+
+fn parse_xcstrings_adapter_metadata(
     path: &Path,
     source_language: &str,
-) -> Result<BTreeMap<String, BTreeMap<String, String>>, ParseL10nError> {
+) -> Result<BTreeMap<String, XcstringsEntryMetadata>, ParseL10nError> {
     let bytes = fs::read(path).map_err(|source| ParseL10nError::ReadFile {
         path: path.to_path_buf(),
         source,
@@ -304,7 +319,7 @@ fn parse_xcstrings_placeholder_formats(
         return Ok(BTreeMap::new());
     };
 
-    let mut placeholder_formats = BTreeMap::new();
+    let mut metadata_by_key = BTreeMap::new();
     for (key, record) in strings {
         let Some(localizations) = record.get("localizations").and_then(Value::as_object) else {
             continue;
@@ -312,26 +327,34 @@ fn parse_xcstrings_placeholder_formats(
         let Some(localization) = select_localization_value(localizations, source_language) else {
             continue;
         };
-        let Some(substitutions) = localization.get("substitutions").and_then(Value::as_object)
-        else {
-            continue;
-        };
 
-        let mut formats = BTreeMap::new();
-        for (name, substitution) in substitutions {
-            if let Some(format_specifier) =
-                substitution.get("formatSpecifier").and_then(Value::as_str)
-            {
-                formats.insert(name.clone(), format_specifier.to_string());
+        let mut metadata = XcstringsEntryMetadata::default();
+        metadata.variation_reason = unsupported_variation_reason_from_value(localization);
+
+        if let Some(substitutions) = localization.get("substitutions").and_then(Value::as_object) {
+            for (name, substitution) in substitutions {
+                let spec = PlaceholderMetadataSpec {
+                    format_specifier: substitution
+                        .get("formatSpecifier")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string),
+                };
+                metadata.placeholder_specs.insert(name.clone(), spec);
+
+                if metadata.variation_reason.is_none() {
+                    metadata.variation_reason = substitution
+                        .get("variations")
+                        .and_then(unsupported_variation_reason_from_variations_value);
+                }
             }
         }
 
-        if !formats.is_empty() {
-            placeholder_formats.insert(key.clone(), formats);
+        if !metadata.placeholder_specs.is_empty() || metadata.variation_reason.is_some() {
+            metadata_by_key.insert(key.clone(), metadata);
         }
     }
 
-    Ok(placeholder_formats)
+    Ok(metadata_by_key)
 }
 
 fn select_localization<'a>(
@@ -464,27 +487,31 @@ fn decode_strings_translation_escapes(path: &Path, value: &str) -> Result<String
     Ok(output)
 }
 
-fn build_placeholder_metadata(substitutions: &BTreeMap<String, String>) -> Option<Vec<Value>> {
+fn build_placeholder_metadata(
+    substitutions: &BTreeMap<String, PlaceholderMetadataSpec>,
+) -> Option<Vec<Value>> {
     if substitutions.is_empty() {
         return None;
     }
 
     let mut placeholders = Vec::with_capacity(substitutions.len());
 
-    for (name, format_specifier) in substitutions {
+    for (name, placeholder_spec) in substitutions {
         let mut placeholder = Metadata::new();
         placeholder.insert("name".to_string(), Value::String(name.clone()));
 
-        placeholder.insert(
-            "format".to_string(),
-            Value::String(format_specifier.clone()),
-        );
-
-        if let Some(swift_type) = infer_swift_type(format_specifier) {
+        if let Some(format_specifier) = placeholder_spec.format_specifier.as_ref() {
             placeholder.insert(
-                "swiftType".to_string(),
-                Value::String(swift_type.to_string()),
+                "format".to_string(),
+                Value::String(format_specifier.clone()),
             );
+
+            if let Some(swift_type) = infer_swift_type(format_specifier) {
+                placeholder.insert(
+                    "swiftType".to_string(),
+                    Value::String(swift_type.to_string()),
+                );
+            }
         }
 
         placeholders.push(Value::Object(placeholder.into_iter().collect()));
@@ -529,6 +556,79 @@ fn unsupported_variation_reason(localization: &XcstringsLocalization) -> Option<
         Some("unsupported plural variations")
     } else {
         None
+    }
+}
+
+fn unsupported_variation_reason_from_value(localization: &Value) -> Option<&'static str> {
+    let localization = localization.as_object()?;
+    if let Some(reason) = localization
+        .get("variations")
+        .and_then(unsupported_variation_reason_from_variations_value)
+    {
+        return Some(reason);
+    }
+
+    let substitutions = localization.get("substitutions")?.as_object()?;
+    for substitution in substitutions.values() {
+        if let Some(reason) = substitution
+            .get("variations")
+            .and_then(unsupported_variation_reason_from_variations_value)
+        {
+            return Some(reason);
+        }
+    }
+
+    None
+}
+
+fn unsupported_variation_reason_from_variations_value(variations: &Value) -> Option<&'static str> {
+    match variations {
+        Value::Object(object) => {
+            if object.is_empty() {
+                return None;
+            }
+
+            if object
+                .get("plural")
+                .is_some_and(|value| !is_empty_variation_value(value))
+            {
+                return Some("unsupported plural variations");
+            }
+
+            if object
+                .get("device")
+                .is_some_and(|value| !is_empty_variation_value(value))
+            {
+                return Some("unsupported device-specific variations");
+            }
+
+            if object
+                .values()
+                .any(|value| !is_empty_variation_value(value))
+            {
+                return Some("unsupported variation tree");
+            }
+
+            None
+        }
+        Value::Array(array) => {
+            if array.is_empty() {
+                None
+            } else {
+                Some("unsupported variation tree")
+            }
+        }
+        Value::Null => None,
+        _ => Some("unsupported variation tree"),
+    }
+}
+
+fn is_empty_variation_value(value: &Value) -> bool {
+    match value {
+        Value::Object(object) => object.values().all(is_empty_variation_value),
+        Value::Array(array) => array.iter().all(is_empty_variation_value),
+        Value::Null => true,
+        _ => false,
     }
 }
 
@@ -646,6 +746,23 @@ mod tests {
         assert_eq!(
             tables[0].entries[0].properties["translation"],
             Value::String("Can't accept the invitation".to_string())
+        );
+    }
+
+    #[test]
+    fn parses_escaped_apostrophe_in_strings_key() {
+        let temp_dir = ScopedTempDir::new("parse-escaped-key-apostrophe");
+        let strings_path = temp_dir.path().join("Localizable.strings");
+        fs::write(&strings_path, "\"invite.can\\'t\" = \"Invite\";\n")
+            .expect("strings file should be written");
+
+        let tables = parse_strings(&strings_path).expect("strings should parse");
+
+        assert_eq!(tables.len(), 1);
+        assert_eq!(tables[0].entries[0].path, "invite.can't");
+        assert_eq!(
+            tables[0].entries[0].properties["key"],
+            Value::String("invite.can't".to_string())
         );
     }
 
@@ -771,6 +888,48 @@ mod tests {
     }
 
     #[test]
+    fn keeps_xcstrings_placeholder_name_without_format_specifier() {
+        let temp_dir = make_temp_dir("parse-xcstrings-placeholder-name-only");
+        let xcstrings_path = temp_dir.join("Localizable.xcstrings");
+        fs::write(
+            &xcstrings_path,
+            r#"{
+  "version": "1.0",
+  "sourceLanguage": "en",
+  "strings": {
+    "welcome.message": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hello %#@name@"
+          },
+          "substitutions": {
+            "name": {}
+          }
+        }
+      }
+    }
+  }
+}
+"#,
+        )
+        .expect("xcstrings file should be written");
+
+        let tables = parse_xcstrings(&xcstrings_path).expect("xcstrings should parse");
+
+        assert_eq!(tables.len(), 1);
+        assert_eq!(tables[0].entries.len(), 1);
+        assert_eq!(
+            tables[0].entries[0].properties["placeholders"],
+            json!([{"name": "name"}])
+        );
+        assert!(tables[0].warnings.is_empty());
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
     fn skips_xcstrings_plural_variations_with_warning() {
         let temp_dir = make_temp_dir("parse-xcstrings-plural");
         let xcstrings_path = temp_dir.join("Localizable.xcstrings");
@@ -820,6 +979,94 @@ mod tests {
             .message
             .contains("unsupported plural variations"));
         assert_eq!(tables[0].warnings[0].path, Some(xcstrings_path.clone()));
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn skips_xcstrings_device_variations_with_warning() {
+        let temp_dir = make_temp_dir("parse-xcstrings-device");
+        let xcstrings_path = temp_dir.join("Localizable.xcstrings");
+        fs::write(
+            &xcstrings_path,
+            r#"{
+  "version": "1.0",
+  "sourceLanguage": "en",
+  "strings": {
+    "title.label": {
+      "localizations": {
+        "en": {
+          "variations": {
+            "device": {
+              "iphone": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Title"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"#,
+        )
+        .expect("xcstrings file should be written");
+
+        let tables = parse_xcstrings(&xcstrings_path).expect("xcstrings should parse");
+
+        assert_eq!(tables.len(), 1);
+        assert!(tables[0].entries.is_empty());
+        assert_eq!(tables[0].warnings.len(), 1);
+        assert!(tables[0].warnings[0]
+            .message
+            .contains("unsupported device-specific variations"));
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn skips_xcstrings_unknown_variation_tree_with_warning() {
+        let temp_dir = make_temp_dir("parse-xcstrings-unknown-variation");
+        let xcstrings_path = temp_dir.join("Localizable.xcstrings");
+        fs::write(
+            &xcstrings_path,
+            r#"{
+  "version": "1.0",
+  "sourceLanguage": "en",
+  "strings": {
+    "title.label": {
+      "localizations": {
+        "en": {
+          "variations": {
+            "customDimension": {
+              "foo": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Title"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"#,
+        )
+        .expect("xcstrings file should be written");
+
+        let tables = parse_xcstrings(&xcstrings_path).expect("xcstrings should parse");
+
+        assert_eq!(tables.len(), 1);
+        assert!(tables[0].entries.is_empty());
+        assert_eq!(tables[0].warnings.len(), 1);
+        assert!(tables[0].warnings[0]
+            .message
+            .contains("unsupported variation tree"));
 
         fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
     }

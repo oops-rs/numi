@@ -262,9 +262,10 @@ fn load_workspace_cli_manifest(explicit_path: Option<&Path>) -> Result<LoadedMan
 
     if let Some(explicit_path) = explicit_path {
         let manifest_path = numi_config::discover_workspace_ancestor(&cwd, Some(explicit_path))
+            .map_err(workspace_manifest_discovery_error)?;
+        let loaded = numi_config::load_manifest_from_path(&manifest_path)
             .map_err(|error| CliError::new(error.to_string()))?;
-        return numi_config::load_manifest_from_path(&manifest_path)
-            .map_err(|error| CliError::new(error.to_string()));
+        return require_workspace_manifest(loaded);
     }
 
     let canonical_cwd = cwd
@@ -284,12 +285,47 @@ fn load_workspace_cli_manifest(explicit_path: Option<&Path>) -> Result<LoadedMan
         }
     }
 
-    Err(CliError::new(
+    Err(workspace_manifest_discovery_error(
         numi_config::DiscoveryError::NotFound {
             start_dir: canonical_cwd,
-        }
-        .to_string(),
+        },
     ))
+}
+
+fn require_workspace_manifest(loaded: LoadedManifest) -> Result<LoadedManifest, CliError> {
+    match loaded.manifest {
+        Manifest::Workspace(_) => Ok(loaded),
+        Manifest::Config(_) => Err(CliError::new(format!(
+            "expected a workspace manifest at {}; pass --config <workspace>/numi.toml or remove --workspace",
+            loaded.path.display()
+        ))),
+    }
+}
+
+fn workspace_manifest_discovery_error(error: numi_config::DiscoveryError) -> CliError {
+    match error {
+        numi_config::DiscoveryError::ExplicitPathNotFound(path) => CliError::new(format!(
+            "workspace manifest not found: {}\n\npass --config <workspace>/numi.toml or remove --workspace",
+            path.display()
+        )),
+        numi_config::DiscoveryError::NotFound { start_dir } => CliError::new(format!(
+            "No workspace manifest found from {}\n\nRun this from a workspace member directory with an ancestor numi.toml, or pass --config <workspace>/numi.toml",
+            start_dir.display()
+        )),
+        numi_config::DiscoveryError::Ambiguous { root, matches } => {
+            let lines = matches
+                .iter()
+                .map(|path| format!("  - {}", path.display()))
+                .collect::<Vec<_>>()
+                .join("\n");
+            CliError::new(format!(
+                "Multiple workspace manifests found under {}:\n{}\n\npass --config <workspace>/numi.toml",
+                root.display(),
+                lines
+            ))
+        }
+        numi_config::DiscoveryError::Io(error) => CliError::new(error.to_string()),
+    }
 }
 
 fn current_dir() -> Result<PathBuf, CliError> {

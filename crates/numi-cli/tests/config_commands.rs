@@ -666,6 +666,84 @@ members = ["apps/assets", "packages/files"]
 }
 
 #[test]
+fn generate_workspace_rejects_explicit_member_manifest() {
+    let temp_root = make_temp_dir("generate-workspace-explicit-member-manifest");
+    let workspace_root = temp_root.join("workspace");
+    let assets_root = workspace_root.join("apps/assets");
+    let files_root = workspace_root.join("packages/files");
+
+    copy_dir_all(&repo_root().join("fixtures/xcassets-basic"), &assets_root);
+    copy_dir_all(&repo_root().join("fixtures/files-basic"), &files_root);
+    write_manifest(
+        &workspace_root,
+        r#"
+version = 1
+
+[workspace]
+members = ["apps/assets", "packages/files"]
+"#,
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_numi"))
+        .args([
+            "generate",
+            "--workspace",
+            "--config",
+            "apps/assets/numi.toml",
+        ])
+        .current_dir(&workspace_root)
+        .output()
+        .expect("numi generate --workspace --config should run");
+
+    assert!(!output.status.success(), "command unexpectedly succeeded");
+
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
+    assert!(
+        stderr.contains("expected a workspace manifest"),
+        "stderr was: {stderr}"
+    );
+    assert!(
+        stderr.contains("apps/assets/numi.toml"),
+        "stderr was: {stderr}"
+    );
+    assert!(
+        stderr.contains("pass --config <workspace>/numi.toml or remove --workspace"),
+        "stderr was: {stderr}"
+    );
+
+    fs::remove_dir_all(temp_root).expect("temp dir should be removed");
+}
+
+#[test]
+fn generate_workspace_reports_workspace_specific_guidance_when_missing() {
+    let root = make_temp_dir("generate-workspace-missing-guidance");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_numi"))
+        .args(["generate", "--workspace"])
+        .current_dir(&root)
+        .output()
+        .expect("numi generate --workspace should run");
+
+    assert!(!output.status.success(), "command unexpectedly succeeded");
+
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
+    assert!(
+        stderr.contains("No workspace manifest found from"),
+        "stderr was: {stderr}"
+    );
+    assert!(
+        stderr.contains("pass --config <workspace>/numi.toml"),
+        "stderr was: {stderr}"
+    );
+    assert!(
+        !stderr.contains("numi config locate --config <path>"),
+        "stderr was: {stderr}"
+    );
+
+    fs::remove_dir_all(root).expect("temp dir should be removed");
+}
+
+#[test]
 fn check_workspace_aggregates_stale_paths_across_members() {
     let temp_root = make_temp_dir("check-workspace-stale");
     let workspace_root = temp_root.join("workspace");

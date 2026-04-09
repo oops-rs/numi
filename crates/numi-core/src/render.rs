@@ -1,6 +1,7 @@
 use minijinja::{Environment, Error, ErrorKind};
 use std::{
     borrow::Cow,
+    collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
 };
@@ -82,6 +83,18 @@ pub fn render_path(
     Ok(normalize_blank_lines(&rendered))
 }
 
+pub fn collect_custom_template_dependencies(
+    path: &Path,
+    config_root: &Path,
+) -> Result<Option<Vec<PathBuf>>, RenderError> {
+    let mut visited = BTreeSet::new();
+    if collect_template_dependencies_recursive(path, config_root, &mut visited)? {
+        Ok(Some(visited.into_iter().collect()))
+    } else {
+        Ok(None)
+    }
+}
+
 fn render_template_source(
     template_name: &str,
     template_source: &str,
@@ -99,6 +112,35 @@ fn render_template_source(
         .map_err(RenderError::Render)?;
 
     Ok(normalize_blank_lines(&rendered))
+}
+
+fn collect_template_dependencies_recursive(
+    path: &Path,
+    config_root: &Path,
+    visited: &mut BTreeSet<PathBuf>,
+) -> Result<bool, RenderError> {
+    if !visited.insert(path.to_path_buf()) {
+        return Ok(true);
+    }
+
+    let template_source = fs::read_to_string(path).map_err(|source| RenderError::ReadTemplate {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let Some(references) = extract_literal_template_references(&template_source) else {
+        return Ok(false);
+    };
+    let local_root = path.parent().unwrap_or_else(|| Path::new("."));
+
+    for include_name in references {
+        let resolved =
+            resolve_include(&include_name, local_root, config_root).map_err(RenderError::Render)?;
+        if !collect_template_dependencies_recursive(&resolved, config_root, visited)? {
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
 }
 
 fn build_environment() -> Environment<'static> {
@@ -261,6 +303,66 @@ fn safe_template_join(base: &Path, include_name: &str) -> Option<PathBuf> {
     Some(path)
 }
 
+fn extract_literal_template_references(template_source: &str) -> Option<Vec<String>> {
+    let mut references = Vec::new();
+    let mut rest = template_source;
+
+    while let Some(tag_start) = rest.find("{%") {
+        rest = &rest[tag_start + 2..];
+        let Some(tag_end) = rest.find("%}") else {
+            break;
+        };
+
+        let tag_body = rest[..tag_end].trim();
+        rest = &rest[tag_end + 2..];
+
+        let mut parts = tag_body.splitn(2, char::is_whitespace);
+        let Some(keyword) = parts.next() else {
+            continue;
+        };
+        let Some(remainder) = parts.next() else {
+            continue;
+        };
+
+        if !matches!(keyword, "include" | "extends" | "import" | "from") {
+            continue;
+        }
+
+        let Some((literal, _tail)) = parse_quoted_literal(remainder.trim_start()) else {
+            return None;
+        };
+        references.push(literal.to_owned());
+    }
+
+    Some(references)
+}
+
+fn parse_quoted_literal(input: &str) -> Option<(&str, &str)> {
+    let mut chars = input.char_indices();
+    let (_, quote) = chars.next()?;
+    if quote != '"' && quote != '\'' {
+        return None;
+    }
+
+    let mut escaped = false;
+    for (index, ch) in chars {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+
+        if ch == quote {
+            return Some((&input[1..index], &input[index + quote.len_utf8()..]));
+        }
+    }
+
+    None
+}
 
 fn lower_first(value: String) -> String {
     if let Some(inner) = value

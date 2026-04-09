@@ -81,41 +81,38 @@ access_level = "internal"
 [defaults.bundle]
 mode = "module"
 
-[[jobs]]
-name = "assets"
+[jobs.assets]
 output = "Generated/Assets.swift"
 
-[[jobs.inputs]]
+[[jobs.assets.inputs]]
 type = "xcassets"
 path = "Resources/Assets.xcassets"
 
-[jobs.template.builtin]
+[jobs.assets.template.builtin]
 swift = "swiftui-assets"
 
-[[jobs]]
-name = "l10n"
+[jobs.l10n]
 output = "Generated/L10n.swift"
 
-[[jobs.inputs]]
+[[jobs.l10n.inputs]]
 type = "strings"
 path = "Resources/Localization"
 
-[jobs.template.builtin]
+[jobs.l10n.template.builtin]
 swift = "l10n"
 ```
 
 You can also point a localization job at `.xcstrings`:
 
 ```toml
-[[jobs]]
-name = "l10n"
+[jobs.l10n]
 output = "Generated/L10n.swift"
 
-[[jobs.inputs]]
+[[jobs.l10n.inputs]]
 type = "xcstrings"
 path = "Resources/Localization"
 
-[jobs.template.builtin]
+[jobs.l10n.template.builtin]
 swift = "l10n"
 ```
 
@@ -144,11 +141,11 @@ Use workspace commands to orchestrate those member configs together. `numi gener
 
 - discovers config unless `--config` is passed
 - still resolves exactly one `numi.toml`
-- generates outputs for all jobs, or only selected jobs when `--job` is repeated
+- generates outputs for all named jobs, or only selected jobs when `--job` is repeated
 - prints non-fatal warnings to stderr
 - repeated runs may reuse cached parser outputs when inputs are unchanged
 - cache invalidation happens on relevant file add, remove, rename, or content change
-- normalization, rendering, and output checks still run every time
+- generation also skips unchanged jobs by default when the full job contract and committed output are still fresh
 
 Examples:
 
@@ -167,7 +164,7 @@ numi generate --job assets --job l10n
 - prints warnings to stderr without turning the run into a failure
 - repeated runs may reuse cached parser outputs when inputs are unchanged
 - cache invalidation happens on relevant file add, remove, rename, or content change
-- normalization, rendering, and output checks still run every time
+- still renders and compares output every time because `check` needs to prove freshness rather than trust the generate cache
 
 Example:
 
@@ -218,6 +215,7 @@ numi dump-context --job l10n
 `numi config print`
 
 - prints the resolved config with defaults materialized
+- always prints the named-job TOML shape, which is also the only supported config syntax
 
 ## Built-In Templates
 
@@ -238,7 +236,7 @@ Current `.xcstrings` limitation:
 Custom templates use Minijinja:
 
 ```toml
-[jobs.template]
+[jobs.l10n.template]
 path = "Templates/l10n.jinja"
 ```
 

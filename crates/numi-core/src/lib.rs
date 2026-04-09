@@ -1,4 +1,5 @@
 mod context;
+mod generation_cache;
 mod output;
 mod parse_cache;
 pub mod parse_files;
@@ -9,4 +10,7 @@ mod pipeline;
 mod render;
 
 pub use output::WriteOutcome;
-pub use pipeline::{CheckReport, DumpContextReport, GenerateError, GenerateReport, JobReport, check, dump_context, generate};
+pub use pipeline::{
+    CheckReport, DumpContextReport, GenerateError, GenerateOptions, GenerateReport, JobReport,
+    check, dump_context, generate, generate_with_options,
+};

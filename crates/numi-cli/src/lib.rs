@@ -79,8 +79,14 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
 fn run_generate(args: &GenerateArgs) -> Result<(), CliError> {
     let config_path = discover_config_path(args.config.as_deref())?;
     let selected_jobs = selected_jobs(&args.jobs);
-    let report = numi_core::generate(&config_path, selected_jobs)
-        .map_err(|error| CliError::new(error.to_string()))?;
+    let report = numi_core::generate_with_options(
+        &config_path,
+        selected_jobs,
+        numi_core::GenerateOptions {
+            incremental: args.incremental_override.resolve(),
+        },
+    )
+    .map_err(|error| CliError::new(error.to_string()))?;
     print_warnings(&report.warnings);
     Ok(())
 }
@@ -136,8 +142,14 @@ fn run_workspace_generate(args: &WorkspaceGenerateArgs) -> Result<(), CliError> 
 
     for member in select_workspace_members(&loaded, &args.members)? {
         let config_path = workspace_dir.join(&member.config);
-        let report = numi_core::generate(&config_path, workspace_member_jobs(member))
-            .map_err(|error| CliError::new(error.to_string()))?;
+        let report = numi_core::generate_with_options(
+            &config_path,
+            workspace_member_jobs(member),
+            numi_core::GenerateOptions {
+                incremental: args.incremental_override.resolve(),
+            },
+        )
+        .map_err(|error| CliError::new(error.to_string()))?;
         print_warnings(&report.warnings);
     }
 

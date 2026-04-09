@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{ArgAction, Args, Parser, Subcommand};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -62,6 +62,8 @@ pub struct GenerateArgs {
     pub config: Option<PathBuf>,
     #[arg(long = "job")]
     pub jobs: Vec<String>,
+    #[command(flatten)]
+    pub incremental_override: IncrementalOverrideArgs,
 }
 
 #[derive(Debug, Args)]
@@ -78,6 +80,32 @@ pub struct WorkspaceGenerateArgs {
     pub workspace: Option<PathBuf>,
     #[arg(long = "member")]
     pub members: Vec<String>,
+    #[command(flatten)]
+    pub incremental_override: IncrementalOverrideArgs,
+}
+
+#[derive(Debug, Args, Default, Clone, PartialEq, Eq)]
+pub struct IncrementalOverrideArgs {
+    #[arg(
+        long = "incremental",
+        action = ArgAction::SetTrue,
+        conflicts_with = "no_incremental"
+    )]
+    pub incremental: bool,
+    #[arg(long = "no-incremental", action = ArgAction::SetTrue)]
+    pub no_incremental: bool,
+}
+
+impl IncrementalOverrideArgs {
+    pub fn resolve(&self) -> Option<bool> {
+        if self.incremental {
+            Some(true)
+        } else if self.no_incremental {
+            Some(false)
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Debug, Args)]

@@ -10,6 +10,7 @@ pub enum WriteOutcome {
     Created,
     Updated,
     Unchanged,
+    Skipped,
 }
 
 #[derive(Debug)]

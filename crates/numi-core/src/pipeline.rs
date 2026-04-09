@@ -1,3 +1,4 @@
+use blake3::Hasher;
 use camino::Utf8PathBuf;
 use numi_config::{BundleConfig, DefaultsConfig, JobConfig};
 use numi_diagnostics::Diagnostic;
@@ -5,28 +6,41 @@ use numi_ir::{
     GraphMetadata, Metadata, ModuleKind, ResourceGraph, ResourceModule,
     normalize_flat_entries_preserve_order, normalize_scope, swift_identifier,
 };
+use serde::Serialize;
 use serde_json::Value;
 use std::{
     cmp::Ordering,
     collections::BTreeMap,
+    fs,
     path::{Path, PathBuf},
 };
 
 use crate::{
     context::{AssetTemplateContext, ContextError},
+    generation_cache,
     output::{OutputError, WriteOutcome, output_is_stale, write_if_changed_atomic},
     parse_cache::{self, CacheKind, CachedParseData},
     parse_files::{ParseFilesError, parse_files},
     parse_fonts::{ParseFontsError, parse_font_entries},
     parse_l10n::{LocalizationTable, ParseL10nError, parse_strings, parse_xcstrings},
     parse_xcassets::{ParseXcassetsError, parse_catalog},
-    render::{RenderError, render_builtin, render_path},
+    render::{
+        RenderError, builtin_template_source, collect_custom_template_dependencies, render_builtin,
+        render_path,
+    },
 };
+
+const GENERATION_FINGERPRINT_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GenerateReport {
     pub jobs: Vec<JobReport>,
     pub warnings: Vec<Diagnostic>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GenerateOptions {
+    pub incremental: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -168,6 +182,14 @@ pub fn generate(
     config_path: &Path,
     selected_jobs: Option<&[String]>,
 ) -> Result<GenerateReport, GenerateError> {
+    generate_with_options(config_path, selected_jobs, GenerateOptions::default())
+}
+
+pub fn generate_with_options(
+    config_path: &Path,
+    selected_jobs: Option<&[String]>,
+    options: GenerateOptions,
+) -> Result<GenerateReport, GenerateError> {
     let loaded = numi_config::load_from_path(config_path).map_err(GenerateError::LoadConfig)?;
     let config_dir = loaded
         .path
@@ -181,7 +203,13 @@ pub fn generate(
     let mut warnings = Vec::new();
 
     for job in jobs {
-        let job_report = generate_job(&loaded.path, config_dir, &loaded.config.defaults, job)?;
+        let job_report = generate_job(
+            &loaded.path,
+            config_dir,
+            &loaded.config.defaults,
+            job,
+            &options,
+        )?;
         warnings.extend(job_report.warnings);
         reports.push(JobReport {
             job_name: job_report.job_name,
@@ -254,8 +282,28 @@ fn generate_job(
     config_dir: &Path,
     defaults: &DefaultsConfig,
     job: &JobConfig,
+    options: &GenerateOptions,
 ) -> Result<JobExecution, GenerateError> {
     let output_path = config_dir.join(&job.output);
+    let incremental = resolve_incremental(defaults, job, options);
+    let generation_fingerprint = compute_generation_fingerprint(config_dir, defaults, job);
+
+    if incremental {
+        if let Some(fingerprint) = generation_fingerprint.as_deref() {
+            if generation_cache::is_fresh(config_path, &job.name, fingerprint, &output_path)
+                .ok()
+                .unwrap_or(false)
+            {
+                return Ok(JobExecution {
+                    job_name: job.name.clone(),
+                    output_path: to_utf8_path(&output_path)?,
+                    outcome: WriteOutcome::Skipped,
+                    warnings: Vec::new(),
+                });
+            }
+        }
+    }
+
     let (context, warnings) = build_context(config_path, config_dir, defaults, job)?;
     let rendered = render_job(config_dir, job, &context)?;
     let outcome = write_if_changed_atomic(&output_path, &rendered).map_err(|source| {
@@ -264,6 +312,10 @@ fn generate_job(
             source,
         }
     })?;
+
+    if let Some(fingerprint) = generation_fingerprint.as_deref() {
+        let _ = generation_cache::store(config_path, &job.name, fingerprint, &output_path);
+    }
 
     Ok(JobExecution {
         job_name: job.name.clone(),
@@ -349,6 +401,44 @@ struct JobExecution {
 struct CheckJobExecution {
     stale_path: Option<Utf8PathBuf>,
     warnings: Vec<Diagnostic>,
+}
+
+#[derive(Debug, Serialize)]
+struct GenerationFingerprintRecord {
+    schema_version: u32,
+    job_name: String,
+    output: String,
+    access_level: String,
+    bundle_mode: String,
+    bundle_identifier: Option<String>,
+    inputs: Vec<GenerationInputFingerprintRecord>,
+    template: GenerationTemplateFingerprintRecord,
+}
+
+#[derive(Debug, Serialize)]
+struct GenerationInputFingerprintRecord {
+    kind: String,
+    path: String,
+    fingerprint: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind")]
+enum GenerationTemplateFingerprintRecord {
+    Builtin {
+        name: String,
+        fingerprint: String,
+    },
+    Custom {
+        path: String,
+        dependencies: Vec<GenerationDependencyFingerprintRecord>,
+    },
+}
+
+#[derive(Debug, Serialize)]
+struct GenerationDependencyFingerprintRecord {
+    path: String,
+    fingerprint: String,
 }
 
 fn build_modules(config_dir: &Path, job: &JobConfig) -> Result<BuildModulesResult, GenerateError> {
@@ -926,6 +1016,149 @@ fn render_job(
     })
 }
 
+fn resolve_incremental(
+    defaults: &DefaultsConfig,
+    job: &JobConfig,
+    options: &GenerateOptions,
+) -> bool {
+    options
+        .incremental
+        .or(job.incremental)
+        .or(defaults.incremental)
+        .unwrap_or(true)
+}
+
+fn compute_generation_fingerprint(
+    config_dir: &Path,
+    defaults: &DefaultsConfig,
+    job: &JobConfig,
+) -> Option<String> {
+    let inputs = job
+        .inputs
+        .iter()
+        .map(|input| {
+            let resolved_path = config_dir.join(&input.path);
+            Some(GenerationInputFingerprintRecord {
+                kind: input.kind.clone(),
+                path: input.path.clone(),
+                fingerprint: fingerprint_path_contents(&resolved_path).ok()?,
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+
+    let template = if let Some(builtin_name) = job
+        .template
+        .builtin
+        .as_ref()
+        .and_then(|builtin| builtin.swift.as_deref())
+    {
+        let source = builtin_template_source(builtin_name).ok()?;
+        GenerationTemplateFingerprintRecord::Builtin {
+            name: builtin_name.to_owned(),
+            fingerprint: generation_cache::blake3_hex([source.as_bytes()]),
+        }
+    } else if let Some(template_path) = job.template.path.as_deref() {
+        let resolved_path = config_dir.join(template_path);
+        let dependencies = collect_custom_template_dependencies(&resolved_path, config_dir)
+            .ok()??
+            .into_iter()
+            .map(|dependency_path| {
+                Some(GenerationDependencyFingerprintRecord {
+                    path: display_relative_path(&dependency_path, config_dir),
+                    fingerprint: fingerprint_path_contents(&dependency_path).ok()?,
+                })
+            })
+            .collect::<Option<Vec<_>>>()?;
+        GenerationTemplateFingerprintRecord::Custom {
+            path: template_path.to_owned(),
+            dependencies,
+        }
+    } else {
+        return None;
+    };
+
+    let bundle = merged_bundle(defaults, job);
+    let record = GenerationFingerprintRecord {
+        schema_version: GENERATION_FINGERPRINT_SCHEMA_VERSION,
+        job_name: job.name.clone(),
+        output: job.output.clone(),
+        access_level: resolve_access_level(defaults, job).to_owned(),
+        bundle_mode: bundle.mode.clone().unwrap_or_else(|| "module".to_string()),
+        bundle_identifier: bundle.identifier.clone(),
+        inputs,
+        template,
+    };
+    let payload = serde_json::to_vec(&record).ok()?;
+    Some(generation_cache::blake3_hex([payload.as_slice()]))
+}
+
+fn fingerprint_path_contents(path: &Path) -> std::io::Result<String> {
+    let mut files = Vec::new();
+
+    if path.is_file() {
+        files.push(path.to_path_buf());
+    } else if path.is_dir() {
+        collect_fingerprint_files(path, &mut files)?;
+    } else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("path {} does not exist", path.display()),
+        ));
+    }
+
+    files.sort();
+
+    let mut hasher = Hasher::new();
+    hasher.update(if path.is_file() { b"file" } else { b"dir" });
+    hasher.update(b"\0");
+
+    for file in files {
+        let relative = if path.is_file() {
+            file.file_name().unwrap_or_default().as_encoded_bytes()
+        } else {
+            file.strip_prefix(path)
+                .unwrap_or(&file)
+                .as_os_str()
+                .as_encoded_bytes()
+        };
+        let contents = fs::read(&file)?;
+
+        hasher.update(relative);
+        hasher.update(b"\0");
+        hasher.update(&contents);
+        hasher.update(b"\0");
+    }
+
+    Ok(hasher.finalize().to_hex().to_string())
+}
+
+fn collect_fingerprint_files(root: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+
+        if path.file_name().is_some_and(|name| name == ".DS_Store") {
+            continue;
+        }
+
+        if file_type.is_dir() {
+            collect_fingerprint_files(&path, files)?;
+        } else if file_type.is_file() {
+            files.push(path);
+        }
+    }
+
+    Ok(())
+}
+
+fn display_relative_path(path: &Path, root: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .display()
+        .to_string()
+}
+
 fn resolve_access_level<'a>(defaults: &'a DefaultsConfig, job: &'a JobConfig) -> &'a str {
     job.access_level
         .as_deref()
@@ -1114,6 +1347,31 @@ path = "Resources/Localization"
 [jobs.l10n.template.builtin]
 swift = "l10n"
 "#,
+        )
+        .expect("config should be written");
+    }
+
+    fn write_custom_files_job_config(config_path: &Path, incremental: Option<bool>) {
+        let incremental_line = incremental
+            .map(|value| format!("incremental = {value}\n"))
+            .unwrap_or_default();
+        fs::write(
+            config_path,
+            format!(
+                r#"
+version = 1
+
+[jobs.files]
+output = "Generated/Files.swift"
+{incremental_line}
+[[jobs.files.inputs]]
+type = "files"
+path = "Resources/Fixtures"
+
+[jobs.files.template]
+path = "Templates/files.jinja"
+"#
+            ),
         )
         .expect("config should be written");
     }
@@ -1450,6 +1708,125 @@ private func file(_ path: String) -> URL {
     return url
 }
 "#
+        );
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn generate_skips_when_generation_contract_is_unchanged_by_default() {
+        let temp_dir = make_temp_dir("pipeline-generate-skip-default");
+        let config_path = temp_dir.join("numi.toml");
+        let files_root = temp_dir.join("Resources/Fixtures");
+        let template_path = temp_dir.join("Templates/files.jinja");
+        let generated_path = temp_dir.join("Generated/Files.swift");
+
+        fs::create_dir_all(&files_root).expect("files directory should exist");
+        fs::create_dir_all(
+            template_path
+                .parent()
+                .expect("template path should have parent"),
+        )
+        .expect("template dir should exist");
+        fs::write(files_root.join("faq.pdf"), "faq").expect("faq file should be written");
+        fs::write(
+            &template_path,
+            "{{ modules[0].entries[0].properties.fileName }}\n",
+        )
+        .expect("template should be written");
+        write_custom_files_job_config(&config_path, None);
+
+        let first = generate(&config_path, None).expect("initial generation should succeed");
+        assert_eq!(first.jobs[0].outcome, WriteOutcome::Created);
+        assert_eq!(
+            fs::read_to_string(&generated_path).expect("generated file should exist"),
+            "faq.pdf\n"
+        );
+
+        let second = generate(&config_path, None).expect("second generation should succeed");
+        assert_eq!(second.jobs[0].outcome, WriteOutcome::Skipped);
+        assert_eq!(
+            fs::read_to_string(&generated_path).expect("generated file should remain"),
+            "faq.pdf\n"
+        );
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn generate_respects_job_incremental_opt_out_and_rerenders() {
+        let temp_dir = make_temp_dir("pipeline-generate-opt-out");
+        let config_path = temp_dir.join("numi.toml");
+        let files_root = temp_dir.join("Resources/Fixtures");
+        let template_path = temp_dir.join("Templates/files.jinja");
+        let generated_path = temp_dir.join("Generated/Files.swift");
+
+        fs::create_dir_all(&files_root).expect("files directory should exist");
+        fs::create_dir_all(
+            template_path
+                .parent()
+                .expect("template path should have parent"),
+        )
+        .expect("template dir should exist");
+        fs::write(files_root.join("faq.pdf"), "faq").expect("faq file should be written");
+        fs::write(
+            &template_path,
+            "{{ modules[0].entries[0].properties.fileName }}\n",
+        )
+        .expect("template should be written");
+        write_custom_files_job_config(&config_path, Some(false));
+
+        let first = generate(&config_path, None).expect("initial generation should succeed");
+        assert_eq!(first.jobs[0].outcome, WriteOutcome::Created);
+
+        let second = generate(&config_path, None).expect("second generation should rerender");
+        assert_eq!(second.jobs[0].outcome, WriteOutcome::Unchanged);
+        assert_eq!(
+            fs::read_to_string(&generated_path).expect("generated file should remain"),
+            "faq.pdf\n"
+        );
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn generate_options_override_job_incremental_setting() {
+        let temp_dir = make_temp_dir("pipeline-generate-options-override");
+        let config_path = temp_dir.join("numi.toml");
+        let files_root = temp_dir.join("Resources/Fixtures");
+        let template_path = temp_dir.join("Templates/files.jinja");
+        let generated_path = temp_dir.join("Generated/Files.swift");
+
+        fs::create_dir_all(&files_root).expect("files directory should exist");
+        fs::create_dir_all(
+            template_path
+                .parent()
+                .expect("template path should have parent"),
+        )
+        .expect("template dir should exist");
+        fs::write(files_root.join("faq.pdf"), "faq").expect("faq file should be written");
+        fs::write(
+            &template_path,
+            "{{ modules[0].entries[0].properties.fileName }}\n",
+        )
+        .expect("template should be written");
+        write_custom_files_job_config(&config_path, Some(false));
+
+        let first = generate(&config_path, None).expect("initial generation should succeed");
+        assert_eq!(first.jobs[0].outcome, WriteOutcome::Created);
+
+        let second = generate_with_options(
+            &config_path,
+            None,
+            GenerateOptions {
+                incremental: Some(true),
+            },
+        )
+        .expect("second generation should honor the explicit override");
+        assert_eq!(second.jobs[0].outcome, WriteOutcome::Skipped);
+        assert_eq!(
+            fs::read_to_string(&generated_path).expect("generated file should remain"),
+            "faq.pdf\n"
         );
 
         fs::remove_dir_all(temp_dir).expect("temp dir should be removed");

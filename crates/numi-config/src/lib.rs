@@ -18,7 +18,7 @@ pub use model::{
 };
 pub use workspace::{
     discover_workspace, load_workspace_from_path, LoadedWorkspace, WorkspaceConfig,
-    WorkspaceMember, WORKSPACE_FILE_NAME,
+    WorkspaceDiscoveryError, WorkspaceError, WorkspaceMember, WORKSPACE_FILE_NAME,
 };
 
 #[derive(Debug)]
@@ -758,7 +758,7 @@ jobs = ["assets", "assets"]
             .expect_err("multiple descendant workspace manifests should be ambiguous");
 
         match error {
-            DiscoveryError::Ambiguous { root, matches } => {
+            WorkspaceDiscoveryError::Ambiguous { root, matches } => {
                 assert_eq!(
                     root,
                     ambiguous_root
@@ -775,5 +775,41 @@ jobs = ["assets", "assets"]
             }
             other => panic!("expected ambiguous discovery error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn workspace_load_errors_use_workspace_manifest_language() {
+        let missing = create_temp_dir("workspace-load-error").join("missing-workspace.toml");
+        let error = load_workspace_from_path(&missing)
+            .expect_err("missing workspace manifest should return a read error");
+        let message = error.to_string();
+        assert!(message.contains("workspace manifest"));
+        assert!(!message.contains("failed to read config"));
+
+        let temp_dir = create_temp_dir("workspace-parse-error");
+        let manifest_path = temp_dir.join("numi-workspace.toml");
+        write_file(&manifest_path, "not = [valid");
+
+        let error = load_workspace_from_path(&manifest_path)
+            .expect_err("invalid workspace manifest should return a parse error");
+        let message = error.to_string();
+        assert!(message.contains("workspace manifest TOML"));
+        assert!(!message.contains("config TOML"));
+    }
+
+    #[test]
+    fn workspace_discovery_errors_use_workspace_manifest_language() {
+        let temp_dir = create_temp_dir("workspace-discovery-not-found");
+        let error = discover_workspace(&temp_dir, None)
+            .expect_err("missing workspace manifest should be reported");
+        let message = error.to_string();
+        assert!(message.contains("workspace manifest"));
+        assert!(message.contains("numi workspace locate --workspace <path>"));
+        assert!(!message.contains("numi config locate --config <path>"));
+
+        let explicit = temp_dir.join("missing-workspace.toml");
+        let error = discover_workspace(&temp_dir, Some(&explicit))
+            .expect_err("missing explicit workspace manifest should be reported");
+        assert!(error.to_string().contains("workspace manifest not found"));
     }
 }

@@ -599,10 +599,7 @@ swift = "l10n"
         stdout.contains("[jobs.template.builtin]"),
         "stdout was: {stdout}"
     );
-    assert!(
-        stdout.contains("swift = \"l10n\""),
-        "stdout was: {stdout}"
-    );
+    assert!(stdout.contains("swift = \"l10n\""), "stdout was: {stdout}");
 
     fs::remove_dir_all(root).expect("temp dir should be removed");
 }
@@ -634,10 +631,7 @@ fn config_print_emits_files_builtin_and_input_kind() {
         stdout.contains("[jobs.template.builtin]"),
         "stdout was: {stdout}"
     );
-    assert!(
-        stdout.contains("swift = \"files\""),
-        "stdout was: {stdout}"
-    );
+    assert!(stdout.contains("swift = \"files\""), "stdout was: {stdout}");
     assert!(stdout.contains("mode = \"module\""), "stdout was: {stdout}");
 
     fs::remove_dir_all(temp_root).expect("temp dir should be removed");

@@ -43,11 +43,13 @@ Each module object includes these stable fields:
 Current v1 module kinds:
 
 - `xcassets`
+- `files`
 - `strings`
 - `xcstrings`
 
 Current stable module property keys:
 
+- none for `files` modules in v1
 - `tableName` for `strings` modules
 - `tableName` for `xcstrings` modules
 
@@ -66,11 +68,15 @@ Current v1 entry kinds:
 - `namespace`
 - `image`
 - `color`
+- `data`
 - `string`
 
 Current stable entry property keys:
 
 - `assetName` for asset entries
+- `relativePath` for file data entries, using the bundle-relative lookup path
+- `fileName` for file data entries, using the original file name
+- `pathExtension` for file data entries, using the final extension segment or `""`
 - `key` for localization string entries
 - `translation` for localization string entries
 - `placeholders` for localization string entries when placeholder metadata exists

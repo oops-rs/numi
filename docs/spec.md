@@ -46,6 +46,7 @@ Numi v1 should support:
 - Config discovery
 - Config-driven generation jobs
 - Parsing `.xcassets`
+- Parsing file-oriented inputs from files or directories
 - Parsing localization resources:
   - `.strings`
   - `.xcstrings`
@@ -164,7 +165,17 @@ Initial support target:
 - Placeholder metadata if parseable
 - Developer comments if available
 
-#### 6.1.3 Future Resources
+#### 6.1.3 File Resources
+Numi v1 must support file-oriented generation from arbitrary files or directories without parsing file contents.
+
+Initial support target:
+- Single-file inputs
+- Recursive directory inputs
+- Bundle-relative lookup paths for each discovered file
+- Original file names and path-extension metadata
+- Deterministic ordering for repeated runs over unchanged inputs
+
+#### 6.1.4 Future Resources
 Architecture must allow future resource kinds without redesigning the system:
 - Fonts
 - Symbols
@@ -181,6 +192,7 @@ Minimum built-ins:
 - SwiftUI-friendly assets template
 - UIKit/AppKit-compatible assets template, if low-cost
 - Localization template
+- File-helper template
 
 #### 6.2.2 Custom Templates
 Users must be able to provide template files from disk.
@@ -299,8 +311,8 @@ output = "Generated/Assets.swift"
 type = "xcassets"
 path = "Resources/Assets.xcassets"
 
-[jobs.template]
-builtin = "swiftui-assets"
+[jobs.template.builtin]
+swift = "swiftui-assets"
 
 [[jobs]]
 name = "l10n"
@@ -310,8 +322,8 @@ output = "Generated/L10n.swift"
 type = "strings"
 path = "Resources/Localization"
 
-[jobs.template]
-builtin = "l10n"
+[jobs.template.builtin]
+swift = "l10n"
 ```
 
 #### 7.3.2 Top-level Keys
@@ -343,6 +355,7 @@ Each input contains:
 
 Supported v1 input types:
 - `xcassets`
+- `files`
 - `strings`
 - `xcstrings`
 
@@ -350,8 +363,8 @@ Supported v1 input types:
 Built-in template:
 
 ```toml
-[jobs.template]
-builtin = "swiftui-assets"
+[jobs.template.builtin]
+swift = "swiftui-assets"
 ```
 
 Custom template:
@@ -572,7 +585,7 @@ Template render errors must report:
           "children": [
             {
               "name": "add",
-              "swiftIdentifier": "add",
+              "swiftIdentifier": "Add",
               "kind": "image",
               "children": [],
               "properties": {
@@ -941,8 +954,8 @@ output = "Generated/Assets.swift"
 type = "xcassets"
 path = "Resources/Assets.xcassets"
 
-[jobs.template]
-builtin = "swiftui-assets"
+[jobs.template.builtin]
+swift = "swiftui-assets"
 
 [[jobs]]
 name = "l10n"
@@ -952,23 +965,23 @@ output = "Generated/L10n.swift"
 type = "strings"
 path = "Resources/Localization"
 
-[jobs.template]
-builtin = "l10n"
+[jobs.template.builtin]
+swift = "l10n"
 ```
 
 ## 27. Example Template Snippet
 
 ```jinja
-{{ accessLevel }} enum Assets {
+{{ access_level }} enum Assets {
 {% for module in modules %}
 {% if module.kind == "xcassets" %}
 {% for entry in module.entries recursive %}
 {% if entry.kind == "namespace" %}
-{{ "  " * loop.depth0 }}{{ accessLevel }} enum {{ entry.swiftIdentifier }} {
+{{ "  " * loop.depth0 }}{{ access_level }} enum {{ entry.swiftIdentifier }} {
 {{ loop(entry.children) }}
 {{ "  " * loop.depth0 }}}
 {% elif entry.kind == "image" %}
-{{ "  " * loop.depth0 }}{{ accessLevel }} static let {{ entry.swiftIdentifier }} = ImageAsset(name: {{ entry.properties.assetName | string_literal }})
+{{ "  " * loop.depth0 }}{{ access_level }} static let {{ entry.swiftIdentifier }} = ImageAsset(name: {{ entry.properties.assetName | string_literal }})
 {% endif %}
 {% endfor %}
 {% endif %}

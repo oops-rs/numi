@@ -369,13 +369,17 @@ mod tests {
             kind: ModuleKind::Files,
             name: "Files".to_string(),
             entries: vec![ResourceEntry {
-                id: "readme".to_string(),
-                name: "readme".to_string(),
+                id: "readme.md".to_string(),
+                name: "readme.md".to_string(),
                 source_path: Utf8PathBuf::from("fixture"),
-                swift_identifier: "Readme".to_string(),
+                swift_identifier: "ReadmeMd".to_string(),
                 kind: EntryKind::Data,
                 children: Vec::new(),
-                properties: Metadata::from([("path".to_string(), json!("readme.md"))]),
+                properties: Metadata::from([
+                    ("relativePath".to_string(), json!("readme.md")),
+                    ("fileName".to_string(), json!("readme.md")),
+                    ("pathExtension".to_string(), json!("md")),
+                ]),
                 metadata: Metadata::new(),
             }],
             metadata: Metadata::new(),
@@ -396,12 +400,20 @@ mod tests {
         assert_eq!(serialized["modules"][0]["name"], "Files");
         assert_eq!(
             serialized["modules"][0]["entries"][0]["swiftIdentifier"],
-            "Readme"
+            "ReadmeMd"
         );
         assert_eq!(serialized["modules"][0]["entries"][0]["kind"], "data");
         assert_eq!(
-            serialized["modules"][0]["entries"][0]["properties"]["path"],
+            serialized["modules"][0]["entries"][0]["properties"]["relativePath"],
             "readme.md"
+        );
+        assert_eq!(
+            serialized["modules"][0]["entries"][0]["properties"]["fileName"],
+            "readme.md"
+        );
+        assert_eq!(
+            serialized["modules"][0]["entries"][0]["properties"]["pathExtension"],
+            "md"
         );
     }
 }

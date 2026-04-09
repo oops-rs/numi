@@ -11,7 +11,7 @@ use numi_diagnostics::Diagnostic;
 
 pub use discovery::{CONFIG_FILE_NAME, DiscoveryError, discover_config};
 pub use model::{
-    ACCESS_LEVEL_VALUES, BUNDLE_MODE_VALUES, BundleConfig, BuiltinTemplateConfig, Config,
+    ACCESS_LEVEL_VALUES, BUNDLE_MODE_VALUES, BuiltinTemplateConfig, BundleConfig, Config,
     DEFAULT_ACCESS_LEVEL, DEFAULT_BUNDLE_MODE, DefaultsConfig, INPUT_KIND_VALUES, InputConfig,
     JobConfig, TemplateConfig,
 };

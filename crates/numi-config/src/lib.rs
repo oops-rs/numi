@@ -1042,7 +1042,7 @@ swift = "swiftui-assets"
     #[test]
     fn parses_workspace_manifest() {
         let temp_dir = create_temp_dir("parse-workspace-manifest");
-        let manifest_path = temp_dir.join("numi-workspace.toml");
+        let manifest_path = temp_dir.join("numi.toml");
         write_file(
             &manifest_path,
             r#"
@@ -1119,7 +1119,7 @@ config = "Core/numi.toml"
     #[test]
     fn parses_legacy_workspace_manifest_for_compatibility() {
         let temp_dir = create_temp_dir("parse-legacy-workspace-manifest");
-        let manifest_path = temp_dir.join("numi-workspace.toml");
+        let manifest_path = temp_dir.join("numi.toml");
         write_file(
             &manifest_path,
             r#"
@@ -1201,7 +1201,7 @@ members = ["App"]
     #[test]
     fn rejects_duplicate_workspace_members() {
         let temp_dir = create_temp_dir("duplicate-workspace-members");
-        let manifest_path = temp_dir.join("numi-workspace.toml");
+        let manifest_path = temp_dir.join("numi.toml");
         write_file(
             &manifest_path,
             r#"
@@ -1225,7 +1225,7 @@ members = ["App", "App"]
     #[test]
     fn rejects_empty_workspace_members() {
         let temp_dir = create_temp_dir("empty-workspace-members");
-        let manifest_path = temp_dir.join("numi-workspace.toml");
+        let manifest_path = temp_dir.join("numi.toml");
         write_file(&manifest_path, "version = 1\n[workspace]\n");
 
         let error = load_workspace_from_path(&manifest_path)
@@ -1241,7 +1241,7 @@ members = ["App", "App"]
     #[test]
     fn rejects_unsupported_workspace_version() {
         let temp_dir = create_temp_dir("unsupported-workspace-version");
-        let manifest_path = temp_dir.join("numi-workspace.toml");
+        let manifest_path = temp_dir.join("numi.toml");
         write_file(
             &manifest_path,
             r#"
@@ -1255,13 +1255,16 @@ members = ["App"]
         let error = load_workspace_from_path(&manifest_path)
             .expect_err("workspace manifest should reject unsupported versions");
 
-        assert!(error.to_string().contains("workspace version must be 1"));
+        let message = error.to_string();
+        assert!(message.contains("workspace version must be 1"));
+        assert!(message.contains("set `version = 1` in numi.toml"));
+        assert!(!message.contains("numi-workspace.toml"));
     }
 
     #[test]
     fn rejects_empty_and_duplicate_workspace_jobs() {
         let temp_dir = create_temp_dir("invalid-workspace-jobs");
-        let manifest_path = temp_dir.join("numi-workspace.toml");
+        let manifest_path = temp_dir.join("numi.toml");
         write_file(
             &manifest_path,
             r#"

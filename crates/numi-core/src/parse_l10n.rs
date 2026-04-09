@@ -1,5 +1,6 @@
 use camino::Utf8PathBuf;
-use numi_ir::{EntryKind, Metadata, RawEntry};
+use numi_diagnostics::Diagnostic;
+use numi_ir::{EntryKind, Metadata, ModuleKind, RawEntry};
 use serde_json::Value;
 use std::{
     fs, io,
@@ -7,10 +8,12 @@ use std::{
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StringsTable {
+pub struct LocalizationTable {
     pub table_name: String,
+    pub module_kind: ModuleKind,
     pub source_path: Utf8PathBuf,
     pub entries: Vec<RawEntry>,
+    pub warnings: Vec<Diagnostic>,
 }
 
 #[derive(Debug)]
@@ -62,7 +65,7 @@ impl std::fmt::Display for ParseL10nError {
 
 impl std::error::Error for ParseL10nError {}
 
-pub fn parse_strings(path: &Path) -> Result<Vec<StringsTable>, ParseL10nError> {
+pub fn parse_strings(path: &Path) -> Result<Vec<LocalizationTable>, ParseL10nError> {
     if path.is_file() {
         return parse_strings_file(path).map(|table| vec![table]);
     }
@@ -115,7 +118,7 @@ fn collect_strings_files(directory: &Path, files: &mut Vec<PathBuf>) -> Result<(
     Ok(())
 }
 
-fn parse_strings_file(path: &Path) -> Result<StringsTable, ParseL10nError> {
+fn parse_strings_file(path: &Path) -> Result<LocalizationTable, ParseL10nError> {
     if path.extension().and_then(|ext| ext.to_str()) != Some("strings") {
         return Err(ParseL10nError::InvalidPath {
             path: path.to_path_buf(),
@@ -144,10 +147,12 @@ fn parse_strings_file(path: &Path) -> Result<StringsTable, ParseL10nError> {
         entry.source_path = source_path.clone();
     }
 
-    Ok(StringsTable {
+    Ok(LocalizationTable {
         table_name,
+        module_kind: ModuleKind::Strings,
         source_path,
         entries,
+        warnings: Vec::new(),
     })
 }
 
@@ -491,6 +496,31 @@ mod tests {
 
         assert_eq!(tables.len(), 1);
         assert_eq!(tables[0].entries[0].properties["translation"], "Profile");
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn parses_strings_into_shared_localization_tables() {
+        let temp_dir = make_temp_dir("parse-shared-table");
+        let strings_path = temp_dir.join("Localizable.strings");
+        fs::write(
+            &strings_path,
+            "\"profile.title\" = \"Profile\";\n",
+        )
+        .expect("strings file should be written");
+
+        let tables = parse_strings(&strings_path).expect("strings should parse");
+
+        assert_eq!(tables.len(), 1);
+        assert_eq!(tables[0].table_name, "Localizable");
+        assert_eq!(tables[0].module_kind, ModuleKind::Strings);
+        assert_eq!(tables[0].warnings.len(), 0);
+        assert_eq!(
+            tables[0].source_path,
+            Utf8PathBuf::from_path_buf(strings_path.clone()).expect("utf8 path")
+        );
+        assert_eq!(tables[0].entries.len(), 1);
 
         fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
     }

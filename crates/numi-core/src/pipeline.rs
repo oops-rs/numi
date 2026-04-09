@@ -332,7 +332,7 @@ fn build_modules(config_dir: &Path, job: &JobConfig) -> Result<Vec<ResourceModul
                         .map_err(GenerateError::Diagnostics)?;
                     modules.push(ResourceModule {
                         id: table_name.clone(),
-                        kind: ModuleKind::Strings,
+                        kind: table.module_kind.clone(),
                         name: swift_identifier(&table_name),
                         entries,
                         metadata: Metadata::from([(

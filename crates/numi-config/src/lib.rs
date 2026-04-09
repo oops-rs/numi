@@ -17,14 +17,27 @@ pub use model::{
     INPUT_KIND_VALUES, InputConfig, JobConfig, TemplateConfig,
 };
 pub use workspace::{
-    LoadedWorkspace, WORKSPACE_FILE_NAME, WorkspaceConfig, WorkspaceDiscoveryError, WorkspaceError,
-    WorkspaceMember, discover_workspace, load_workspace_from_path,
+    LoadedWorkspace, WORKSPACE_FILE_NAME, WorkspaceConfig, WorkspaceDefaults,
+    WorkspaceDiscoveryError, WorkspaceError, WorkspaceJobDefaults, WorkspaceMemberOverride,
+    WorkspaceSettings, discover_workspace, load_workspace_from_path,
 };
 
 #[derive(Debug)]
 pub struct LoadedConfig {
     pub path: PathBuf,
     pub config: Config,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Manifest {
+    Config(Config),
+    Workspace(WorkspaceConfig),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoadedManifest {
+    pub path: PathBuf,
+    pub manifest: Manifest,
 }
 
 #[derive(Debug)]
@@ -59,6 +72,16 @@ impl std::fmt::Display for ConfigError {
 
 impl std::error::Error for ConfigError {}
 
+impl From<WorkspaceError> for ConfigError {
+    fn from(value: WorkspaceError) -> Self {
+        match value {
+            WorkspaceError::Read { path, source } => Self::Read { path, source },
+            WorkspaceError::ParseToml(error) => Self::ParseToml(error),
+            WorkspaceError::Invalid(diagnostics) => Self::Invalid(diagnostics),
+        }
+    }
+}
+
 pub fn parse_str(input: &str) -> Result<Config, ConfigError> {
     let value: toml::Value = toml::from_str(input).map_err(ConfigError::ParseToml)?;
     let legacy_job_diagnostics = detect_legacy_jobs_array_syntax(&value);
@@ -77,6 +100,31 @@ pub fn parse_str(input: &str) -> Result<Config, ConfigError> {
         Ok(config)
     } else {
         Err(ConfigError::Invalid(diagnostics))
+    }
+}
+
+pub fn parse_manifest_str(input: &str) -> Result<Manifest, ConfigError> {
+    let value: toml::Value = toml::from_str(input).map_err(ConfigError::ParseToml)?;
+    let has_jobs = value.get("jobs").is_some();
+    let has_workspace = value.get("workspace").is_some();
+
+    match (has_jobs, has_workspace) {
+        (true, false) => parse_str(input).map(Manifest::Config),
+        (false, true) => workspace::parse_workspace_str(input)
+            .map(Manifest::Workspace)
+            .map_err(ConfigError::from),
+        (true, true) => Err(ConfigError::Invalid(vec![
+            Diagnostic::error("manifest must not define both `jobs` and `workspace`")
+                .with_hint(
+                    "use `jobs` for a single-config manifest or `workspace` for a workspace manifest",
+                ),
+        ])),
+        (false, false) => Err(ConfigError::Invalid(vec![
+            Diagnostic::error("manifest must define either `jobs` or `workspace`")
+                .with_hint(
+                    "add `[jobs.<name>]` for a single-config manifest or `[workspace]` for a workspace manifest",
+                ),
+        ])),
     }
 }
 
@@ -128,6 +176,19 @@ pub fn load_from_path(path: &Path) -> Result<LoadedConfig, ConfigError> {
     Ok(LoadedConfig {
         path: path.to_path_buf(),
         config,
+    })
+}
+
+pub fn load_manifest_from_path(path: &Path) -> Result<LoadedManifest, ConfigError> {
+    let contents = fs::read_to_string(path).map_err(|source| ConfigError::Read {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let manifest = parse_manifest_str(&contents)?;
+
+    Ok(LoadedManifest {
+        path: path.to_path_buf(),
+        manifest,
     })
 }
 
@@ -208,6 +269,155 @@ mod tests {
         }
 
         fs::write(path, contents).expect("file should be written");
+    }
+
+    #[test]
+    fn parses_unified_single_config_manifest() {
+        let manifest = parse_manifest_str(
+            r#"
+version = 1
+
+[jobs.assets]
+output = "Generated/Assets.swift"
+
+[[jobs.assets.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.assets.template]
+[jobs.assets.template.builtin]
+swift = "swiftui-assets"
+"#,
+        )
+        .expect("single-config manifest should parse");
+
+        match manifest {
+            Manifest::Config(config) => {
+                assert_eq!(config.version, 1);
+                assert_eq!(config.jobs.len(), 1);
+                assert_eq!(config.jobs[0].name, "assets");
+            }
+            other => panic!("expected config manifest, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_unified_workspace_manifest() {
+        let manifest = parse_manifest_str(
+            r#"
+version = 1
+
+[workspace]
+members = ["AppUI", "Core"]
+
+[workspace.defaults.jobs.l10n.template]
+[workspace.defaults.jobs.l10n.template.builtin]
+swift = "l10n"
+
+[workspace.member_overrides.AppUI]
+jobs = ["assets", "l10n"]
+"#,
+        )
+        .expect("workspace manifest should parse");
+
+        match manifest {
+            Manifest::Workspace(workspace) => {
+                assert_eq!(workspace.version, 1);
+                assert_eq!(workspace.workspace.members, vec!["AppUI", "Core"]);
+                assert_eq!(
+                    workspace.workspace.defaults.jobs["l10n"]
+                        .template
+                        .builtin
+                        .as_ref()
+                        .and_then(|builtin| builtin.swift.as_deref()),
+                    Some("l10n")
+                );
+                assert_eq!(
+                    workspace.workspace.member_overrides["AppUI"].jobs,
+                    vec!["assets", "l10n"]
+                );
+            }
+            other => panic!("expected workspace manifest, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_manifest_that_mixes_jobs_and_workspace() {
+        let error = parse_manifest_str(
+            r#"
+version = 1
+
+[jobs.assets]
+output = "Generated/Assets.swift"
+
+[[jobs.assets.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.assets.template]
+[jobs.assets.template.builtin]
+swift = "swiftui-assets"
+
+[workspace]
+members = ["AppUI"]
+"#,
+        )
+        .expect_err("mixed manifest should be rejected");
+
+        assert!(
+            error
+                .to_string()
+                .contains("must not define both `jobs` and `workspace`")
+        );
+    }
+
+    #[test]
+    fn rejects_workspace_members_that_look_like_config_paths() {
+        let error = parse_manifest_str(
+            r#"
+version = 1
+
+[workspace]
+members = ["AppUI/numi.toml"]
+"#,
+        )
+        .expect_err("workspace members that look like config paths should be rejected");
+
+        assert!(
+            error
+                .to_string()
+                .contains("workspace.members entries must be relative member roots")
+        );
+    }
+
+    #[test]
+    fn parses_workspace_defaults_job_template_shape() {
+        let manifest = parse_manifest_str(
+            r#"
+version = 1
+
+[workspace]
+members = ["AppUI"]
+
+[workspace.defaults.jobs.l10n.template]
+[workspace.defaults.jobs.l10n.template.builtin]
+swift = "l10n"
+"#,
+        )
+        .expect("workspace defaults template should parse");
+
+        let Manifest::Workspace(workspace) = manifest else {
+            panic!("expected workspace manifest");
+        };
+
+        assert_eq!(
+            workspace.workspace.defaults.jobs["l10n"]
+                .template
+                .builtin
+                .as_ref()
+                .and_then(|builtin| builtin.swift.as_deref()),
+            Some("l10n")
+        );
     }
 
     #[test]
@@ -538,22 +748,29 @@ path = "Templates/assets.jinja"
     fn serializing_workspace_member_without_jobs_omits_jobs_field() {
         let workspace = WorkspaceConfig {
             version: 1,
-            members: vec![
-                WorkspaceMember {
-                    config: "App/numi.toml".to_string(),
-                    jobs: Vec::new(),
-                },
-                WorkspaceMember {
-                    config: "Core/numi.toml".to_string(),
-                    jobs: vec!["assets".to_string()],
-                },
-            ],
+            workspace: WorkspaceSettings {
+                members: vec!["App".to_string(), "Core".to_string()],
+                defaults: WorkspaceDefaults::default(),
+                member_overrides: std::collections::BTreeMap::from([
+                    (
+                        "App".to_string(),
+                        WorkspaceMemberOverride { jobs: Vec::new() },
+                    ),
+                    (
+                        "Core".to_string(),
+                        WorkspaceMemberOverride {
+                            jobs: vec!["assets".to_string()],
+                        },
+                    ),
+                ]),
+            },
         };
 
         let serialized = toml::to_string(&workspace).expect("workspace should serialize");
 
-        assert!(!serialized.contains("config = \"App/numi.toml\"\njobs = []"));
-        assert!(serialized.contains("config = \"Core/numi.toml\"\njobs = [\"assets\"]"));
+        assert!(!serialized.contains("jobs = []"));
+        assert!(serialized.contains("[workspace.member_overrides.Core]"));
+        assert!(serialized.contains("jobs = [\"assets\"]"));
 
         let reparsed = toml::from_str::<WorkspaceConfig>(&serialized)
             .expect("serialized workspace should parse back");
@@ -715,12 +932,11 @@ swift = "swiftui-assets"
             r#"
 version = 1
 
-[[members]]
-config = "App/numi.toml"
-jobs = ["assets", "l10n"]
+[workspace]
+members = ["App", "Core"]
 
-[[members]]
-config = "Core/numi.toml"
+[workspace.member_overrides.App]
+jobs = ["assets", "l10n"]
 "#,
         );
 
@@ -728,10 +944,11 @@ config = "Core/numi.toml"
             load_workspace_from_path(&manifest_path).expect("workspace manifest should parse");
 
         assert_eq!(loaded.config.version, 1);
-        assert_eq!(loaded.config.members.len(), 2);
-        assert_eq!(loaded.config.members[0].config, "App/numi.toml");
-        assert_eq!(loaded.config.members[0].jobs, vec!["assets", "l10n"]);
-        assert!(loaded.config.members[1].jobs.is_empty());
+        assert_eq!(loaded.config.workspace.members, vec!["App", "Core"]);
+        assert_eq!(
+            loaded.config.workspace.member_overrides["App"].jobs,
+            vec!["assets", "l10n"]
+        );
     }
 
     #[test]
@@ -743,11 +960,8 @@ config = "Core/numi.toml"
             r#"
 version = 1
 
-[[members]]
-config = "App/numi.toml"
-
-[[members]]
-config = "App/numi.toml"
+[workspace]
+members = ["App", "App"]
 "#,
         );
 
@@ -757,7 +971,7 @@ config = "App/numi.toml"
         assert!(
             error
                 .to_string()
-                .contains("members[].config must be unique")
+                .contains("workspace.members entries must be unique")
         );
     }
 
@@ -765,7 +979,7 @@ config = "App/numi.toml"
     fn rejects_empty_workspace_members() {
         let temp_dir = create_temp_dir("empty-workspace-members");
         let manifest_path = temp_dir.join("numi-workspace.toml");
-        write_file(&manifest_path, "version = 1\nmembers = []\n");
+        write_file(&manifest_path, "version = 1\n[workspace]\nmembers = []\n");
 
         let error = load_workspace_from_path(&manifest_path)
             .expect_err("workspace manifest requires at least one member");
@@ -786,8 +1000,8 @@ config = "App/numi.toml"
             r#"
 version = 2
 
-[[members]]
-config = "App/numi.toml"
+[workspace]
+members = ["App"]
 "#,
         );
 
@@ -806,12 +1020,13 @@ config = "App/numi.toml"
             r#"
 version = 1
 
-[[members]]
-config = "App/numi.toml"
+[workspace]
+members = ["App", "Core"]
+
+[workspace.member_overrides.App]
 jobs = []
 
-[[members]]
-config = "Core/numi.toml"
+[workspace.member_overrides.Core]
 jobs = ["assets", "assets"]
 "#,
         );
@@ -820,8 +1035,8 @@ jobs = ["assets", "assets"]
             .expect_err("workspace jobs should reject empty and duplicate selections");
 
         let message = error.to_string();
-        assert!(message.contains("members[].jobs must not be empty when present"));
-        assert!(message.contains("members[].jobs must not contain duplicates"));
+        assert!(message.contains("workspace member override jobs must not be empty"));
+        assert!(message.contains("workspace member override jobs must be unique"));
     }
 
     #[test]
@@ -830,7 +1045,7 @@ jobs = ["assets", "assets"]
         let ancestor_manifest = ancestor_root.join("numi-workspace.toml");
         write_file(
             &ancestor_manifest,
-            "version = 1\n[[members]]\nconfig = \"App/numi.toml\"\n",
+            "version = 1\n[workspace]\nmembers = [\"App\"]\n",
         );
 
         let nested = ancestor_root.join("apps/ios/App");
@@ -849,7 +1064,7 @@ jobs = ["assets", "assets"]
         let descendant_manifest = descendant_root.join("apps/App/numi-workspace.toml");
         write_file(
             &descendant_manifest,
-            "version = 1\n[[members]]\nconfig = \"apps/App/numi.toml\"\n",
+            "version = 1\n[workspace]\nmembers = [\"apps/App\"]\n",
         );
 
         let discovered = discover_workspace(&descendant_root, None)
@@ -864,11 +1079,11 @@ jobs = ["assets", "assets"]
         let ambiguous_root = create_temp_dir("workspace-discovery-ambiguous");
         write_file(
             &ambiguous_root.join("apps/App/numi-workspace.toml"),
-            "version = 1\n[[members]]\nconfig = \"apps/App/numi.toml\"\n",
+            "version = 1\n[workspace]\nmembers = [\"apps/App\"]\n",
         );
         write_file(
             &ambiguous_root.join("packages/Core/numi-workspace.toml"),
-            "version = 1\n[[members]]\nconfig = \"packages/Core/numi.toml\"\n",
+            "version = 1\n[workspace]\nmembers = [\"packages/Core\"]\n",
         );
 
         let error = discover_workspace(&ambiguous_root, None)

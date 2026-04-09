@@ -1,13 +1,16 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 use numi_diagnostics::Diagnostic;
 use serde::{Deserialize, Serialize};
 
-use crate::{ConfigError, DiscoveryError};
+use crate::{
+    ConfigError, DiscoveryError,
+    model::{SWIFT_BUILTIN_TEMPLATE_VALUES, TemplateConfig},
+};
 
 pub const WORKSPACE_FILE_NAME: &str = "numi-workspace.toml";
 
@@ -15,13 +18,36 @@ pub const WORKSPACE_FILE_NAME: &str = "numi-workspace.toml";
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceConfig {
     pub version: u32,
-    pub members: Vec<WorkspaceMember>,
+    pub workspace: WorkspaceSettings,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct WorkspaceMember {
-    pub config: String,
+pub struct WorkspaceSettings {
+    pub members: Vec<String>,
+    #[serde(default, skip_serializing_if = "WorkspaceDefaults::is_empty")]
+    pub defaults: WorkspaceDefaults,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub member_overrides: BTreeMap<String, WorkspaceMemberOverride>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceDefaults {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub jobs: BTreeMap<String, WorkspaceJobDefaults>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceJobDefaults {
+    #[serde(default, skip_serializing_if = "TemplateConfig::is_empty")]
+    pub template: TemplateConfig,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceMemberOverride {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub jobs: Vec<String>,
 }
@@ -157,8 +183,8 @@ pub fn discover_workspace(
         .map_err(WorkspaceDiscoveryError::from)
 }
 
-fn parse_workspace_str(input: &str) -> Result<WorkspaceConfig, WorkspaceError> {
-    let raw: RawWorkspaceConfig = toml::from_str(input).map_err(WorkspaceError::ParseToml)?;
+pub(crate) fn parse_workspace_str(input: &str) -> Result<WorkspaceConfig, WorkspaceError> {
+    let raw: RawWorkspaceManifest = toml::from_str(input).map_err(WorkspaceError::ParseToml)?;
     let diagnostics = validate_workspace(&raw);
 
     if diagnostics.is_empty() {
@@ -168,7 +194,7 @@ fn parse_workspace_str(input: &str) -> Result<WorkspaceConfig, WorkspaceError> {
     }
 }
 
-fn validate_workspace(config: &RawWorkspaceConfig) -> Vec<Diagnostic> {
+fn validate_workspace(config: &RawWorkspaceManifest) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
     if config.version != 1 {
@@ -178,33 +204,70 @@ fn validate_workspace(config: &RawWorkspaceConfig) -> Vec<Diagnostic> {
         );
     }
 
-    if config.members.is_empty() {
+    if config.workspace.members.is_empty() {
         diagnostics.push(
             Diagnostic::error("workspace must declare at least one member")
-                .with_hint("add at least one `[[members]]` entry"),
+                .with_hint("add at least one entry to `workspace.members`"),
         );
     }
 
-    let mut member_configs = BTreeSet::new();
+    let mut members = BTreeSet::new();
 
-    for member in &config.members {
-        if !member_configs.insert(member.config.as_str()) {
+    for member in &config.workspace.members {
+        if member.trim().is_empty() {
             diagnostics.push(
-                Diagnostic::error("members[].config must be unique")
-                    .with_hint("each workspace member must point at a different config path")
-                    .with_path(PathBuf::from(&member.config)),
+                Diagnostic::error("workspace.members entries must be relative member roots")
+                    .with_hint("use values like `AppUI` or `Core`, not empty paths")
+                    .with_path(PathBuf::from(member)),
+            );
+            continue;
+        }
+
+        if is_config_path(member) {
+            diagnostics.push(
+                Diagnostic::error("workspace.members entries must be relative member roots")
+                    .with_hint("use values like `AppUI` or `Core`, not config-file paths like `AppUI/numi.toml`")
+                    .with_path(PathBuf::from(member)),
+            );
+            continue;
+        }
+
+        if !is_relative_root(member) {
+            diagnostics.push(
+                Diagnostic::error("workspace.members entries must be relative member roots")
+                    .with_hint("use relative paths like `AppUI` or `packages/Core`")
+                    .with_path(PathBuf::from(member)),
+            );
+            continue;
+        }
+
+        if !members.insert(member.as_str()) {
+            diagnostics.push(
+                Diagnostic::error("workspace.members entries must be unique")
+                    .with_hint("remove duplicate entries from `workspace.members`")
+                    .with_path(PathBuf::from(member)),
+            );
+        }
+    }
+
+    for (member_path, override_config) in &config.workspace.member_overrides {
+        if !members.contains(member_path.as_str()) {
+            diagnostics.push(
+                Diagnostic::error("workspace.member_overrides keys must match declared members")
+                    .with_hint("add the member to `workspace.members` or remove the override")
+                    .with_path(PathBuf::from(member_path)),
             );
         }
 
-        let Some(job_list) = member.jobs.as_ref() else {
+        let Some(job_list) = override_config.jobs.as_ref() else {
             continue;
         };
 
         if job_list.is_empty() {
             diagnostics.push(
-                Diagnostic::error("members[].jobs must not be empty when present")
-                    .with_hint("omit `jobs` to select all jobs, or provide at least one job name")
-                    .with_path(PathBuf::from(&member.config)),
+                Diagnostic::error("workspace member override jobs must not be empty")
+                    .with_hint("omit `jobs` or provide at least one job name")
+                    .with_path(PathBuf::from(member_path)),
             );
             continue;
         }
@@ -213,50 +276,191 @@ fn validate_workspace(config: &RawWorkspaceConfig) -> Vec<Diagnostic> {
         for job in job_list {
             if !job_names.insert(job.as_str()) {
                 diagnostics.push(
-                    Diagnostic::error("members[].jobs must not contain duplicates")
-                        .with_hint("remove duplicate job names from the workspace member")
+                    Diagnostic::error("workspace member override jobs must be unique")
+                        .with_hint("remove duplicate job names from the override")
                         .with_job(job.clone())
-                        .with_path(PathBuf::from(&member.config)),
+                        .with_path(PathBuf::from(member_path)),
                 );
             }
         }
     }
 
+    for (job_name, job_defaults) in &config.workspace.defaults.jobs {
+        validate_template(
+            &mut diagnostics,
+            job_name,
+            &job_defaults.template,
+            "workspace default job template",
+        );
+    }
+
     diagnostics
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawWorkspaceConfig {
-    version: u32,
-    members: Vec<RawWorkspaceMember>,
+fn is_relative_root(member: &str) -> bool {
+    let path = Path::new(member);
+    if path.is_absolute() {
+        return false;
+    }
+
+    path.components()
+        .all(|component| matches!(component, Component::Normal(_)))
+}
+
+fn is_config_path(member: &str) -> bool {
+    Path::new(member)
+        .extension()
+        .is_some_and(|extension| extension == "toml")
+}
+
+fn validate_template(
+    diagnostics: &mut Vec<Diagnostic>,
+    job_name: &str,
+    template: &TemplateConfig,
+    label: &str,
+) {
+    let template_sources = usize::from(
+        template
+            .builtin
+            .as_ref()
+            .is_some_and(|builtin| !builtin.is_empty()),
+    ) + usize::from(template.path.is_some());
+
+    if template_sources != 1 {
+        diagnostics.push(
+            Diagnostic::error(format!("{label} must set exactly one source"))
+                .with_job(job_name.to_owned())
+                .with_hint(
+                    "set either `[workspace.defaults.jobs.<name>.template.builtin] swift = \"...\"` or `[workspace.defaults.jobs.<name>.template] path = \"...\"`",
+                ),
+        );
+    }
+
+    if let Some(builtin) = &template.builtin {
+        if builtin.swift.is_none() && template.path.is_none() {
+            diagnostics.push(
+                Diagnostic::error(format!("{label} builtin must set exactly one namespace"))
+                    .with_job(job_name.to_owned())
+                    .with_hint(
+                        "set `[workspace.defaults.jobs.<name>.template.builtin] swift = \"...\"`",
+                    ),
+            );
+        } else if let Some(swift_builtin) = builtin.swift.as_deref() {
+            if !SWIFT_BUILTIN_TEMPLATE_VALUES.contains(&swift_builtin) {
+                diagnostics.push(
+                    Diagnostic::error(format!(
+                        "workspace defaults template builtin.swift must be one of {} (got `{swift_builtin}`)",
+                        join_allowed_values(SWIFT_BUILTIN_TEMPLATE_VALUES)
+                    ))
+                    .with_job(job_name.to_owned())
+                    .with_hint(format!(
+                        "use one of: {}",
+                        join_allowed_values(SWIFT_BUILTIN_TEMPLATE_VALUES)
+                    )),
+                );
+            }
+        }
+    }
+}
+
+fn join_allowed_values(values: &[&str]) -> String {
+    values
+        .iter()
+        .map(|value| format!("`{value}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RawWorkspaceMember {
-    config: String,
+struct RawWorkspaceManifest {
+    version: u32,
+    workspace: RawWorkspaceSettings,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawWorkspaceSettings {
+    members: Vec<String>,
+    #[serde(default)]
+    defaults: RawWorkspaceDefaults,
+    #[serde(default)]
+    member_overrides: BTreeMap<String, RawWorkspaceMemberOverride>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawWorkspaceDefaults {
+    #[serde(default)]
+    jobs: BTreeMap<String, RawWorkspaceJobDefaults>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawWorkspaceJobDefaults {
+    #[serde(default)]
+    template: TemplateConfig,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawWorkspaceMemberOverride {
     jobs: Option<Vec<String>>,
 }
 
-impl RawWorkspaceConfig {
+impl RawWorkspaceManifest {
     fn into_workspace(self) -> WorkspaceConfig {
         WorkspaceConfig {
             version: self.version,
-            members: self
-                .members
+            workspace: self.workspace.into_workspace(),
+        }
+    }
+}
+
+impl RawWorkspaceSettings {
+    fn into_workspace(self) -> WorkspaceSettings {
+        WorkspaceSettings {
+            members: self.members,
+            defaults: self.defaults.into_workspace(),
+            member_overrides: self
+                .member_overrides
                 .into_iter()
-                .map(RawWorkspaceMember::into_workspace)
+                .map(|(member, override_config)| (member, override_config.into_workspace()))
                 .collect(),
         }
     }
 }
 
-impl RawWorkspaceMember {
-    fn into_workspace(self) -> WorkspaceMember {
-        WorkspaceMember {
-            config: self.config,
+impl RawWorkspaceDefaults {
+    fn into_workspace(self) -> WorkspaceDefaults {
+        WorkspaceDefaults {
+            jobs: self
+                .jobs
+                .into_iter()
+                .map(|(job_name, defaults)| (job_name, defaults.into_workspace()))
+                .collect(),
+        }
+    }
+}
+
+impl RawWorkspaceJobDefaults {
+    fn into_workspace(self) -> WorkspaceJobDefaults {
+        WorkspaceJobDefaults {
+            template: self.template,
+        }
+    }
+}
+
+impl RawWorkspaceMemberOverride {
+    fn into_workspace(self) -> WorkspaceMemberOverride {
+        WorkspaceMemberOverride {
             jobs: self.jobs.unwrap_or_default(),
         }
+    }
+}
+
+impl WorkspaceDefaults {
+    pub fn is_empty(&self) -> bool {
+        self.jobs.is_empty()
     }
 }

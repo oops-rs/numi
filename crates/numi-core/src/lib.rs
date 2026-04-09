@@ -1,5 +1,6 @@
 mod context;
 mod output;
+pub mod parse_files;
 mod parse_l10n;
 mod parse_xcassets;
 mod pipeline;

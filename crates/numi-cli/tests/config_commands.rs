@@ -47,7 +47,7 @@ fn config_locate_finds_nearest_ancestor() {
     let root = make_temp_dir("nearest-ancestor");
     let nested = root.join("Sources/App");
     fs::create_dir_all(&nested).expect("nested dir should exist");
-    let config_path = root.join("swiftgen.toml");
+    let config_path = root.join("numi.toml");
     fs::write(
         &config_path,
         r#"
@@ -91,10 +91,19 @@ builtin = "swiftui-assets"
 
 #[test]
 fn config_locate_reports_ambiguous_descendant_configs() {
-    let fixture_root = repo_root().join("fixtures/multimodule-repo");
+    let root = make_temp_dir("ambiguous-descendants");
+    let app_ui = root.join("AppUI");
+    let core = root.join("Core");
+    fs::create_dir_all(&app_ui).expect("AppUI dir should exist");
+    fs::create_dir_all(&core).expect("Core dir should exist");
+    fs::write(app_ui.join("numi.toml"), "version = 1\njobs = []\n")
+        .expect("AppUI config should be written");
+    fs::write(core.join("numi.toml"), "version = 1\njobs = []\n")
+        .expect("Core config should be written");
+
     let output = Command::new(env!("CARGO_BIN_EXE_numi"))
         .args(["config", "locate"])
-        .current_dir(&fixture_root)
+        .current_dir(&root)
         .output()
         .expect("numi config locate should run");
 
@@ -102,8 +111,10 @@ fn config_locate_reports_ambiguous_descendant_configs() {
 
     let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
     assert!(stderr.contains("Multiple configuration files found"));
-    assert!(stderr.contains("AppUI/swiftgen.toml"));
-    assert!(stderr.contains("Core/swiftgen.toml"));
+    assert!(stderr.contains("AppUI/numi.toml"));
+    assert!(stderr.contains("Core/numi.toml"));
+
+    fs::remove_dir_all(root).expect("temp dir should be removed");
 }
 
 #[test]
@@ -114,7 +125,7 @@ fn config_locate_prefers_explicit_path_over_ancestor() {
     fs::create_dir_all(&nested).expect("nested dir should exist");
     fs::create_dir_all(&explicit_dir).expect("explicit dir should exist");
 
-    let ancestor_config = root.join("swiftgen.toml");
+    let ancestor_config = root.join("numi.toml");
     fs::write(
         &ancestor_config,
         r#"
@@ -192,7 +203,7 @@ fn config_locate_finds_single_descendant_when_no_ancestor_exists() {
     let config_dir = search_dir.join("AppUI");
     fs::create_dir_all(&config_dir).expect("config dir should exist");
 
-    let config_path = config_dir.join("swiftgen.toml");
+    let config_path = config_dir.join("numi.toml");
     fs::write(
         &config_path,
         r#"
@@ -240,6 +251,11 @@ fn check_returns_exit_code_2_for_stale_output_without_rewriting_file() {
     let fixture_root = repo_root().join("fixtures/xcassets-basic");
     let working_root = temp_root.join("fixture");
     copy_dir_all(&fixture_root, &working_root);
+    fs::copy(
+        working_root.join("swiftgen.toml"),
+        working_root.join("numi.toml"),
+    )
+    .expect("numi config should be created from fixture");
 
     let generated_path = working_root.join("Generated/Assets.swift");
     fs::create_dir_all(
@@ -377,7 +393,7 @@ builtin = "l10n"
 #[test]
 fn init_refuses_to_overwrite_existing_config_without_force() {
     let root = make_temp_dir("init-refuse-overwrite");
-    let existing = root.join("swiftgen.toml");
+    let existing = root.join("numi.toml");
     fs::write(&existing, "version = 1\njobs = []\n").expect("existing config should be written");
 
     let output = Command::new(env!("CARGO_BIN_EXE_numi"))
@@ -399,7 +415,7 @@ fn init_refuses_to_overwrite_existing_config_without_force() {
 }
 
 #[test]
-fn init_creates_starter_swiftgen_toml() {
+fn init_creates_starter_numi_toml() {
     let root = make_temp_dir("init-success");
 
     let output = Command::new(env!("CARGO_BIN_EXE_numi"))
@@ -416,7 +432,7 @@ fn init_creates_starter_swiftgen_toml() {
     );
 
     let created =
-        fs::read_to_string(root.join("swiftgen.toml")).expect("starter config should exist");
+        fs::read_to_string(root.join("numi.toml")).expect("starter config should exist");
     assert_eq!(
         created,
         include_str!("../../../docs/examples/starter-swiftgen.toml")
@@ -428,6 +444,73 @@ fn init_creates_starter_swiftgen_toml() {
     assert!(
         !created.contains("path = \"Templates/l10n.stencil\""),
         "starter config was: {created}"
+    );
+
+    fs::remove_dir_all(root).expect("temp dir should be removed");
+}
+
+#[test]
+fn config_print_validation_hints_reference_numi_toml() {
+    let root = make_temp_dir("config-print-validation-hints");
+    let config_path = root.join("numi.toml");
+    fs::write(&config_path, "version = 2\njobs = []\n").expect("config should be written");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_numi"))
+        .args(["config", "print", "--config", "numi.toml"])
+        .current_dir(&root)
+        .output()
+        .expect("numi config print should run");
+
+    assert!(!output.status.success(), "command unexpectedly succeeded");
+
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
+    assert!(
+        stderr.contains("set `version = 1` in numi.toml"),
+        "stderr was: {stderr}"
+    );
+    assert!(
+        stderr.contains("add one `[[jobs]]` table to numi.toml"),
+        "stderr was: {stderr}"
+    );
+
+    fs::remove_dir_all(root).expect("temp dir should be removed");
+}
+
+#[test]
+fn generate_missing_job_hint_references_numi_toml() {
+    let root = make_temp_dir("generate-missing-job-hint");
+    let config_path = root.join("numi.toml");
+    fs::write(
+        &config_path,
+        r#"
+version = 1
+
+[[jobs]]
+name = "assets"
+output = "Generated/Assets.swift"
+
+[[jobs.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.template]
+builtin = "swiftui-assets"
+"#,
+    )
+    .expect("config should be written");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_numi"))
+        .args(["generate", "--config", "numi.toml", "--job", "missing"])
+        .current_dir(&root)
+        .output()
+        .expect("numi generate should run");
+
+    assert!(!output.status.success(), "command unexpectedly succeeded");
+
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
+    assert!(
+        stderr.contains("select one of the job names declared in numi.toml"),
+        "stderr was: {stderr}"
     );
 
     fs::remove_dir_all(root).expect("temp dir should be removed");

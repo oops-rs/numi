@@ -13,14 +13,14 @@ pub fn validate_config(config: &Config) -> Vec<Diagnostic> {
                 "unsupported config version `{}`; only version `1` is supported",
                 config.version
             ))
-            .with_hint("set `version = 1` in swiftgen.toml"),
+            .with_hint("set `version = 1` in numi.toml"),
         );
     }
 
     if config.jobs.is_empty() {
         diagnostics.push(
             Diagnostic::error("config must define at least one job")
-                .with_hint("add one `[[jobs]]` table to swiftgen.toml"),
+                .with_hint("add one `[[jobs]]` table to numi.toml"),
         );
     }
 

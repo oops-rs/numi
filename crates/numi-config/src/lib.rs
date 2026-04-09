@@ -93,7 +93,7 @@ pub fn resolve_selected_jobs<'a>(
                     None => diagnostics.push(
                         Diagnostic::error(format!("job `{selected_job}` was not found"))
                             .with_job(selected_job.clone())
-                            .with_hint("select one of the job names declared in swiftgen.toml"),
+                            .with_hint("select one of the job names declared in numi.toml"),
                     ),
                 }
             }

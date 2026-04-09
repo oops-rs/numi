@@ -26,7 +26,7 @@ The SwiftGen MVP concepts map directly onto Numi's current config surface:
 - `[[jobs]]` describes one generation unit
 - `[[jobs.inputs]]` declares each resource input
 - `[jobs.template]` contains either `[jobs.template.builtin]` for a shipped Swift template or a custom template path
-- `[jobs.template.builtin]` names the shipped template family, such as `swift`
+- `[jobs.template.builtin]` contains built-in template namespace keys; today `swift` is the supported namespace key, and its value selects the shipped template, for example `swift = "l10n"`
 - `[defaults]` and `[defaults.bundle]` provide shared defaults across jobs
 
 ## Built-In Templates

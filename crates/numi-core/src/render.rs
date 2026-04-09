@@ -8,9 +8,9 @@ use std::{
 use crate::context::AssetTemplateContext;
 
 const SWIFTUI_ASSETS_TEMPLATE: &str =
-    include_str!("../../../templates/builtin/swiftui-assets.jinja");
-const L10N_TEMPLATE: &str = include_str!("../../../templates/builtin/l10n.jinja");
-const FILES_TEMPLATE: &str = include_str!("../../../templates/builtin/files.jinja");
+    include_str!("../../../templates/swift/swiftui-assets.jinja");
+const L10N_TEMPLATE: &str = include_str!("../../../templates/swift/l10n.jinja");
+const FILES_TEMPLATE: &str = include_str!("../../../templates/swift/files.jinja");
 const ENTRY_TEMPLATE_NAME: &str = "__numi_entry__";
 const FILE_TEMPLATE_PREFIX: &str = "file:";
 const INCLUDE_REQUEST_PREFIX: &str = "include:";
@@ -366,6 +366,14 @@ private func tr(_ table: String, _ key: String) -> String {
 }
 "#
         );
+    }
+
+    #[test]
+    fn rejects_unknown_builtin_template_name() {
+        let error = render_builtin("not-a-real-template", &l10n_context())
+            .expect_err("unknown built-ins should be rejected");
+
+        assert!(matches!(error, RenderError::UnknownBuiltin(name) if name == "not-a-real-template"));
     }
 
     #[test]

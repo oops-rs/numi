@@ -518,7 +518,12 @@ fn render_job(
     job: &JobConfig,
     context: &AssetTemplateContext,
 ) -> Result<String, GenerateError> {
-    if let Some(builtin_name) = job.template.builtin.as_deref() {
+    if let Some(builtin_name) = job
+        .template
+        .builtin
+        .as_ref()
+        .and_then(|builtin| builtin.swift.as_deref())
+    {
         return render_builtin(builtin_name, context).map_err(|source| GenerateError::Render {
             job: job.name.clone(),
             source,
@@ -645,7 +650,8 @@ type = "strings"
 path = "Resources/Localization"
 
 [jobs.template]
-builtin = "l10n"
+[jobs.template.builtin]
+swift = "l10n"
 "#,
         )
         .expect("config should be written");
@@ -685,7 +691,8 @@ type = "strings"
 path = "Resources/Localization"
 
 [jobs.template]
-builtin = "l10n"
+[jobs.template.builtin]
+swift = "l10n"
 "#,
         )
         .expect("config should be written");
@@ -793,7 +800,8 @@ type = "files"
 path = "Resources/Fixtures"
 
 [jobs.template]
-builtin = "files"
+[jobs.template.builtin]
+swift = "files"
 "#,
         )
         .expect("config should be written");
@@ -854,7 +862,8 @@ type = "files"
 path = "Resources/Fixtures"
 
 [jobs.template]
-builtin = "files"
+[jobs.template.builtin]
+swift = "files"
 "#,
         )
         .expect("config should be written");

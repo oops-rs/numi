@@ -73,7 +73,6 @@ Numi v1 should support:
 - Plist-driven generation
 - Plugin parser system
 - Non-Swift outputs
-- Workspace-level orchestration for monorepos
 
 ## 3. Target Users
 
@@ -218,6 +217,9 @@ numi generate
 numi generate --config AppUI/numi.toml
 numi generate --job assets
 numi check
+numi workspace generate
+numi workspace generate --workspace numi-workspace.toml --member Core/numi.toml
+numi workspace check
 numi init
 numi config locate
 numi config print
@@ -227,6 +229,7 @@ numi dump-context --job assets
 #### 6.3.2 Command Definitions
 `numi generate`:
 - Discover config
+- Resolve exactly one `numi.toml`
 - Resolve jobs
 - Parse inputs
 - Normalize IR
@@ -234,10 +237,27 @@ numi dump-context --job assets
 - Render outputs
 - Write changed files
 - Report warnings/errors
+- May reuse cached parser outputs when inputs are unchanged
+- Cache invalidation occurs on relevant file add, remove, rename, or content change
+- Normalization, rendering, and output checks still run every time
 
 `numi check`:
 - Run generation logically without modifying files
 - Exit non-zero if any output is stale, missing, or would change
+- Resolve exactly one `numi.toml`
+- May reuse cached parser outputs when inputs are unchanged
+- Cache invalidation occurs on relevant file add, remove, rename, or content change
+- Normalization, rendering, and output checks still run every time
+
+`numi workspace generate`:
+- Resolve a workspace manifest, defaulting to `numi-workspace.toml`
+- Run generation across member configs
+- Allow targeting one member with `--member`
+
+`numi workspace check`:
+- Resolve a workspace manifest, defaulting to `numi-workspace.toml`
+- Run check-mode evaluation across member configs
+- Support repo-level CI orchestration for multi-module repositories
 
 `numi init`:
 - Create a starter `numi.toml` in the current directory
@@ -384,6 +404,31 @@ Possible v1 naming controls:
 - Keyword escaping strategy
 - Duplicate resolution strategy
 - Namespace flattening toggle
+
+### 7.4 Workspace Manifest
+
+Workspace orchestration uses a separate `numi-workspace.toml` file so each module can keep its own `numi.toml`.
+
+Example:
+
+```toml
+version = 1
+
+[[members]]
+config = "AppUI/numi.toml"
+
+[[members]]
+config = "Core/numi.toml"
+jobs = ["l10n"]
+```
+
+Workspace manifest fields:
+- `version`: schema version, required
+- `members`: required list of workspace members
+
+Each workspace member contains:
+- `config`: path to a member `numi.toml`, required
+- `jobs`: optional subset of jobs to run for that member
 
 ## 8. Intermediate Representation (IR)
 
@@ -695,12 +740,13 @@ error: identifier collision in job `assets`
 - Use fast directory walking with ignore support where appropriate
 - Avoid reparsing unrelated inputs across jobs when possible
 - Share parsed resource graphs across jobs if inputs overlap and templates differ
+- Reuse cached parser outputs on repeated runs when inputs are unchanged
+- Invalidate parser cache entries on relevant file add, remove, rename, or content change
+- Always rerun normalization, rendering, and output checks even when parser outputs are reused
 - Skip file writes when bytes are unchanged
 - Prefer stable in-memory transformations over repeated serialization/deserialization
 
 ### 15.3 Optional v1 Optimizations
-- Content hash cache for parsed inputs
-- Output hash cache
 - Parallel parse stage where safe
 
 ### 15.4 Measurement
@@ -713,6 +759,7 @@ The project should include benchmark fixtures for:
 
 ### 16.1 Multi-module Repo Support
 Numi must support repositories where config may live in a submodule directory rather than the repo root.
+For repositories with multiple module configs, a repo-level `numi-workspace.toml` should orchestrate existing per-module `numi.toml` files without replacing them.
 
 ### 16.2 Relative Path Semantics
 All relative paths are resolved relative to the config file directory.

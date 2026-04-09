@@ -52,6 +52,13 @@ Check whether committed generated files are up to date:
 numi check
 ```
 
+Workspace orchestration is also available when a repo has multiple `numi.toml` files:
+
+```bash
+numi workspace generate
+numi workspace check
+```
+
 ## Config File
 
 Numi uses `numi.toml` as its config filename.
@@ -114,13 +121,34 @@ swift = "l10n"
 
 The starter config shipped with `numi init` lives in [docs/examples/starter-numi.toml](docs/examples/starter-numi.toml).
 
+## Workspace Manifest
+
+Repos with more than one `numi.toml` can add a repo-level `numi-workspace.toml`:
+
+```toml
+version = 1
+
+[[members]]
+config = "AppUI/numi.toml"
+
+[[members]]
+config = "Core/numi.toml"
+jobs = ["l10n"]
+```
+
+Use workspace commands to orchestrate those member configs together. `numi generate` and `numi check` still resolve exactly one `numi.toml`.
+
 ## Commands
 
 `numi generate`
 
 - discovers config unless `--config` is passed
+- still resolves exactly one `numi.toml`
 - generates outputs for all jobs, or only selected jobs when `--job` is repeated
 - prints non-fatal warnings to stderr
+- repeated runs may reuse cached parser outputs when inputs are unchanged
+- cache invalidation happens on relevant file add, remove, rename, or content change
+- normalization, rendering, and output checks still run every time
 
 Examples:
 
@@ -133,14 +161,42 @@ numi generate --job assets --job l10n
 `numi check`
 
 - computes what `generate` would write
+- still resolves exactly one `numi.toml`
 - exits `0` when outputs are current
 - exits `2` when outputs are stale
 - prints warnings to stderr without turning the run into a failure
+- repeated runs may reuse cached parser outputs when inputs are unchanged
+- cache invalidation happens on relevant file add, remove, rename, or content change
+- normalization, rendering, and output checks still run every time
 
 Example:
 
 ```bash
 numi check --job l10n
+```
+
+`numi workspace generate`
+
+- resolves a workspace manifest, defaulting to `numi-workspace.toml`
+- runs generation for all members, or one member when `--member` is passed
+- lets each member keep its own `numi.toml`
+
+Examples:
+
+```bash
+numi workspace generate
+numi workspace generate --workspace numi-workspace.toml --member Core/numi.toml
+```
+
+`numi workspace check`
+
+- resolves a workspace manifest, defaulting to `numi-workspace.toml`
+- checks every member config from one repo-level command
+
+Example:
+
+```bash
+numi workspace check
 ```
 
 `numi dump-context`

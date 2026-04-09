@@ -52,6 +52,8 @@ If a SwiftGen setup relied on a custom Stencil template, the closest Numi migrat
 - `.xcstrings` is supported in v1, but plural and device-specific variations are skipped with warnings in the current release
 - Bundle handling is explicit in the template context through `bundle.mode` and `bundle.identifier`
 - The stable context contract is documented in [context-schema.md](context-schema.md)
+- In monorepos, you can keep per-module `numi.toml` files and add a repo-level `numi-workspace.toml` to orchestrate them
+- CI can keep using `numi check` either once per config or through a workspace-level `numi workspace check`
 
 ## Suggested Migration Flow
 

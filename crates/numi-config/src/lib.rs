@@ -94,6 +94,10 @@ impl From<WorkspaceError> for ConfigError {
 }
 
 pub fn parse_str(input: &str) -> Result<Config, ConfigError> {
+    parse_str_with_validation(input, true)
+}
+
+fn parse_str_with_validation(input: &str, should_validate: bool) -> Result<Config, ConfigError> {
     let value: toml::Value = toml::from_str(input).map_err(ConfigError::ParseToml)?;
     let legacy_job_diagnostics = detect_legacy_jobs_array_syntax(&value);
     if !legacy_job_diagnostics.is_empty() {
@@ -105,6 +109,10 @@ pub fn parse_str(input: &str) -> Result<Config, ConfigError> {
     }
 
     let config: Config = value.try_into().map_err(ConfigError::ParseToml)?;
+    if !should_validate {
+        return Ok(config);
+    }
+
     let diagnostics = validate::validate_config(&config);
 
     if diagnostics.is_empty() {
@@ -361,11 +369,22 @@ fn detect_legacy_flat_builtin_template_syntax(value: &toml::Value) -> Vec<Diagno
 }
 
 pub fn load_from_path(path: &Path) -> Result<LoadedConfig, ConfigError> {
+    load_from_path_with_validation(path, true)
+}
+
+pub fn load_unvalidated_from_path(path: &Path) -> Result<LoadedConfig, ConfigError> {
+    load_from_path_with_validation(path, false)
+}
+
+fn load_from_path_with_validation(
+    path: &Path,
+    should_validate: bool,
+) -> Result<LoadedConfig, ConfigError> {
     let contents = fs::read_to_string(path).map_err(|source| ConfigError::Read {
         path: path.to_path_buf(),
         source,
     })?;
-    let config = parse_str(&contents)?;
+    let config = parse_str_with_validation(&contents, should_validate)?;
 
     Ok(LoadedConfig {
         path: path.to_path_buf(),
@@ -432,6 +451,37 @@ pub fn resolve_config(config: &Config) -> Config {
     }
 
     resolved
+}
+
+pub fn workspace_member_config_path(workspace_root: &Path, member_root: &str) -> PathBuf {
+    workspace_root.join(member_root).join(CONFIG_FILE_NAME)
+}
+
+pub fn resolve_workspace_member_config(
+    workspace: &WorkspaceConfig,
+    member_root: &str,
+    member_config: &Config,
+) -> Result<Config, Vec<Diagnostic>> {
+    let mut resolved = member_config.clone();
+
+    for job in &mut resolved.jobs {
+        if job.template.is_empty()
+            && let Some(defaults) = workspace.workspace.defaults.jobs.get(&job.name)
+        {
+            job.template = defaults.template.clone();
+        }
+    }
+
+    if let Some(override_config) = workspace.workspace.member_overrides.get(member_root) {
+        let _ = override_config;
+    }
+
+    let diagnostics = validate::validate_config(&resolved);
+    if diagnostics.is_empty() {
+        Ok(resolved)
+    } else {
+        Err(diagnostics)
+    }
 }
 
 #[cfg(test)]
@@ -809,6 +859,82 @@ swift = "l10n"
             error
                 .to_string()
                 .contains("workspace default job template must set exactly one source")
+        );
+    }
+
+    #[test]
+    fn workspace_member_config_path_joins_member_root_with_numi_toml() {
+        assert_eq!(
+            workspace_member_config_path(Path::new("/tmp/workspace"), "AppUI"),
+            PathBuf::from("/tmp/workspace/AppUI/numi.toml")
+        );
+    }
+
+    #[test]
+    fn resolves_workspace_member_config_by_inheriting_missing_templates_only() {
+        let manifest = parse_manifest_str(
+            r#"
+version = 1
+
+[workspace]
+members = ["AppUI"]
+
+[workspace.defaults.jobs.l10n.template.builtin]
+swift = "l10n"
+
+[workspace.defaults.jobs.assets.template.builtin]
+swift = "files"
+"#,
+        )
+        .expect("workspace manifest should parse");
+        let Manifest::Workspace(workspace) = manifest else {
+            panic!("expected workspace manifest");
+        };
+
+        let member_config = toml::from_str::<Config>(
+            r#"
+version = 1
+
+[jobs.assets]
+output = "Generated/Assets.swift"
+
+[[jobs.assets.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.assets.template.builtin]
+swift = "swiftui-assets"
+
+[jobs.l10n]
+output = "Generated/L10n.swift"
+
+[[jobs.l10n.inputs]]
+type = "strings"
+path = "Resources/Localization"
+"#,
+        )
+        .expect("member config should deserialize without template inheritance applied");
+
+        let resolved = resolve_workspace_member_config(&workspace, "AppUI", &member_config)
+            .expect("workspace defaults should fill missing member templates");
+
+        assert_eq!(
+            resolved
+                .jobs
+                .iter()
+                .find(|job| job.name == "l10n")
+                .and_then(|job| job.template.builtin.as_ref())
+                .and_then(|builtin| builtin.swift.as_deref()),
+            Some("l10n")
+        );
+        assert_eq!(
+            resolved
+                .jobs
+                .iter()
+                .find(|job| job.name == "assets")
+                .and_then(|job| job.template.builtin.as_ref())
+                .and_then(|builtin| builtin.swift.as_deref()),
+            Some("swiftui-assets")
         );
     }
 

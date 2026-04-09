@@ -191,25 +191,24 @@ pub fn generate_with_options(
     options: GenerateOptions,
 ) -> Result<GenerateReport, GenerateError> {
     let loaded = numi_config::load_from_path(config_path).map_err(GenerateError::LoadConfig)?;
-    let config_dir = loaded
-        .path
-        .parent()
-        .filter(|path| !path.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    let jobs = numi_config::resolve_selected_jobs(&loaded.config, selected_jobs)
+    generate_loaded_config(&loaded.path, &loaded.config, selected_jobs, options)
+}
+
+pub fn generate_loaded_config(
+    config_path: &Path,
+    config: &numi_config::Config,
+    selected_jobs: Option<&[String]>,
+    options: GenerateOptions,
+) -> Result<GenerateReport, GenerateError> {
+    let config_dir = config_dir(config_path);
+    let jobs = numi_config::resolve_selected_jobs(config, selected_jobs)
         .map_err(GenerateError::Diagnostics)?;
 
     let mut reports = Vec::with_capacity(jobs.len());
     let mut warnings = Vec::new();
 
     for job in jobs {
-        let job_report = generate_job(
-            &loaded.path,
-            config_dir,
-            &loaded.config.defaults,
-            job,
-            &options,
-        )?;
+        let job_report = generate_job(config_path, config_dir, &config.defaults, job, &options)?;
         warnings.extend(job_report.warnings);
         reports.push(JobReport {
             job_name: job_report.job_name,
@@ -253,18 +252,22 @@ pub fn check(
     selected_jobs: Option<&[String]>,
 ) -> Result<CheckReport, GenerateError> {
     let loaded = numi_config::load_from_path(config_path).map_err(GenerateError::LoadConfig)?;
-    let config_dir = loaded
-        .path
-        .parent()
-        .filter(|path| !path.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    let jobs = numi_config::resolve_selected_jobs(&loaded.config, selected_jobs)
+    check_loaded_config(&loaded.path, &loaded.config, selected_jobs)
+}
+
+pub fn check_loaded_config(
+    config_path: &Path,
+    config: &numi_config::Config,
+    selected_jobs: Option<&[String]>,
+) -> Result<CheckReport, GenerateError> {
+    let config_dir = config_dir(config_path);
+    let jobs = numi_config::resolve_selected_jobs(config, selected_jobs)
         .map_err(GenerateError::Diagnostics)?;
     let mut warnings = Vec::new();
     let mut stale_paths = Vec::new();
 
     for job in jobs {
-        let job_report = check_job(&loaded.path, config_dir, &loaded.config.defaults, job)?;
+        let job_report = check_job(config_path, config_dir, &config.defaults, job)?;
         warnings.extend(job_report.warnings);
         if let Some(output_path) = job_report.stale_path {
             stale_paths.push(output_path);
@@ -275,6 +278,13 @@ pub fn check(
         stale_paths,
         warnings,
     })
+}
+
+fn config_dir(config_path: &Path) -> &Path {
+    config_path
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
 }
 
 fn generate_job(

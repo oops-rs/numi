@@ -13,7 +13,7 @@ use cli::{
 };
 use numi_config::{
     CONFIG_FILE_NAME, Config, LoadedManifest, Manifest, ManifestKindSniff, WorkspaceConfig,
-    WorkspaceMember,
+    WorkspaceMember, resolve_workspace_member_config, workspace_member_config_path,
 };
 
 const STARTER_CONFIG_FALLBACK: &str = include_str!("../../../docs/examples/starter-numi.toml");
@@ -175,10 +175,17 @@ fn run_generate_workspace(
     let workspace_dir = manifest_dir(manifest_path)?;
 
     for member in workspace.members() {
-        let config_path = workspace_dir.join(&member.config);
+        let member_root = workspace_member_root(&member);
+        let config_path = workspace_member_config_path(workspace_dir, &member_root);
+        let loaded_member = numi_config::load_unvalidated_from_path(&config_path)
+            .map_err(|error| CliError::new(error.to_string()))?;
+        let merged_config =
+            resolve_workspace_member_config(&workspace, &member_root, &loaded_member.config)
+                .map_err(render_config_diagnostics)?;
         let selected_jobs = workspace_jobs(args, &member);
-        let report = numi_core::generate_with_options(
+        let report = numi_core::generate_loaded_config(
             &config_path,
+            &merged_config,
             selected_jobs.as_deref(),
             numi_core::GenerateOptions {
                 incremental: args.incremental_override.resolve(),
@@ -200,10 +207,17 @@ fn run_check_workspace(
     let mut stale_paths = Vec::new();
 
     for member in workspace.members() {
-        let config_path = workspace_dir.join(&member.config);
-        let selected_jobs = workspace_jobs(args, &member);
-        let report = numi_core::check(&config_path, selected_jobs.as_deref())
+        let member_root = workspace_member_root(&member);
+        let config_path = workspace_member_config_path(workspace_dir, &member_root);
+        let loaded_member = numi_config::load_unvalidated_from_path(&config_path)
             .map_err(|error| CliError::new(error.to_string()))?;
+        let merged_config =
+            resolve_workspace_member_config(&workspace, &member_root, &loaded_member.config)
+                .map_err(render_config_diagnostics)?;
+        let selected_jobs = workspace_jobs(args, &member);
+        let report =
+            numi_core::check_loaded_config(&config_path, &merged_config, selected_jobs.as_deref())
+                .map_err(|error| CliError::new(error.to_string()))?;
         print_warnings(&report.warnings);
         stale_paths.extend(
             report
@@ -398,6 +412,14 @@ fn selected_jobs(jobs: &[String]) -> Option<&[String]> {
     (!jobs.is_empty()).then_some(jobs)
 }
 
+fn workspace_member_root(member: &WorkspaceMember) -> String {
+    Path::new(&member.config)
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .map(display_path)
+        .unwrap_or_else(|| String::from("."))
+}
+
 fn workspace_member_jobs(member: &WorkspaceMember) -> Option<&[String]> {
     (!member.jobs.is_empty()).then_some(member.jobs.as_slice())
 }
@@ -436,6 +458,19 @@ fn print_warnings<T: std::fmt::Display>(warnings: &[T]) {
     for warning in warnings {
         eprintln!("{warning}");
     }
+}
+
+fn render_config_diagnostics<I, T>(diagnostics: I) -> CliError
+where
+    I: IntoIterator<Item = T>,
+    T: std::fmt::Display,
+{
+    let message = diagnostics
+        .into_iter()
+        .map(|diagnostic| diagnostic.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    CliError::new(message)
 }
 
 fn display_path(path: impl AsRef<Path>) -> String {

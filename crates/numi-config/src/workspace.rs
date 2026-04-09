@@ -7,7 +7,9 @@ use std::{
 use numi_diagnostics::Diagnostic;
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::{ConfigError, model::TemplateConfig, validate::validate_template};
+use crate::{
+    ConfigError, model::TemplateConfig, validate::validate_template, workspace_member_config_path,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct WorkspaceConfig {
@@ -484,14 +486,10 @@ impl WorkspaceDefaults {
 }
 
 fn member_config_path(member_root: &str) -> String {
-    if member_root == "." {
-        String::from("numi.toml")
-    } else {
-        Path::new(member_root)
-            .join("numi.toml")
-            .to_string_lossy()
-            .into_owned()
-    }
+    workspace_member_config_path(Path::new(""), member_root)
+        .to_string_lossy()
+        .trim_start_matches(std::path::MAIN_SEPARATOR)
+        .to_owned()
 }
 
 fn member_root_from_config_path(config_path: &str) -> String {

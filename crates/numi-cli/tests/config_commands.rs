@@ -1152,6 +1152,87 @@ jobs = ["assets"]
 }
 
 #[test]
+fn generate_workspace_inherits_templates_before_applying_member_job_overrides() {
+    let temp_root = make_temp_dir("generate-workspace-inherits-templates");
+    let workspace_root = temp_root.join("workspace");
+    let member_root = workspace_root.join("apps/mixed");
+
+    fs::create_dir_all(member_root.join("Resources")).expect("member resources dir should exist");
+    copy_dir_all(
+        &repo_root().join("fixtures/xcassets-basic/Resources/Assets.xcassets"),
+        &member_root.join("Resources/Assets.xcassets"),
+    );
+    copy_dir_all(
+        &repo_root().join("fixtures/l10n-basic/Resources/Localization"),
+        &member_root.join("Resources/Localization"),
+    );
+    write_manifest(
+        &member_root,
+        r#"
+version = 1
+
+[jobs.assets]
+output = "Generated/Assets.swift"
+
+[[jobs.assets.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.assets.template.builtin]
+swift = "swiftui-assets"
+
+[jobs.l10n]
+output = "Generated/L10n.swift"
+
+[[jobs.l10n.inputs]]
+type = "strings"
+path = "Resources/Localization"
+"#,
+    );
+    write_manifest(
+        &workspace_root,
+        r#"
+version = 1
+
+[workspace]
+members = ["apps/mixed"]
+
+[workspace.defaults.jobs.l10n.template.builtin]
+swift = "l10n"
+
+[workspace.defaults.jobs.assets.template.builtin]
+swift = "files"
+
+[workspace.member_overrides."apps/mixed"]
+jobs = ["l10n"]
+"#,
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_numi"))
+        .args(["generate", "--workspace"])
+        .current_dir(&member_root)
+        .output()
+        .expect("numi generate --workspace should run");
+
+    assert!(
+        output.status.success(),
+        "command failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        member_root.join("Generated/L10n.swift").exists(),
+        "workspace default template should enable l10n generation"
+    );
+    assert!(
+        !member_root.join("Generated/Assets.swift").exists(),
+        "member override jobs should still narrow workspace execution"
+    );
+
+    fs::remove_dir_all(temp_root).expect("temp dir should be removed");
+}
+
+#[test]
 fn dump_context_rejects_workspace_manifests() {
     let temp_root = make_temp_dir("dump-context-workspace-manifest");
     let workspace_root = temp_root.join("workspace");

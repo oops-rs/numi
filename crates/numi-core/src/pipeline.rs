@@ -1299,7 +1299,8 @@ swift = "swiftui-assets"
             let config_path = temp_dir.join("numi.toml");
             let files_root = temp_dir.join("Resources/Fixtures");
 
-            fs::create_dir_all(files_root.join("Onboarding")).expect("files directory should exist");
+            fs::create_dir_all(files_root.join("Onboarding"))
+                .expect("files directory should exist");
             fs::write(files_root.join("faq.pdf"), "faq").expect("faq file should be written");
             fs::write(files_root.join("Onboarding/welcome-video.mp4"), "video")
                 .expect("video file should be written");
@@ -1385,7 +1386,10 @@ swift = "swiftui-assets"
 
             assert_eq!(first.json, second.json);
             assert_eq!(json["modules"][0]["kind"], "xcstrings");
-            assert_eq!(json["modules"][0]["entries"][0]["properties"]["key"], "cached.banner");
+            assert_eq!(
+                json["modules"][0]["entries"][0]["properties"]["key"],
+                "cached.banner"
+            );
 
             fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
         });
@@ -1544,7 +1548,10 @@ swift = "swiftui-assets"
             let json: Value = serde_json::from_str(&report.json).expect("json should parse");
 
             assert_eq!(json["modules"][0]["kind"], "xcstrings");
-            assert_eq!(json["modules"][0]["entries"][0]["properties"]["key"], "profile.title");
+            assert_eq!(
+                json["modules"][0]["entries"][0]["properties"]["key"],
+                "profile.title"
+            );
 
             fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
         });

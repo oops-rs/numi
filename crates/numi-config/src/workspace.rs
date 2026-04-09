@@ -95,7 +95,11 @@ impl std::fmt::Display for WorkspaceDiscoveryError {
                 start_dir.display()
             ),
             Self::Ambiguous { root, matches } => {
-                writeln!(f, "Multiple workspace manifests found under {}:", root.display())?;
+                writeln!(
+                    f,
+                    "Multiple workspace manifests found under {}:",
+                    root.display()
+                )?;
                 for path in matches {
                     writeln!(f, "  - {}", path.display())?;
                 }

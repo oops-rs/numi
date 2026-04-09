@@ -36,42 +36,98 @@ pub enum CacheKind {
 
 #[derive(Debug)]
 pub enum CacheError {
-    CanonicalizePath { path: PathBuf, source: io::Error },
-    ReadDirectory { path: PathBuf, source: io::Error },
-    ReadFile { path: PathBuf, source: io::Error },
-    CreateDirectory { path: PathBuf, source: io::Error },
-    CreateTemp { path: PathBuf, source: io::Error },
-    WriteTemp { path: PathBuf, source: io::Error },
-    Commit { path: PathBuf, source: io::Error },
-    Serialize { path: PathBuf, source: serde_json::Error },
+    CanonicalizePath {
+        path: PathBuf,
+        source: io::Error,
+    },
+    ReadDirectory {
+        path: PathBuf,
+        source: io::Error,
+    },
+    ReadFile {
+        path: PathBuf,
+        source: io::Error,
+    },
+    CreateDirectory {
+        path: PathBuf,
+        source: io::Error,
+    },
+    CreateTemp {
+        path: PathBuf,
+        source: io::Error,
+    },
+    WriteTemp {
+        path: PathBuf,
+        source: io::Error,
+    },
+    Commit {
+        path: PathBuf,
+        source: io::Error,
+    },
+    Serialize {
+        path: PathBuf,
+        source: serde_json::Error,
+    },
 }
 
 impl std::fmt::Display for CacheError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::CanonicalizePath { path, source } => {
-                write!(f, "failed to canonicalize cache input {}: {source}", path.display())
+                write!(
+                    f,
+                    "failed to canonicalize cache input {}: {source}",
+                    path.display()
+                )
             }
             Self::ReadDirectory { path, source } => {
-                write!(f, "failed to read cache input directory {}: {source}", path.display())
+                write!(
+                    f,
+                    "failed to read cache input directory {}: {source}",
+                    path.display()
+                )
             }
             Self::ReadFile { path, source } => {
-                write!(f, "failed to read cache input file {}: {source}", path.display())
+                write!(
+                    f,
+                    "failed to read cache input file {}: {source}",
+                    path.display()
+                )
             }
             Self::CreateDirectory { path, source } => {
-                write!(f, "failed to create cache directory {}: {source}", path.display())
+                write!(
+                    f,
+                    "failed to create cache directory {}: {source}",
+                    path.display()
+                )
             }
             Self::CreateTemp { path, source } => {
-                write!(f, "failed to create cache temp file {}: {source}", path.display())
+                write!(
+                    f,
+                    "failed to create cache temp file {}: {source}",
+                    path.display()
+                )
             }
             Self::WriteTemp { path, source } => {
-                write!(f, "failed to write cache temp file {}: {source}", path.display())
+                write!(
+                    f,
+                    "failed to write cache temp file {}: {source}",
+                    path.display()
+                )
             }
             Self::Commit { path, source } => {
-                write!(f, "failed to commit cache file {}: {source}", path.display())
+                write!(
+                    f,
+                    "failed to commit cache file {}: {source}",
+                    path.display()
+                )
             }
             Self::Serialize { path, source } => {
-                write!(f, "failed to serialize cache record {}: {source}", path.display())
+                write!(
+                    f,
+                    "failed to serialize cache record {}: {source}",
+                    path.display()
+                )
             }
         }
     }
@@ -264,9 +320,7 @@ fn is_relevant_file(kind: CacheKind, path: &Path) -> bool {
     match kind {
         CacheKind::Xcassets => path.is_file(),
         CacheKind::Strings => path.extension().and_then(|ext| ext.to_str()) == Some("strings"),
-        CacheKind::Xcstrings => {
-            path.extension().and_then(|ext| ext.to_str()) == Some("xcstrings")
-        }
+        CacheKind::Xcstrings => path.extension().and_then(|ext| ext.to_str()) == Some("xcstrings"),
         CacheKind::Files => {
             // Keep cache relevance aligned with parse_files: only `.DS_Store` is excluded today.
             path.is_file() && path.file_name().is_none_or(|name| name != ".DS_Store")
@@ -340,7 +394,9 @@ mod tests {
         path
     }
 
-    fn sample_xcassets_report(source_root: &std::path::Path) -> crate::parse_xcassets::XcassetsReport {
+    fn sample_xcassets_report(
+        source_root: &std::path::Path,
+    ) -> crate::parse_xcassets::XcassetsReport {
         crate::parse_xcassets::XcassetsReport {
             entries: vec![RawEntry {
                 path: "Brand/Primary".to_string(),
@@ -394,11 +450,10 @@ mod tests {
         fs::write(l10n_dir.join("preview.png"), "not-part-of-strings-cache")
             .expect("noise file should exist");
 
-        let before = fingerprint_input(CacheKind::Strings, &l10n_dir)
-            .expect("fingerprint should succeed");
+        let before =
+            fingerprint_input(CacheKind::Strings, &l10n_dir).expect("fingerprint should succeed");
 
-        fs::write(l10n_dir.join("preview.png"), "mutated-noise")
-            .expect("noise file should mutate");
+        fs::write(l10n_dir.join("preview.png"), "mutated-noise").expect("noise file should mutate");
 
         let after = fingerprint_input(CacheKind::Strings, &l10n_dir)
             .expect("fingerprint should still succeed");
@@ -413,8 +468,11 @@ mod tests {
         let temp_dir = make_temp_dir("parse-cache-round-trip");
         let catalog_path = temp_dir.join("Assets.xcassets");
         fs::create_dir_all(&catalog_path).expect("catalog should exist");
-        fs::write(catalog_path.join("Contents.json"), "{\"info\":{\"author\":\"xcode\",\"version\":1}}")
-            .expect("catalog contents should exist");
+        fs::write(
+            catalog_path.join("Contents.json"),
+            "{\"info\":{\"author\":\"xcode\",\"version\":1}}",
+        )
+        .expect("catalog contents should exist");
 
         let fingerprint = fingerprint_input(CacheKind::Xcassets, &catalog_path)
             .expect("fingerprint should succeed");

@@ -10,15 +10,15 @@ use std::{
 
 use numi_diagnostics::Diagnostic;
 
-pub use discovery::{discover_config, DiscoveryError, CONFIG_FILE_NAME};
+pub use discovery::{CONFIG_FILE_NAME, DiscoveryError, discover_config};
 pub use model::{
-    BuiltinTemplateConfig, BundleConfig, Config, DefaultsConfig, InputConfig, JobConfig,
-    TemplateConfig, ACCESS_LEVEL_VALUES, BUNDLE_MODE_VALUES, DEFAULT_ACCESS_LEVEL,
-    DEFAULT_BUNDLE_MODE, INPUT_KIND_VALUES,
+    ACCESS_LEVEL_VALUES, BUNDLE_MODE_VALUES, BuiltinTemplateConfig, BundleConfig, Config,
+    DEFAULT_ACCESS_LEVEL, DEFAULT_BUNDLE_MODE, DefaultsConfig, INPUT_KIND_VALUES, InputConfig,
+    JobConfig, TemplateConfig,
 };
 pub use workspace::{
-    discover_workspace, load_workspace_from_path, LoadedWorkspace, WorkspaceConfig,
-    WorkspaceDiscoveryError, WorkspaceError, WorkspaceMember, WORKSPACE_FILE_NAME,
+    LoadedWorkspace, WORKSPACE_FILE_NAME, WorkspaceConfig, WorkspaceDiscoveryError, WorkspaceError,
+    WorkspaceMember, discover_workspace, load_workspace_from_path,
 };
 
 #[derive(Debug)]
@@ -432,11 +432,13 @@ path = "Templates/assets.jinja"
             config.jobs[0].template.path.as_deref(),
             Some("Templates/assets.jinja")
         );
-        assert!(config.jobs[0]
-            .template
-            .builtin
-            .as_ref()
-            .is_some_and(|builtin| builtin.swift.is_none()));
+        assert!(
+            config.jobs[0]
+                .template
+                .builtin
+                .as_ref()
+                .is_some_and(|builtin| builtin.swift.is_none())
+        );
     }
 
     #[test]
@@ -667,9 +669,11 @@ config = "App/numi.toml"
         let error = load_workspace_from_path(&manifest_path)
             .expect_err("duplicate workspace members should fail validation");
 
-        assert!(error
-            .to_string()
-            .contains("members[].config must be unique"));
+        assert!(
+            error
+                .to_string()
+                .contains("members[].config must be unique")
+        );
     }
 
     #[test]
@@ -681,9 +685,11 @@ config = "App/numi.toml"
         let error = load_workspace_from_path(&manifest_path)
             .expect_err("workspace manifest requires at least one member");
 
-        assert!(error
-            .to_string()
-            .contains("workspace must declare at least one member"));
+        assert!(
+            error
+                .to_string()
+                .contains("workspace must declare at least one member")
+        );
     }
 
     #[test]

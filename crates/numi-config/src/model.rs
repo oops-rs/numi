@@ -40,6 +40,7 @@ pub struct JobConfig {
     #[serde(default, skip_serializing_if = "BundleConfig::is_empty")]
     pub bundle: BundleConfig,
     pub inputs: Vec<InputConfig>,
+    #[serde(default, skip_serializing_if = "TemplateConfig::is_empty")]
     pub template: TemplateConfig,
 }
 
@@ -66,6 +67,15 @@ pub struct BuiltinTemplateConfig {
 }
 
 impl TemplateConfig {
+    pub fn is_empty(&self) -> bool {
+        let builtin_is_empty = match &self.builtin {
+            None => true,
+            Some(builtin) => builtin.is_empty(),
+        };
+
+        builtin_is_empty && self.path.is_none()
+    }
+
     fn builtin_is_empty(builtin: &Option<BuiltinTemplateConfig>) -> bool {
         match builtin {
             None => true,

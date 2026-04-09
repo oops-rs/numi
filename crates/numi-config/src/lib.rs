@@ -289,6 +289,7 @@ path = "Resources/Assets.xcassets"
 
         let serialized = toml::to_string(&config).expect("config should serialize");
 
+        assert!(!serialized.contains("[jobs.template]"));
         assert!(!serialized.contains("[jobs.template.builtin]"));
         assert!(!serialized.contains("swift ="));
     }

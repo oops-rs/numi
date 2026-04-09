@@ -678,6 +678,32 @@ mod tests {
     use serde_json::json;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    struct ScopedTempDir {
+        path: PathBuf,
+    }
+
+    impl ScopedTempDir {
+        fn new(test_name: &str) -> Self {
+            let path = make_temp_dir(test_name);
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for ScopedTempDir {
+        fn drop(&mut self) {
+            let result = fs::remove_dir_all(&self.path);
+            if std::thread::panicking() {
+                let _ = result;
+            } else {
+                result.expect("temp dir should be removed");
+            }
+        }
+    }
+
     fn make_temp_dir(test_name: &str) -> PathBuf {
         let unique = format!(
             "numi-{test_name}-{}-{}",
@@ -742,6 +768,25 @@ mod tests {
         );
 
         fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn parses_escaped_apostrophe_in_strings() {
+        let temp_dir = ScopedTempDir::new("parse-escaped-apostrophe");
+        let strings_path = temp_dir.path().join("Localizable.strings");
+        fs::write(
+            &strings_path,
+            "\"invite.key\" = \"Can\\'t accept the invitation\";\n",
+        )
+            .expect("strings file should be written");
+
+        let tables = parse_strings(&strings_path).expect("strings should parse");
+
+        assert_eq!(tables.len(), 1);
+        assert_eq!(
+            tables[0].entries[0].properties["translation"],
+            Value::String("Can't accept the invitation".to_string())
+        );
     }
 
     #[test]
@@ -977,5 +1022,94 @@ mod tests {
         assert!(tables[0].warnings.is_empty());
 
         fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn xcstrings_with_lv_lld_missing_string_unit_becomes_warning() {
+        let temp_dir = ScopedTempDir::new("parse-xcstrings-lv-format");
+        let xcstrings_path = temp_dir.path().join("Localizable.xcstrings");
+        fs::write(
+            &xcstrings_path,
+            r#"{
+  "version": "1.0",
+  "sourceLanguage": "en",
+  "strings": {
+    "Lv.%lld": {
+      "localizations": {
+        "en": {}
+      }
+    }
+  }
+}
+"#
+        ).expect("xcstrings file should be written");
+
+        let result = parse_xcstrings(&xcstrings_path);
+
+        assert!(result.is_ok(), "{}", match result {
+            Err(error) => format!("expected warnings, got parse error: {error}"),
+            Ok(_) => "".to_string(),
+        });
+
+        let tables = result.expect("parse should now warn instead of error");
+        assert_eq!(tables.len(), 1);
+        assert!(tables[0].entries.is_empty());
+        assert_eq!(tables[0].table_name, "Localizable");
+        assert_eq!(tables[0].module_kind, ModuleKind::Xcstrings);
+        assert_eq!(tables[0].warnings.len(), 1);
+        let warning = tables[0]
+            .warnings
+            .iter()
+            .find(|warning| {
+                warning.message.contains("`Lv.%lld`") && warning.message.contains("string unit")
+            })
+            .expect("expected warning for Lv.%lld");
+        assert_eq!(warning.path, Some(xcstrings_path.clone()));
+        assert_eq!(warning.severity, Severity::Warning);
+    }
+
+    #[test]
+    fn xcstrings_with_empty_key_missing_string_unit_becomes_warning() {
+        let temp_dir = ScopedTempDir::new("parse-xcstrings-empty-key");
+        let xcstrings_path = temp_dir.path().join("Localizable.xcstrings");
+        fs::write(
+            &xcstrings_path,
+            r#"{
+  "version": "1.0",
+  "sourceLanguage": "en",
+  "strings": {
+    "": {
+      "localizations": {
+        "en": {}
+      }
+    }
+  }
+}
+"#,
+        )
+        .expect("xcstrings file should be written");
+
+        let result = parse_xcstrings(&xcstrings_path);
+
+        assert!(result.is_ok(), "{}", match result {
+            Err(error) => format!("expected warnings, got parse error: {error}"),
+            Ok(_) => "".to_string(),
+        });
+
+        let tables = result.expect("parse should now warn instead of error");
+        assert_eq!(tables.len(), 1);
+        assert!(tables[0].entries.is_empty());
+        assert_eq!(tables[0].table_name, "Localizable");
+        assert_eq!(tables[0].module_kind, ModuleKind::Xcstrings);
+        assert_eq!(tables[0].warnings.len(), 1);
+        let warning = tables[0]
+            .warnings
+            .iter()
+            .find(|warning| {
+                warning.message.contains("string unit")
+            })
+            .expect("expected warning for empty key");
+        assert_eq!(warning.path, Some(xcstrings_path.clone()));
+        assert_eq!(warning.severity, Severity::Warning);
     }
 }

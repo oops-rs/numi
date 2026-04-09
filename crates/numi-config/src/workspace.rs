@@ -5,19 +5,37 @@ use std::{
 };
 
 use numi_diagnostics::Diagnostic;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{ConfigError, DiscoveryError, model::TemplateConfig, validate::validate_template};
 
 pub const WORKSPACE_FILE_NAME: &str = "numi-workspace.toml";
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, from = "RawWorkspaceManifest")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct WorkspaceConfig {
     pub version: u32,
     pub workspace: WorkspaceSettings,
     #[serde(skip)]
     pub members: Vec<WorkspaceMember>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum RawWorkspaceConfig {
+    Workspace(RawWorkspaceManifest),
+    Legacy(RawLegacyWorkspaceManifest),
+}
+
+impl<'de> Deserialize<'de> for WorkspaceConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match RawWorkspaceConfig::deserialize(deserializer)? {
+            RawWorkspaceConfig::Workspace(raw) => Ok(raw.into_config()),
+            RawWorkspaceConfig::Legacy(raw) => Ok(raw.into_config()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -56,8 +74,8 @@ pub struct WorkspaceJobDefaults {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceMemberOverride {
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub jobs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jobs: Option<Vec<String>>,
 }
 
 #[derive(Debug)]
@@ -192,31 +210,17 @@ pub fn discover_workspace(
 }
 
 pub(crate) fn parse_workspace_str(input: &str) -> Result<WorkspaceConfig, WorkspaceError> {
-    let value: toml::Value = toml::from_str(input).map_err(WorkspaceError::ParseToml)?;
+    let config: WorkspaceConfig = toml::from_str(input).map_err(WorkspaceError::ParseToml)?;
+    let diagnostics = validate_workspace(&config);
 
-    if value.get("workspace").is_some() {
-        let raw: RawWorkspaceManifest = value.try_into().map_err(WorkspaceError::ParseToml)?;
-        let diagnostics = validate_workspace(&raw);
-
-        if diagnostics.is_empty() {
-            Ok(raw.into_config())
-        } else {
-            Err(WorkspaceError::Invalid(diagnostics))
-        }
+    if diagnostics.is_empty() {
+        Ok(config)
     } else {
-        let raw: RawLegacyWorkspaceManifest =
-            value.try_into().map_err(WorkspaceError::ParseToml)?;
-        let diagnostics = validate_legacy_workspace(&raw);
-
-        if diagnostics.is_empty() {
-            Ok(raw.into_config())
-        } else {
-            Err(WorkspaceError::Invalid(diagnostics))
-        }
+        Err(WorkspaceError::Invalid(diagnostics))
     }
 }
 
-fn validate_workspace(config: &RawWorkspaceManifest) -> Vec<Diagnostic> {
+fn validate_workspace(config: &WorkspaceConfig) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
     if config.version != 1 {
@@ -263,6 +267,8 @@ fn validate_workspace(config: &RawWorkspaceManifest) -> Vec<Diagnostic> {
         }
     }
 
+    let mut override_members = BTreeSet::new();
+
     for (member_path, override_config) in &config.workspace.member_overrides {
         let Some(normalized_member_path) = normalize_member_root(member_path) else {
             diagnostics.push(
@@ -272,6 +278,15 @@ fn validate_workspace(config: &RawWorkspaceManifest) -> Vec<Diagnostic> {
             );
             continue;
         };
+
+        if !override_members.insert(normalized_member_path.clone()) {
+            diagnostics.push(
+                Diagnostic::error("workspace.member_overrides keys must be unique")
+                    .with_hint("remove duplicate entries that normalize to the same member root")
+                    .with_path(PathBuf::from(normalized_member_path)),
+            );
+            continue;
+        }
 
         if !members.contains(normalized_member_path.as_str()) {
             diagnostics.push(
@@ -320,67 +335,10 @@ fn validate_workspace(config: &RawWorkspaceManifest) -> Vec<Diagnostic> {
     diagnostics
 }
 
-fn validate_legacy_workspace(config: &RawLegacyWorkspaceManifest) -> Vec<Diagnostic> {
-    let mut diagnostics = Vec::new();
-
-    if config.version != 1 {
-        diagnostics.push(
-            Diagnostic::error("workspace version must be 1")
-                .with_hint("set `version = 1` in numi-workspace.toml"),
-        );
-    }
-
-    if config.members.is_empty() {
-        diagnostics.push(
-            Diagnostic::error("workspace must declare at least one member")
-                .with_hint("add at least one `[[members]]` entry"),
-        );
-    }
-
-    let mut member_configs = BTreeSet::new();
-
-    for member in &config.members {
-        if !member_configs.insert(member.config.as_str()) {
-            diagnostics.push(
-                Diagnostic::error("members[].config must be unique")
-                    .with_hint("each workspace member must point at a different config path")
-                    .with_path(PathBuf::from(&member.config)),
-            );
-        }
-
-        let Some(job_list) = member.jobs.as_ref() else {
-            continue;
-        };
-
-        if job_list.is_empty() {
-            diagnostics.push(
-                Diagnostic::error("members[].jobs must not be empty when present")
-                    .with_hint("omit `jobs` to select all jobs, or provide at least one job name")
-                    .with_path(PathBuf::from(&member.config)),
-            );
-            continue;
-        }
-
-        let mut job_names = BTreeSet::new();
-        for job in job_list {
-            if !job_names.insert(job.as_str()) {
-                diagnostics.push(
-                    Diagnostic::error("members[].jobs must not contain duplicates")
-                        .with_hint("remove duplicate job names from the workspace member")
-                        .with_job(job.clone())
-                        .with_path(PathBuf::from(&member.config)),
-                );
-            }
-        }
-    }
-
-    diagnostics
-}
-
 fn is_config_path(member: &str) -> bool {
     Path::new(member)
-        .extension()
-        .is_some_and(|extension| extension == "toml")
+        .file_name()
+        .is_some_and(|file_name| file_name == "numi.toml")
 }
 
 fn normalize_member_root(member: &str) -> Option<String> {
@@ -459,22 +417,7 @@ struct RawLegacyWorkspaceMember {
 impl RawWorkspaceManifest {
     fn into_config(self) -> WorkspaceConfig {
         let workspace = self.workspace.into_workspace();
-        let members = workspace
-            .members
-            .iter()
-            .map(|member_root| {
-                let jobs = workspace
-                    .member_overrides
-                    .get(member_root)
-                    .map(|override_config| override_config.jobs.clone())
-                    .unwrap_or_default();
-
-                WorkspaceMember {
-                    config: member_config_path(member_root),
-                    jobs,
-                }
-            })
-            .collect();
+        let members = derive_workspace_members(&workspace);
 
         WorkspaceConfig {
             version: self.version,
@@ -497,29 +440,49 @@ impl RawLegacyWorkspaceManifest {
                 (
                     member_root_from_config_path(&member.config),
                     WorkspaceMemberOverride {
-                        jobs: member.jobs.clone().unwrap_or_default(),
+                        jobs: member.jobs.clone(),
                     },
                 )
             })
             .collect();
-        let members = members
-            .into_iter()
-            .map(|member| WorkspaceMember {
-                config: member.config,
-                jobs: member.jobs.unwrap_or_default(),
-            })
-            .collect();
+        let workspace = WorkspaceSettings {
+            members: workspace_members,
+            defaults: WorkspaceDefaults::default(),
+            member_overrides,
+        };
 
         WorkspaceConfig {
             version,
-            workspace: WorkspaceSettings {
-                members: workspace_members,
-                defaults: WorkspaceDefaults::default(),
-                member_overrides,
-            },
-            members,
+            members: derive_workspace_members(&workspace),
+            workspace,
         }
     }
+}
+
+fn derive_workspace_members(workspace: &WorkspaceSettings) -> Vec<WorkspaceMember> {
+    workspace
+        .members
+        .iter()
+        .filter_map(|member_root| {
+            normalize_member_root(member_root).map(|normalized_member_root| WorkspaceMember {
+                config: member_config_path(&normalized_member_root),
+                jobs: workspace_member_override_jobs(workspace, &normalized_member_root),
+            })
+        })
+        .collect()
+}
+
+fn workspace_member_override_jobs(workspace: &WorkspaceSettings, member_root: &str) -> Vec<String> {
+    workspace
+        .member_overrides
+        .iter()
+        .find_map(|(override_member, override_config)| {
+            normalize_member_root(override_member).and_then(|normalized| {
+                (normalized == member_root).then(|| override_config.jobs.clone())
+            })
+        })
+        .flatten()
+        .unwrap_or_default()
 }
 
 impl From<RawWorkspaceManifest> for WorkspaceConfig {
@@ -530,21 +493,13 @@ impl From<RawWorkspaceManifest> for WorkspaceConfig {
 
 impl RawWorkspaceSettings {
     fn into_workspace(self) -> WorkspaceSettings {
-        let members = self
-            .members
-            .into_iter()
-            .filter_map(|member| normalize_member_root(&member))
-            .collect();
         WorkspaceSettings {
-            members,
+            members: self.members,
             defaults: self.defaults.into_workspace(),
             member_overrides: self
                 .member_overrides
                 .into_iter()
-                .filter_map(|(member, override_config)| {
-                    normalize_member_root(&member)
-                        .map(|normalized| (normalized, override_config.into_workspace()))
-                })
+                .map(|(member, override_config)| (member, override_config.into_workspace()))
                 .collect(),
         }
     }
@@ -572,9 +527,7 @@ impl RawWorkspaceJobDefaults {
 
 impl RawWorkspaceMemberOverride {
     fn into_workspace(self) -> WorkspaceMemberOverride {
-        WorkspaceMemberOverride {
-            jobs: self.jobs.unwrap_or_default(),
-        }
+        WorkspaceMemberOverride { jobs: self.jobs }
     }
 }
 

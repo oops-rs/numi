@@ -342,7 +342,7 @@ jobs = ["assets", "l10n"]
                 );
                 assert_eq!(
                     workspace.workspace.member_overrides["AppUI"].jobs,
-                    vec!["assets", "l10n"]
+                    Some(vec!["assets".to_string(), "l10n".to_string()])
                 );
             }
             other => panic!("expected workspace manifest, got {other:?}"),
@@ -396,6 +396,25 @@ members = ["AppUI/numi.toml"]
                 .to_string()
                 .contains("workspace.members entries must be relative member roots")
         );
+    }
+
+    #[test]
+    fn accepts_workspace_members_whose_names_end_with_toml() {
+        let manifest = parse_manifest_str(
+            r#"
+version = 1
+
+[workspace]
+members = ["App.toml"]
+"#,
+        )
+        .expect("non-config .toml member root should parse");
+
+        let Manifest::Workspace(workspace) = manifest else {
+            panic!("expected workspace manifest");
+        };
+
+        assert_eq!(workspace.workspace.members, vec!["App.toml"]);
     }
 
     #[test]
@@ -466,6 +485,31 @@ jobs = ["assets"]
             error
                 .to_string()
                 .contains("workspace.member_overrides keys must match declared members")
+        );
+    }
+
+    #[test]
+    fn rejects_normalized_duplicate_workspace_member_overrides() {
+        let error = parse_manifest_str(
+            r#"
+version = 1
+
+[workspace]
+members = ["App"]
+
+[workspace.member_overrides.App]
+jobs = ["assets"]
+
+[workspace.member_overrides."App/"]
+jobs = ["l10n"]
+"#,
+        )
+        .expect_err("normalized duplicate override keys should fail validation");
+
+        assert!(
+            error
+                .to_string()
+                .contains("workspace.member_overrides keys must be unique")
         );
     }
 
@@ -825,14 +869,11 @@ path = "Templates/assets.jinja"
                 members: vec!["App".to_string(), "Core".to_string()],
                 defaults: WorkspaceDefaults::default(),
                 member_overrides: std::collections::BTreeMap::from([
-                    (
-                        "App".to_string(),
-                        WorkspaceMemberOverride { jobs: Vec::new() },
-                    ),
+                    ("App".to_string(), WorkspaceMemberOverride { jobs: None }),
                     (
                         "Core".to_string(),
                         WorkspaceMemberOverride {
-                            jobs: vec!["assets".to_string()],
+                            jobs: Some(vec!["assets".to_string()]),
                         },
                     ),
                 ]),
@@ -1030,7 +1071,34 @@ jobs = ["assets", "l10n"]
         assert_eq!(loaded.config.workspace.members, vec!["App", "Core"]);
         assert_eq!(
             loaded.config.workspace.member_overrides["App"].jobs,
-            vec!["assets", "l10n"]
+            Some(vec!["assets".to_string(), "l10n".to_string()])
+        );
+    }
+
+    #[test]
+    fn deserializes_legacy_workspace_manifest_into_workspace_config() {
+        let workspace = toml::from_str::<WorkspaceConfig>(
+            r#"
+version = 1
+
+[[members]]
+config = "App/numi.toml"
+jobs = ["assets", "l10n"]
+
+[[members]]
+config = "Core/numi.toml"
+"#,
+        )
+        .expect("legacy workspace manifest should deserialize into WorkspaceConfig");
+
+        assert_eq!(workspace.workspace.members, vec!["App", "Core"]);
+        assert_eq!(
+            workspace
+                .members
+                .iter()
+                .map(|member| member.config.as_str())
+                .collect::<Vec<_>>(),
+            vec!["App/numi.toml", "Core/numi.toml"]
         );
     }
 

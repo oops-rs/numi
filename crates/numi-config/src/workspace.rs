@@ -236,14 +236,14 @@ fn validate_workspace(config: &RawWorkspaceManifest) -> Vec<Diagnostic> {
     let mut members = BTreeSet::new();
 
     for member in &config.workspace.members {
-        if member.trim().is_empty() {
+        let Some(normalized_member) = normalize_member_root(member) else {
             diagnostics.push(
                 Diagnostic::error("workspace.members entries must be relative member roots")
                     .with_hint("use values like `AppUI` or `Core`, not empty paths")
                     .with_path(PathBuf::from(member)),
             );
             continue;
-        }
+        };
 
         if is_config_path(member) {
             diagnostics.push(
@@ -254,30 +254,30 @@ fn validate_workspace(config: &RawWorkspaceManifest) -> Vec<Diagnostic> {
             continue;
         }
 
-        if !is_relative_root(member) {
-            diagnostics.push(
-                Diagnostic::error("workspace.members entries must be relative member roots")
-                    .with_hint("use relative paths like `AppUI` or `packages/Core`")
-                    .with_path(PathBuf::from(member)),
-            );
-            continue;
-        }
-
-        if !members.insert(member.as_str()) {
+        if !members.insert(normalized_member.clone()) {
             diagnostics.push(
                 Diagnostic::error("workspace.members entries must be unique")
                     .with_hint("remove duplicate entries from `workspace.members`")
-                    .with_path(PathBuf::from(member)),
+                    .with_path(PathBuf::from(normalized_member)),
             );
         }
     }
 
     for (member_path, override_config) in &config.workspace.member_overrides {
-        if !members.contains(member_path.as_str()) {
+        let Some(normalized_member_path) = normalize_member_root(member_path) else {
+            diagnostics.push(
+                Diagnostic::error("workspace.member_overrides keys must match declared members")
+                    .with_hint("use a relative member root that matches `workspace.members`")
+                    .with_path(PathBuf::from(member_path)),
+            );
+            continue;
+        };
+
+        if !members.contains(normalized_member_path.as_str()) {
             diagnostics.push(
                 Diagnostic::error("workspace.member_overrides keys must match declared members")
                     .with_hint("add the member to `workspace.members` or remove the override")
-                    .with_path(PathBuf::from(member_path)),
+                    .with_path(PathBuf::from(normalized_member_path)),
             );
         }
 
@@ -377,20 +377,31 @@ fn validate_legacy_workspace(config: &RawLegacyWorkspaceManifest) -> Vec<Diagnos
     diagnostics
 }
 
-fn is_relative_root(member: &str) -> bool {
-    let path = Path::new(member);
-    if path.is_absolute() {
-        return false;
-    }
-
-    path.components()
-        .all(|component| matches!(component, Component::Normal(_)))
-}
-
 fn is_config_path(member: &str) -> bool {
     Path::new(member)
         .extension()
         .is_some_and(|extension| extension == "toml")
+}
+
+fn normalize_member_root(member: &str) -> Option<String> {
+    let path = Path::new(member);
+    if path.is_absolute() {
+        return None;
+    }
+
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(part) => normalized.push(part),
+            _ => return None,
+        }
+    }
+
+    if normalized.as_os_str().is_empty() {
+        None
+    } else {
+        Some(normalized.to_string_lossy().into_owned())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -519,13 +530,21 @@ impl From<RawWorkspaceManifest> for WorkspaceConfig {
 
 impl RawWorkspaceSettings {
     fn into_workspace(self) -> WorkspaceSettings {
+        let members = self
+            .members
+            .into_iter()
+            .filter_map(|member| normalize_member_root(&member))
+            .collect();
         WorkspaceSettings {
-            members: self.members,
+            members,
             defaults: self.defaults.into_workspace(),
             member_overrides: self
                 .member_overrides
                 .into_iter()
-                .map(|(member, override_config)| (member, override_config.into_workspace()))
+                .filter_map(|(member, override_config)| {
+                    normalize_member_root(&member)
+                        .map(|normalized| (normalized, override_config.into_workspace()))
+                })
                 .collect(),
         }
     }
@@ -574,8 +593,7 @@ fn member_config_path(member_root: &str) -> String {
 
 fn member_root_from_config_path(config_path: &str) -> String {
     let path = Path::new(config_path);
-    match path.parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => parent.to_string_lossy().into_owned(),
-        _ => String::from("."),
-    }
+    path.parent()
+        .and_then(|parent| normalize_member_root(parent.to_string_lossy().as_ref()))
+        .unwrap_or_else(|| String::from("."))
 }

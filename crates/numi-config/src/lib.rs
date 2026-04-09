@@ -399,6 +399,25 @@ members = ["AppUI/numi.toml"]
     }
 
     #[test]
+    fn rejects_workspace_members_that_normalize_to_the_same_root() {
+        let error = parse_manifest_str(
+            r#"
+version = 1
+
+[workspace]
+members = ["App", "App/"]
+"#,
+        )
+        .expect_err("equivalent workspace member roots should be rejected");
+
+        assert!(
+            error
+                .to_string()
+                .contains("workspace.members entries must be unique")
+        );
+    }
+
+    #[test]
     fn parses_workspace_defaults_job_template_shape() {
         let manifest = parse_manifest_str(
             r#"

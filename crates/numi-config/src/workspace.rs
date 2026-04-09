@@ -15,8 +15,6 @@ pub const WORKSPACE_FILE_NAME: &str = "numi-workspace.toml";
 pub struct WorkspaceConfig {
     pub version: u32,
     pub workspace: WorkspaceSettings,
-    #[serde(skip)]
-    pub members: Vec<WorkspaceMember>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -35,6 +33,12 @@ impl<'de> Deserialize<'de> for WorkspaceConfig {
             RawWorkspaceConfig::Workspace(raw) => Ok(raw.into_config()),
             RawWorkspaceConfig::Legacy(raw) => Ok(raw.into_config()),
         }
+    }
+}
+
+impl WorkspaceConfig {
+    pub fn members(&self) -> Vec<WorkspaceMember> {
+        derive_workspace_members(&self.workspace)
     }
 }
 
@@ -348,15 +352,20 @@ fn normalize_member_root(member: &str) -> Option<String> {
     }
 
     let mut normalized = PathBuf::new();
+    let mut saw_relative_component = false;
     for component in path.components() {
         match component {
-            Component::Normal(part) => normalized.push(part),
+            Component::CurDir => saw_relative_component = true,
+            Component::Normal(part) => {
+                saw_relative_component = true;
+                normalized.push(part);
+            }
             _ => return None,
         }
     }
 
     if normalized.as_os_str().is_empty() {
-        None
+        saw_relative_component.then(|| String::from("."))
     } else {
         Some(normalized.to_string_lossy().into_owned())
     }
@@ -416,13 +425,9 @@ struct RawLegacyWorkspaceMember {
 
 impl RawWorkspaceManifest {
     fn into_config(self) -> WorkspaceConfig {
-        let workspace = self.workspace.into_workspace();
-        let members = derive_workspace_members(&workspace);
-
         WorkspaceConfig {
             version: self.version,
-            workspace,
-            members,
+            workspace: self.workspace.into_workspace(),
         }
     }
 }
@@ -451,11 +456,7 @@ impl RawLegacyWorkspaceManifest {
             member_overrides,
         };
 
-        WorkspaceConfig {
-            version,
-            members: derive_workspace_members(&workspace),
-            workspace,
-        }
+        WorkspaceConfig { version, workspace }
     }
 }
 
@@ -538,10 +539,14 @@ impl WorkspaceDefaults {
 }
 
 fn member_config_path(member_root: &str) -> String {
-    Path::new(member_root)
-        .join("numi.toml")
-        .to_string_lossy()
-        .into_owned()
+    if member_root == "." {
+        String::from("numi.toml")
+    } else {
+        Path::new(member_root)
+            .join("numi.toml")
+            .to_string_lossy()
+            .into_owned()
+    }
 }
 
 fn member_root_from_config_path(config_path: &str) -> String {

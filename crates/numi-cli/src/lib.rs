@@ -144,7 +144,7 @@ fn run_workspace_generate(args: &WorkspaceGenerateArgs) -> Result<(), CliError> 
         let config_path = workspace_dir.join(&member.config);
         let report = numi_core::generate_with_options(
             &config_path,
-            workspace_member_jobs(member),
+            workspace_member_jobs(&member),
             numi_core::GenerateOptions {
                 incremental: args.incremental_override.resolve(),
             },
@@ -163,7 +163,7 @@ fn run_workspace_check(args: &WorkspaceCheckArgs) -> Result<(), CliError> {
 
     for member in select_workspace_members(&loaded, &args.members)? {
         let config_path = workspace_dir.join(&member.config);
-        let report = numi_core::check(&config_path, workspace_member_jobs(member))
+        let report = numi_core::check(&config_path, workspace_member_jobs(&member))
             .map_err(|error| CliError::new(error.to_string()))?;
         print_warnings(&report.warnings);
         stale_paths.extend(
@@ -274,22 +274,20 @@ fn workspace_member_jobs(member: &WorkspaceMember) -> Option<&[String]> {
     (!member.jobs.is_empty()).then_some(member.jobs.as_slice())
 }
 
-fn select_workspace_members<'a>(
-    loaded: &'a LoadedWorkspace,
+fn select_workspace_members(
+    loaded: &LoadedWorkspace,
     selected_members: &[String],
-) -> Result<Vec<&'a WorkspaceMember>, CliError> {
+) -> Result<Vec<WorkspaceMember>, CliError> {
+    let members = loaded.config.members();
+
     if selected_members.is_empty() {
-        return Ok(loaded.config.members.iter().collect());
+        return Ok(members);
     }
 
     let mut missing = selected_members
         .iter()
         .filter(|selected| {
-            !loaded
-                .config
-                .members
-                .iter()
-                .any(|member| member.config == **selected)
+            !members.iter().any(|member| member.config == **selected)
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -297,9 +295,7 @@ fn select_workspace_members<'a>(
     if !missing.is_empty() {
         missing.sort();
         missing.dedup();
-        let valid_members = loaded
-            .config
-            .members
+        let valid_members = members
             .iter()
             .map(|member| format!("  - {}", member.config))
             .collect::<Vec<_>>()
@@ -311,10 +307,8 @@ fn select_workspace_members<'a>(
         )));
     }
 
-    Ok(loaded
-        .config
-        .members
-        .iter()
+    Ok(members
+        .into_iter()
         .filter(|member| {
             selected_members
                 .iter()

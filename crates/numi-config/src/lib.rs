@@ -107,8 +107,9 @@ pub fn parse_manifest_str(input: &str) -> Result<Manifest, ConfigError> {
     let value: toml::Value = toml::from_str(input).map_err(ConfigError::ParseToml)?;
     let has_jobs = value.get("jobs").is_some();
     let has_workspace = value.get("workspace").is_some();
+    let has_legacy_workspace_members = value.get("members").is_some();
 
-    match (has_jobs, has_workspace) {
+    match (has_jobs, has_workspace || has_legacy_workspace_members) {
         (true, false) => parse_str(input).map(Manifest::Config),
         (false, true) => workspace::parse_workspace_str(input)
             .map(Manifest::Workspace)
@@ -122,7 +123,7 @@ pub fn parse_manifest_str(input: &str) -> Result<Manifest, ConfigError> {
         (false, false) => Err(ConfigError::Invalid(vec![
             Diagnostic::error("manifest must define either `jobs` or `workspace`")
                 .with_hint(
-                    "add `[jobs.<name>]` for a single-config manifest or `[workspace]` for a workspace manifest",
+                    "add `[jobs.<name>]` for a single-config manifest, `[workspace]` for a workspace manifest, or legacy `[[members]]` while migrating",
                 ),
         ])),
     }
@@ -326,7 +327,7 @@ jobs = ["assets", "l10n"]
                 assert_eq!(workspace.workspace.members, vec!["AppUI", "Core"]);
                 assert_eq!(
                     workspace
-                        .members
+                        .members()
                         .iter()
                         .map(|member| member.config.as_str())
                         .collect::<Vec<_>>(),
@@ -878,16 +879,6 @@ path = "Templates/assets.jinja"
                     ),
                 ]),
             },
-            members: vec![
-                WorkspaceMember {
-                    config: "App/numi.toml".to_string(),
-                    jobs: Vec::new(),
-                },
-                WorkspaceMember {
-                    config: "Core/numi.toml".to_string(),
-                    jobs: vec!["assets".to_string()],
-                },
-            ],
         };
 
         let serialized = toml::to_string(&workspace).expect("workspace should serialize");
@@ -1076,6 +1067,28 @@ jobs = ["assets", "l10n"]
     }
 
     #[test]
+    fn unified_manifest_entrypoint_accepts_legacy_workspace_shape() {
+        let manifest = parse_manifest_str(
+            r#"
+version = 1
+
+[[members]]
+config = "App/numi.toml"
+jobs = ["assets"]
+"#,
+        )
+        .expect("legacy workspace shape should parse through manifest entrypoint");
+
+        let Manifest::Workspace(workspace) = manifest else {
+            panic!("expected workspace manifest");
+        };
+
+        assert_eq!(workspace.workspace.members, vec!["App"]);
+        assert_eq!(workspace.members()[0].config, "App/numi.toml");
+        assert_eq!(workspace.members()[0].jobs, vec!["assets"]);
+    }
+
+    #[test]
     fn deserializes_legacy_workspace_manifest_into_workspace_config() {
         let workspace = toml::from_str::<WorkspaceConfig>(
             r#"
@@ -1094,7 +1107,7 @@ config = "Core/numi.toml"
         assert_eq!(workspace.workspace.members, vec!["App", "Core"]);
         assert_eq!(
             workspace
-                .members
+                .members()
                 .iter()
                 .map(|member| member.config.as_str())
                 .collect::<Vec<_>>(),
@@ -1127,13 +1140,61 @@ config = "Core/numi.toml"
         assert_eq!(
             loaded
                 .config
-                .members
+                .members()
                 .iter()
                 .map(|member| member.config.as_str())
                 .collect::<Vec<_>>(),
             vec!["App/numi.toml", "Core/numi.toml"]
         );
-        assert_eq!(loaded.config.members[0].jobs, vec!["assets", "l10n"]);
+        assert_eq!(loaded.config.members()[0].jobs, vec!["assets", "l10n"]);
+    }
+
+    #[test]
+    fn accepts_workspace_root_member() {
+        let workspace = parse_manifest_str(
+            r#"
+version = 1
+
+[workspace]
+members = ["."]
+"#,
+        )
+        .expect("workspace root member should be valid");
+
+        let Manifest::Workspace(workspace) = workspace else {
+            panic!("expected workspace manifest");
+        };
+
+        assert_eq!(workspace.workspace.members, vec!["."]);
+        assert_eq!(workspace.members()[0].config, "numi.toml");
+    }
+
+    #[test]
+    fn workspace_members_are_derived_from_current_workspace_state() {
+        let manifest = parse_manifest_str(
+            r#"
+version = 1
+
+[workspace]
+members = ["App"]
+"#,
+        )
+        .expect("workspace manifest should parse");
+
+        let Manifest::Workspace(mut workspace) = manifest else {
+            panic!("expected workspace manifest");
+        };
+
+        assert_eq!(workspace.members()[0].jobs, Vec::<String>::new());
+
+        workspace.workspace.member_overrides.insert(
+            "App".to_string(),
+            WorkspaceMemberOverride {
+                jobs: Some(vec!["assets".to_string(), "l10n".to_string()]),
+            },
+        );
+
+        assert_eq!(workspace.members()[0].jobs, vec!["assets", "l10n"]);
     }
 
     #[test]

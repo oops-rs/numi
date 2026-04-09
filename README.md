@@ -52,12 +52,12 @@ numi check
 
 ## Config File
 
-Numi uses `swiftgen.toml` as its config filename.
+Numi uses `numi.toml` as its config filename.
 
 The current discovery behavior is:
 
 - use `--config <path>` when provided
-- otherwise prefer the nearest ancestor `swiftgen.toml`
+- otherwise prefer the nearest ancestor `numi.toml`
 - if no ancestor exists, allow a single unambiguous descendant match
 - fail loudly if discovery is ambiguous
 
@@ -110,7 +110,7 @@ path = "Resources/Localization"
 builtin = "l10n"
 ```
 
-The starter config shipped with `numi init` lives in [docs/examples/starter-swiftgen.toml](docs/examples/starter-swiftgen.toml).
+The starter config shipped with `numi init` lives in [docs/examples/starter-numi.toml](docs/examples/starter-numi.toml).
 
 ## Commands
 
@@ -124,7 +124,7 @@ Examples:
 
 ```bash
 numi generate
-numi generate --config AppUI/swiftgen.toml
+numi generate --config AppUI/numi.toml
 numi generate --job assets --job l10n
 ```
 

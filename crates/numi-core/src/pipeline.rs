@@ -579,7 +579,7 @@ mod tests {
     #[test]
     fn generate_rejects_duplicate_strings_table_names_from_directory_inputs() {
         let temp_dir = make_temp_dir("duplicate-strings-table");
-        let config_path = temp_dir.join("swiftgen.toml");
+        let config_path = temp_dir.join("numi.toml");
         let localization_root = temp_dir.join("Resources/Localization");
         let en_dir = localization_root.join("en.lproj");
         let fr_dir = localization_root.join("fr.lproj");
@@ -627,7 +627,7 @@ builtin = "l10n"
     #[test]
     fn generate_renders_custom_template_includes_from_config_root() {
         let temp_dir = make_temp_dir("custom-template-shared-include");
-        let config_path = temp_dir.join("swiftgen.toml");
+        let config_path = temp_dir.join("numi.toml");
         let localization_root = temp_dir.join("Resources/Localization");
         let templates_dir = temp_dir.join("Templates");
         let generated_path = temp_dir.join("Generated/L10n.swift");

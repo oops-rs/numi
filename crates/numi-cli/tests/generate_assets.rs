@@ -52,7 +52,7 @@ fn generate_writes_swiftui_assets_from_xcassets_fixture() {
     copy_dir_all(&fixture_root, &working_root);
 
     let output = Command::new(env!("CARGO_BIN_EXE_numi"))
-        .args(["generate", "--config", "swiftgen.toml"])
+        .args(["generate", "--config", "numi.toml"])
         .current_dir(&working_root)
         .output()
         .expect("numi generate should run");
@@ -99,7 +99,7 @@ fn repeated_generate_is_byte_stable() {
     copy_dir_all(&fixture_root, &working_root);
 
     let first = Command::new(env!("CARGO_BIN_EXE_numi"))
-        .args(["generate", "--config", "swiftgen.toml"])
+        .args(["generate", "--config", "numi.toml"])
         .current_dir(&working_root)
         .output()
         .expect("first numi generate should run");
@@ -121,7 +121,7 @@ fn repeated_generate_is_byte_stable() {
     thread::sleep(Duration::from_millis(20));
 
     let second = Command::new(env!("CARGO_BIN_EXE_numi"))
-        .args(["generate", "--config", "swiftgen.toml"])
+        .args(["generate", "--config", "numi.toml"])
         .current_dir(&working_root)
         .output()
         .expect("second numi generate should run");

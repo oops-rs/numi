@@ -251,7 +251,7 @@ fn check_returns_exit_code_2_for_stale_output_without_rewriting_file() {
     fs::write(&generated_path, "// stale output\n").expect("stale output should be written");
 
     let output = Command::new(env!("CARGO_BIN_EXE_numi"))
-        .args(["check", "--config", "swiftgen.toml"])
+        .args(["check", "--config", "numi.toml"])
         .current_dir(&working_root)
         .output()
         .expect("numi check should run");
@@ -281,7 +281,7 @@ fn check_warns_and_returns_exit_code_2_for_stale_xcstrings_output() {
     let localization_root = working_root.join("Resources/Localization");
     fs::create_dir_all(&localization_root).expect("localization directory should exist");
     fs::write(
-        working_root.join("swiftgen.toml"),
+        working_root.join("numi.toml"),
         r#"
 version = 1
 
@@ -342,7 +342,7 @@ builtin = "l10n"
     fs::write(&generated_path, "// stale output\n").expect("stale output should be written");
 
     let output = Command::new(env!("CARGO_BIN_EXE_numi"))
-        .args(["check", "--config", "swiftgen.toml", "--job", "l10n"])
+        .args(["check", "--config", "numi.toml", "--job", "l10n"])
         .current_dir(&working_root)
         .output()
         .expect("numi check should run");
@@ -436,7 +436,7 @@ fn init_creates_starter_swiftgen_toml() {
 #[test]
 fn config_print_emits_the_resolved_config_with_effective_defaults() {
     let root = make_temp_dir("config-print-defaults");
-    let config_path = root.join("swiftgen.toml");
+    let config_path = root.join("numi.toml");
     fs::write(
         &config_path,
         r#"
@@ -457,7 +457,7 @@ builtin = "l10n"
     .expect("config should be written");
 
     let output = Command::new(env!("CARGO_BIN_EXE_numi"))
-        .args(["config", "print", "--config", "swiftgen.toml"])
+        .args(["config", "print", "--config", "numi.toml"])
         .current_dir(&root)
         .output()
         .expect("numi config print should run");

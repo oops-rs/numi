@@ -4,7 +4,7 @@ Numi is intentionally close to SwiftGen for the MVP path, but it makes a few con
 
 ## What Stays Familiar
 
-- The config file name remains `swiftgen.toml`
+- The config file name is `numi.toml`
 - Jobs still describe inputs, templates, and one output file
 - Asset catalogs and `.strings` localization inputs remain config-driven
 - `.xcstrings` localization inputs are supported config-driven inputs too
@@ -45,7 +45,7 @@ If a SwiftGen setup relied on a custom Stencil template, the closest Numi migrat
 
 ## Suggested Migration Flow
 
-1. Copy the existing SwiftGen config into `swiftgen.toml`.
+1. Copy the existing SwiftGen config into `numi.toml`.
 2. Replace the generator-specific template reference with either a Numi built-in or a custom Minijinja template.
 3. Run `numi dump-context --job <name>` to inspect the exact context your template receives.
 4. Run `numi generate` and compare the generated Swift against the previous SwiftGen output.

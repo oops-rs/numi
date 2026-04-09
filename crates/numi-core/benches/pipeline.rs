@@ -47,7 +47,7 @@ fn benchmark_generate_assets(c: &mut Criterion) {
     let fixture_root = repo_root().join("fixtures/xcassets-basic");
     let working_root = temp_root.join("fixture");
     copy_dir_all(&fixture_root, &working_root);
-    let config_path = working_root.join("swiftgen.toml");
+    let config_path = working_root.join("numi.toml");
 
     numi_core::generate(&config_path, None).expect("fixture warm-up generate should succeed");
 

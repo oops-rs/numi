@@ -48,7 +48,7 @@ fn write_xcstrings_skip_warning_fixture(working_root: &Path) {
     let localization_root = working_root.join("Resources/Localization");
     fs::create_dir_all(&localization_root).expect("localization directory should exist");
     fs::write(
-        working_root.join("swiftgen.toml"),
+        working_root.join("numi.toml"),
         r#"
 version = 1
 
@@ -108,7 +108,7 @@ fn generate_writes_l10n_accessors_from_strings() {
     copy_dir_all(&fixture_root, &working_root);
 
     let output = Command::new(env!("CARGO_BIN_EXE_numi"))
-        .args(["generate", "--config", "swiftgen.toml", "--job", "l10n"])
+        .args(["generate", "--config", "numi.toml", "--job", "l10n"])
         .current_dir(&working_root)
         .output()
         .expect("numi generate should run");
@@ -151,7 +151,7 @@ fn generate_writes_l10n_accessors_from_xcstrings() {
     copy_dir_all(&fixture_root, &working_root);
 
     let output = Command::new(env!("CARGO_BIN_EXE_numi"))
-        .args(["generate", "--config", "swiftgen.toml", "--job", "l10n"])
+        .args(["generate", "--config", "numi.toml", "--job", "l10n"])
         .current_dir(&working_root)
         .output()
         .expect("numi generate should run");
@@ -194,7 +194,7 @@ fn repeated_l10n_generate_is_byte_stable() {
     copy_dir_all(&fixture_root, &working_root);
 
     let first = Command::new(env!("CARGO_BIN_EXE_numi"))
-        .args(["generate", "--config", "swiftgen.toml", "--job", "l10n"])
+        .args(["generate", "--config", "numi.toml", "--job", "l10n"])
         .current_dir(&working_root)
         .output()
         .expect("first numi generate should run");
@@ -216,7 +216,7 @@ fn repeated_l10n_generate_is_byte_stable() {
     thread::sleep(Duration::from_millis(20));
 
     let second = Command::new(env!("CARGO_BIN_EXE_numi"))
-        .args(["generate", "--config", "swiftgen.toml", "--job", "l10n"])
+        .args(["generate", "--config", "numi.toml", "--job", "l10n"])
         .current_dir(&working_root)
         .output()
         .expect("second numi generate should run");
@@ -248,7 +248,7 @@ fn repeated_xcstrings_l10n_generate_is_byte_stable() {
     copy_dir_all(&fixture_root, &working_root);
 
     let first = Command::new(env!("CARGO_BIN_EXE_numi"))
-        .args(["generate", "--config", "swiftgen.toml", "--job", "l10n"])
+        .args(["generate", "--config", "numi.toml", "--job", "l10n"])
         .current_dir(&working_root)
         .output()
         .expect("first numi generate should run");
@@ -270,7 +270,7 @@ fn repeated_xcstrings_l10n_generate_is_byte_stable() {
     thread::sleep(Duration::from_millis(20));
 
     let second = Command::new(env!("CARGO_BIN_EXE_numi"))
-        .args(["generate", "--config", "swiftgen.toml", "--job", "l10n"])
+        .args(["generate", "--config", "numi.toml", "--job", "l10n"])
         .current_dir(&working_root)
         .output()
         .expect("second numi generate should run");
@@ -301,7 +301,7 @@ fn generate_warns_and_succeeds_for_skipped_xcstrings_variations() {
     write_xcstrings_skip_warning_fixture(&working_root);
 
     let output = Command::new(env!("CARGO_BIN_EXE_numi"))
-        .args(["generate", "--config", "swiftgen.toml", "--job", "l10n"])
+        .args(["generate", "--config", "numi.toml", "--job", "l10n"])
         .current_dir(&working_root)
         .output()
         .expect("numi generate should run");
@@ -325,7 +325,7 @@ fn dump_context_emits_json_for_selected_job() {
     let fixture_root = repo_root().join("fixtures/l10n-basic");
 
     let output = Command::new(env!("CARGO_BIN_EXE_numi"))
-        .args(["dump-context", "--config", "swiftgen.toml", "--job", "l10n"])
+        .args(["dump-context", "--config", "numi.toml", "--job", "l10n"])
         .current_dir(&fixture_root)
         .output()
         .expect("numi dump-context should run");
@@ -363,7 +363,7 @@ fn dump_context_emits_json_and_xcstrings_skip_warnings() {
     write_xcstrings_skip_warning_fixture(&working_root);
 
     let output = Command::new(env!("CARGO_BIN_EXE_numi"))
-        .args(["dump-context", "--config", "swiftgen.toml", "--job", "l10n"])
+        .args(["dump-context", "--config", "numi.toml", "--job", "l10n"])
         .current_dir(&working_root)
         .output()
         .expect("numi dump-context should run");
@@ -400,7 +400,7 @@ fn dump_context_emits_xcstrings_module_kind_and_placeholders() {
     let fixture_root = repo_root().join("fixtures/xcstrings-basic");
 
     let output = Command::new(env!("CARGO_BIN_EXE_numi"))
-        .args(["dump-context", "--config", "swiftgen.toml", "--job", "l10n"])
+        .args(["dump-context", "--config", "numi.toml", "--job", "l10n"])
         .current_dir(&fixture_root)
         .output()
         .expect("numi dump-context should run");

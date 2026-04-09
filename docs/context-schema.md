@@ -18,7 +18,7 @@ Top-level field names are stable for all v1 releases.
 
 ### `job`
 
-- `job.name`: the configured job name from `swiftgen.toml`
+- `job.name`: the configured job name from `numi.toml`
 - `job.swiftIdentifier`: the Swift type name derived from `job.name`
 - `job.output`: the configured output path as written in config
 

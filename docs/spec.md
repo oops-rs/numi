@@ -203,7 +203,7 @@ Numi v1 should support:
 
 ```bash
 numi generate
-numi generate --config AppUI/swiftgen.toml
+numi generate --config AppUI/numi.toml
 numi generate --job assets
 numi check
 numi init
@@ -228,7 +228,7 @@ numi dump-context --job assets
 - Exit non-zero if any output is stale, missing, or would change
 
 `numi init`:
-- Create a starter `swiftgen.toml` in the current directory
+- Create a starter `numi.toml` in the current directory
 - Refuse to overwrite unless `--force`
 
 `numi config locate`:
@@ -246,7 +246,7 @@ numi dump-context --job assets
 
 ### 7.1 Filename
 Supported config filename in v1:
-- `swiftgen.toml`
+- `numi.toml`
 
 The product is Numi, but using SwiftGen-compatible naming lowers migration friction.
 A future alias like `numi.toml` can be considered later.
@@ -271,9 +271,9 @@ Example:
 
 ```text
 Multiple configuration files found under /repo:
-  - AppUI/swiftgen.toml
-  - Core/swiftgen.toml
-  - Modules/Profile/swiftgen.toml
+  - AppUI/numi.toml
+  - Core/numi.toml
+  - Modules/Profile/numi.toml
 
 Please specify one with:
   numi generate --config <path>
@@ -876,14 +876,14 @@ A release qualifies as MVP when all of the following are true:
 These should be resolved during implementation planning:
 1. Should built-in templates generate helper wrapper types or depend on external runtime support?
 2. Should custom templates allow includes/partials in v1?
-3. Should config support multiple TOML filenames (for example, `swiftgen.toml` and `numi.toml`) in v1?
+3. Should config support multiple TOML filenames in v1, or is `numi.toml` the only supported filename?
 4. Should jobs be allowed to share a global parsed graph explicitly?
 5. Should bundle resolution be purely templated or partly built into built-ins?
 6. How much Swift formatting logic should be in templates vs render helpers?
 
 ## 24. Recommended Initial Defaults
 To reduce decision load, start with these defaults:
-- Config filename: `swiftgen.toml`
+- Config filename: `numi.toml`
 - Template engine: Minijinja
 - Asset parser: `xcassets`
 - Localization parser: `langcodec` plus lightweight adapters as needed

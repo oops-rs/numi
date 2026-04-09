@@ -221,7 +221,7 @@ The stable context contract is documented in [docs/context-schema.md](docs/conte
 `files`
 
 - file-oriented inputs are supported with the shipped `files` Swift template
-- templates receive file metadata in the stable context contract documented in [docs/context-schema.md](docs/context-schema.md)
+- templates receive file metadata through Numi's current template context surface
 
 ## Developer Workflow
 
@@ -257,6 +257,7 @@ Numi is usable today for:
 - SwiftUI asset generation
 - `.strings` localization generation
 - `.xcstrings` localization generation for supported plain-string records
+- file-oriented generation via the shipped `files` Swift template
 - custom-template workflows driven by `dump-context`
 
 The main current gap in `.xcstrings` support is variation handling: plural and device-specific branches are intentionally not generated yet.

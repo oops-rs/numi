@@ -284,11 +284,13 @@ fn load_workspace_cli_manifest(explicit_path: Option<&Path>) -> Result<LoadedMan
             continue;
         }
 
+        if !path_declares_workspace_manifest(&candidate)? {
+            continue;
+        }
+
         let loaded = numi_config::load_manifest_from_path(&candidate)
             .map_err(|error| CliError::new(error.to_string()))?;
-        if matches!(loaded.manifest, Manifest::Workspace(_)) {
-            return Ok(loaded);
-        }
+        return require_workspace_manifest(loaded);
     }
 
     Err(workspace_manifest_discovery_error(
@@ -306,6 +308,26 @@ fn require_workspace_manifest(loaded: LoadedManifest) -> Result<LoadedManifest, 
             loaded.path.display()
         ))),
     }
+}
+
+fn path_declares_workspace_manifest(path: &Path) -> Result<bool, CliError> {
+    let contents = fs::read_to_string(path).map_err(|error| {
+        CliError::new(format!(
+            "failed to read manifest {}: {error}",
+            path.display()
+        ))
+    })?;
+    Ok(manifest_text_declares_workspace(&contents))
+}
+
+fn manifest_text_declares_workspace(contents: &str) -> bool {
+    contents.lines().any(|line| {
+        let trimmed = line.trim();
+        trimmed == "[workspace]"
+            || trimmed.starts_with("[workspace.")
+            || trimmed.starts_with("workspace =")
+            || trimmed == "[[members]]"
+    })
 }
 
 fn workspace_manifest_discovery_error(error: numi_config::DiscoveryError) -> CliError {

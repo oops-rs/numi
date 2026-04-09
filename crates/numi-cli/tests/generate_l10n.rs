@@ -44,6 +44,62 @@ fn copy_dir_all(source: &Path, destination: &Path) {
     }
 }
 
+fn write_xcstrings_skip_warning_fixture(working_root: &Path) {
+    let localization_root = working_root.join("Resources/Localization");
+    fs::create_dir_all(&localization_root).expect("localization directory should exist");
+    fs::write(
+        working_root.join("swiftgen.toml"),
+        r#"
+version = 1
+
+[[jobs]]
+name = "l10n"
+output = "Generated/L10n.swift"
+
+[[jobs.inputs]]
+type = "xcstrings"
+path = "Resources/Localization"
+
+[jobs.template]
+builtin = "l10n"
+"#,
+    )
+    .expect("config should be written");
+    fs::write(
+        localization_root.join("Localizable.xcstrings"),
+        r#"{
+  "version": "1.0",
+  "sourceLanguage": "en",
+  "strings": {
+    "things.label": {
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld thing"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld things"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"#,
+    )
+    .expect("xcstrings file should be written");
+}
+
 #[test]
 fn generate_writes_l10n_accessors_from_strings() {
     let temp_root = make_temp_dir("generate-l10n");
@@ -242,59 +298,7 @@ fn repeated_xcstrings_l10n_generate_is_byte_stable() {
 fn generate_warns_and_succeeds_for_skipped_xcstrings_variations() {
     let temp_root = make_temp_dir("generate-xcstrings-warning");
     let working_root = temp_root.join("fixture");
-    let localization_root = working_root.join("Resources/Localization");
-    fs::create_dir_all(&localization_root).expect("localization directory should exist");
-    fs::write(
-        working_root.join("swiftgen.toml"),
-        r#"
-version = 1
-
-[[jobs]]
-name = "l10n"
-output = "Generated/L10n.swift"
-
-[[jobs.inputs]]
-type = "xcstrings"
-path = "Resources/Localization"
-
-[jobs.template]
-builtin = "l10n"
-"#,
-    )
-    .expect("config should be written");
-    fs::write(
-        localization_root.join("Localizable.xcstrings"),
-        r#"{
-  "version": "1.0",
-  "sourceLanguage": "en",
-  "strings": {
-    "things.label": {
-      "localizations": {
-        "en": {
-          "variations": {
-            "plural": {
-              "one": {
-                "stringUnit": {
-                  "state": "translated",
-                  "value": "%lld thing"
-                }
-              },
-              "other": {
-                "stringUnit": {
-                  "state": "translated",
-                  "value": "%lld things"
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-}
-"#,
-    )
-    .expect("xcstrings file should be written");
+    write_xcstrings_skip_warning_fixture(&working_root);
 
     let output = Command::new(env!("CARGO_BIN_EXE_numi"))
         .args(["generate", "--config", "swiftgen.toml", "--job", "l10n"])
@@ -350,6 +354,45 @@ fn dump_context_emits_json_for_selected_job() {
         json["modules"][0]["entries"][0]["properties"]["translation"],
         "Profile"
     );
+}
+
+#[test]
+fn dump_context_emits_json_and_xcstrings_skip_warnings() {
+    let temp_root = make_temp_dir("dump-context-xcstrings-warning");
+    let working_root = temp_root.join("fixture");
+    write_xcstrings_skip_warning_fixture(&working_root);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_numi"))
+        .args(["dump-context", "--config", "swiftgen.toml", "--job", "l10n"])
+        .current_dir(&working_root)
+        .output()
+        .expect("numi dump-context should run");
+
+    assert!(
+        output.status.success(),
+        "command failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout should be json");
+    assert_eq!(json["job"]["name"], "l10n");
+    assert_eq!(json["job"]["swiftIdentifier"], "L10n");
+    assert_eq!(json["modules"][0]["kind"], "xcstrings");
+    assert_eq!(json["modules"][0]["name"], "Localizable");
+    assert_eq!(
+        json["modules"][0]["entries"]
+            .as_array()
+            .map(|entries| entries.len()),
+        Some(0)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("warning: skipping xcstrings key `things.label`"));
+    assert!(stderr.contains("unsupported plural variations"));
+
+    fs::remove_dir_all(temp_root).expect("temp dir should be removed");
 }
 
 #[test]

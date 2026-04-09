@@ -38,6 +38,12 @@ pub struct CheckReport {
     pub warnings: Vec<Diagnostic>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DumpContextReport {
+    pub json: String,
+    pub warnings: Vec<Diagnostic>,
+}
+
 #[derive(Debug)]
 pub enum GenerateError {
     LoadConfig(numi_config::ConfigError),
@@ -172,7 +178,10 @@ pub fn generate(
     })
 }
 
-pub fn dump_context(config_path: &Path, job_name: &str) -> Result<String, GenerateError> {
+pub fn dump_context(
+    config_path: &Path,
+    job_name: &str,
+) -> Result<DumpContextReport, GenerateError> {
     let loaded = numi_config::load_from_path(config_path).map_err(GenerateError::LoadConfig)?;
     let config_dir = loaded
         .path
@@ -187,9 +196,10 @@ pub fn dump_context(config_path: &Path, job_name: &str) -> Result<String, Genera
         .next()
         .expect("selected one job should resolve to one job");
 
-    let (context, _warnings) =
+    let (context, warnings) =
         build_context(&loaded.path, config_dir, &loaded.config.defaults, job)?;
-    serde_json::to_string_pretty(&context).map_err(GenerateError::SerializeContext)
+    let json = serde_json::to_string_pretty(&context).map_err(GenerateError::SerializeContext)?;
+    Ok(DumpContextReport { json, warnings })
 }
 
 pub fn check(

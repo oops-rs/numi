@@ -7,5 +7,6 @@ mod render;
 
 pub use output::WriteOutcome;
 pub use pipeline::{
-    CheckReport, GenerateError, GenerateReport, JobReport, check, dump_context, generate,
+    CheckReport, DumpContextReport, GenerateError, GenerateReport, JobReport, check, dump_context,
+    generate,
 };

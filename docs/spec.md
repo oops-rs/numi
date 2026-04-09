@@ -46,9 +46,9 @@ Numi v1 should support:
 - Config discovery
 - Config-driven generation jobs
 - Parsing `.xcassets`
-- Parsing localization resources with initial emphasis on:
+- Parsing localization resources:
   - `.strings`
-  - `.xcstrings` if implementation cost is acceptable
+  - `.xcstrings`
 - Unified IR
 - Stable template context
 - Built-in templates
@@ -59,7 +59,7 @@ Numi v1 should support:
 - Clear diagnostics for collisions, invalid inputs, and template failures
 
 ### 2.2 v1.5 Scope
-- Better `.xcstrings` coverage
+- Broader `.xcstrings` coverage and diagnostics for additional variation kinds and edge cases
 - More built-in templates
 - Multiple output files from one resource graph
 - Partial templates/includes
@@ -158,7 +158,7 @@ Numi v1 must support localization generation through the existing Rust ecosystem
 
 Initial support target:
 - `.strings`
-- `.xcstrings` if feasible in v1, otherwise v1.5
+- `.xcstrings`
 - Localization table/source grouping
 - String keys
 - Placeholder metadata if parseable
@@ -617,18 +617,22 @@ public enum Assets {
 ```
 
 ### 13.2 Localization Output Target
-Default built-in `l10n` template shape:
+Default built-in `l10n` template shape in this branch emits simple string accessors with a shared translation helper. Placeholder-aware overloads are not part of the shipped API yet:
 
 ```swift
-public enum L10n {
-  public static func welcome(_ name: String) -> String {
-    tr("Localizable", "welcome", name)
+internal enum L10n {
+  internal enum Localizable {
+    internal static let welcome = tr("Localizable", "welcome")
   }
+}
+
+private func tr(_ table: String, _ key: String) -> String {
+  NSLocalizedString(key, tableName: table, bundle: .main, value: "", comment: "")
 }
 ```
 
 ### 13.3 Generated Helper Types
-If built-in templates need helper types like `ImageAsset`, `ColorAsset`, or translation helpers, those helpers should be generated into the same output file unless explicitly disabled later.
+If built-in templates need helper types or helper functions like `ImageAsset`, `ColorAsset`, or `tr`, those helpers should be generated into the same output file unless explicitly disabled later.
 
 ## 14. Diagnostics
 
@@ -839,12 +843,13 @@ Benchmark:
 
 ### Phase 2: Localization
 - Add `.strings`
+- Add `.xcstrings`
 - Add localization built-in template
 - Add placeholder/argument support where available
 - Add `dump-context`
 
 ### Phase 3: Refinement
-- Add `.xcstrings` if not already done
+- Improve `.xcstrings` coverage and diagnostics
 - Improve diagnostics
 - Improve no-op writes and performance
 - Add `init`, `config locate`, and `config print`
@@ -869,13 +874,12 @@ A release qualifies as MVP when all of the following are true:
 
 ## 23. Open Questions
 These should be resolved during implementation planning:
-1. Should `.xcstrings` be v1 or v1.5?
-2. Should built-in templates generate helper wrapper types or depend on external runtime support?
-3. Should custom templates allow includes/partials in v1?
-4. Should config support multiple TOML filenames (for example, `swiftgen.toml` and `numi.toml`) in v1?
-5. Should jobs be allowed to share a global parsed graph explicitly?
-6. Should bundle resolution be purely templated or partly built into built-ins?
-7. How much Swift formatting logic should be in templates vs render helpers?
+1. Should built-in templates generate helper wrapper types or depend on external runtime support?
+2. Should custom templates allow includes/partials in v1?
+3. Should config support multiple TOML filenames (for example, `swiftgen.toml` and `numi.toml`) in v1?
+4. Should jobs be allowed to share a global parsed graph explicitly?
+5. Should bundle resolution be purely templated or partly built into built-ins?
+6. How much Swift formatting logic should be in templates vs render helpers?
 
 ## 24. Recommended Initial Defaults
 To reduce decision load, start with these defaults:

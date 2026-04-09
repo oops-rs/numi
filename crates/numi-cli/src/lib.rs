@@ -61,9 +61,10 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         },
         Command::DumpContext(args) => {
             let config_path = discover_config_path(args.config.as_deref())?;
-            let json = numi_core::dump_context(&config_path, &args.job)
+            let report = numi_core::dump_context(&config_path, &args.job)
                 .map_err(|error| CliError::new(error.to_string()))?;
-            println!("{json}");
+            print_warnings(&report.warnings);
+            println!("{}", report.json);
             Ok(())
         }
     }

@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub const CONFIG_FILE_NAME: &str = "swiftgen.toml";
+pub const CONFIG_FILE_NAME: &str = "numi.toml";
 
 #[derive(Debug)]
 pub enum DiscoveryError {

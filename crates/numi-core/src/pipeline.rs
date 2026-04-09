@@ -14,6 +14,7 @@ use std::{
 use crate::{
     context::{AssetTemplateContext, ContextError},
     output::{OutputError, WriteOutcome, output_is_stale, write_if_changed_atomic},
+    parse_files::{ParseFilesError, parse_files},
     parse_l10n::{ParseL10nError, parse_strings, parse_xcstrings},
     parse_xcassets::{ParseXcassetsError, parse_catalog},
     render::{RenderError, render_builtin, render_path},
@@ -63,6 +64,10 @@ pub enum GenerateError {
     ParseXcstrings {
         job: String,
         source: ParseL10nError,
+    },
+    ParseFiles {
+        job: String,
+        source: ParseFilesError,
     },
     BuildContext {
         job: String,
@@ -116,6 +121,9 @@ impl std::fmt::Display for GenerateError {
                     f,
                     "failed to parse xcstrings input for job `{job}`: {source}"
                 )
+            }
+            Self::ParseFiles { job, source } => {
+                write!(f, "failed to parse files input for job `{job}`: {source}")
             }
             Self::BuildContext { job, source } => {
                 write!(
@@ -346,12 +354,18 @@ fn build_modules(config_dir: &Path, job: &JobConfig) -> Result<BuildModulesResul
 
         match input.kind.as_str() {
             "xcassets" => {
-                asset_entries.extend(parse_catalog(&input_path).map_err(|source| {
-                    GenerateError::ParseXcassets {
+                let report =
+                    parse_catalog(&input_path).map_err(|source| GenerateError::ParseXcassets {
                         job: job.name.clone(),
                         source,
-                    }
-                })?);
+                    })?;
+                warnings.extend(
+                    report
+                        .warnings
+                        .into_iter()
+                        .map(|warning| warning.with_job(job.name.clone())),
+                );
+                asset_entries.extend(report.entries);
             }
             "strings" => {
                 let tables =
@@ -445,6 +459,28 @@ fn build_modules(config_dir: &Path, job: &JobConfig) -> Result<BuildModulesResul
                         )]),
                     });
                 }
+            }
+            "files" => {
+                let raw_entries =
+                    parse_files(&input_path).map_err(|source| GenerateError::ParseFiles {
+                        job: job.name.clone(),
+                        source,
+                    })?;
+                let entries =
+                    normalize_scope(&job.name, raw_entries).map_err(GenerateError::Diagnostics)?;
+                let module_id = input_path
+                    .file_stem()
+                    .or_else(|| input_path.file_name())
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("Files")
+                    .to_string();
+                modules.push(ResourceModule {
+                    id: module_id.clone(),
+                    kind: ModuleKind::Files,
+                    name: swift_identifier(&module_id),
+                    entries,
+                    metadata: Metadata::new(),
+                });
             }
             other => {
                 return Err(GenerateError::UnsupportedJob {
@@ -625,6 +661,60 @@ builtin = "l10n"
     }
 
     #[test]
+    fn generate_accepts_strings_with_escaped_apostrophes_via_langcodec() {
+        let temp_dir = make_temp_dir("pipeline-strings-apostrophe");
+        let config_path = temp_dir.join("swiftgen.toml");
+        let localization_root = temp_dir.join("Resources/Localization/en.lproj");
+        fs::create_dir_all(&localization_root).expect("localization dir should exist");
+        fs::write(
+            localization_root.join("Localizable.strings"),
+            "\"invite.accept\" = \"Can\\'t accept the invitation\";\n",
+        )
+        .expect("strings file should be written");
+        fs::write(
+            &config_path,
+            r#"
+version = 1
+
+[[jobs]]
+name = "l10n"
+output = "Generated/L10n.swift"
+
+[[jobs.inputs]]
+type = "strings"
+path = "Resources/Localization"
+
+[jobs.template]
+builtin = "l10n"
+"#,
+        )
+        .expect("config should be written");
+
+        let report = generate(&config_path, None).expect("generation should succeed");
+        let generated_path = temp_dir.join("Generated/L10n.swift");
+        let generated = fs::read_to_string(&generated_path).expect("generated output should exist");
+
+        assert!(report.warnings.is_empty());
+        assert_eq!(
+            generated,
+            r#"import Foundation
+
+internal enum L10n {
+    internal enum Localizable {
+        internal static let inviteAccept = tr("Localizable", "invite.accept")
+    }
+}
+
+private func tr(_ table: String, _ key: String) -> String {
+    NSLocalizedString(key, tableName: table, bundle: .main, value: "", comment: "")
+}
+"#
+        );
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
     fn generate_renders_custom_template_includes_from_config_root() {
         let temp_dir = make_temp_dir("custom-template-shared-include");
         let config_path = temp_dir.join("numi.toml");
@@ -674,6 +764,116 @@ path = "Templates/main.jinja"
         assert_eq!(report.jobs.len(), 1);
         assert_eq!(report.jobs[0].outcome, WriteOutcome::Created);
         assert_eq!(rendered, "SHARED|L10n|Localizable\n");
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn generate_writes_builtin_files_accessors() {
+        let temp_dir = make_temp_dir("pipeline-files-generate");
+        let config_path = temp_dir.join("numi.toml");
+        let files_root = temp_dir.join("Resources/Fixtures");
+        let generated_path = temp_dir.join("Generated/Files.swift");
+
+        fs::create_dir_all(files_root.join("Onboarding")).expect("files directory should exist");
+        fs::write(files_root.join("faq.pdf"), "faq").expect("faq file should be written");
+        fs::write(files_root.join("Onboarding/welcome-video.mp4"), "video")
+            .expect("video file should be written");
+        fs::write(
+            &config_path,
+            r#"
+version = 1
+
+[[jobs]]
+name = "files"
+output = "Generated/Files.swift"
+
+[[jobs.inputs]]
+type = "files"
+path = "Resources/Fixtures"
+
+[jobs.template]
+builtin = "files"
+"#,
+        )
+        .expect("config should be written");
+
+        let report = generate(&config_path, None).expect("generation should succeed");
+        let rendered = fs::read_to_string(&generated_path).expect("output should be written");
+
+        assert_eq!(report.jobs.len(), 1);
+        assert_eq!(report.jobs[0].outcome, WriteOutcome::Created);
+        assert_eq!(
+            rendered,
+            r#"import Foundation
+
+internal enum Files {
+    internal enum Onboarding {
+        internal static let welcomeVideoMp4 = file("Onboarding/welcome-video.mp4")
+    }
+    internal static let faqPdf = file("faq.pdf")
+}
+
+private func resourceBundle() -> Bundle {
+    Bundle.module
+}
+
+private func file(_ path: String) -> URL {
+    guard let url = resourceBundle().url(forResource: path, withExtension: nil) else {
+        fatalError("Missing file resource: \(path)")
+    }
+    return url
+}
+"#
+        );
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn dump_context_builds_files_module_surface() {
+        let temp_dir = make_temp_dir("pipeline-files-context");
+        let config_path = temp_dir.join("numi.toml");
+        let files_root = temp_dir.join("Resources/Fixtures");
+
+        fs::create_dir_all(files_root.join("Onboarding")).expect("files directory should exist");
+        fs::write(files_root.join("faq.pdf"), "faq").expect("faq file should be written");
+        fs::write(files_root.join("Onboarding/welcome-video.mp4"), "video")
+            .expect("video file should be written");
+        fs::write(
+            &config_path,
+            r#"
+version = 1
+
+[[jobs]]
+name = "files"
+output = "Generated/Files.swift"
+
+[[jobs.inputs]]
+type = "files"
+path = "Resources/Fixtures"
+
+[jobs.template]
+builtin = "files"
+"#,
+        )
+        .expect("config should be written");
+
+        let report = dump_context(&config_path, "files").expect("dump context should succeed");
+        let json: Value = serde_json::from_str(&report.json).expect("json should parse");
+
+        assert_eq!(json["modules"][0]["kind"], "files");
+        assert_eq!(json["modules"][0]["name"], "Fixtures");
+        assert_eq!(json["modules"][0]["entries"][0]["kind"], "namespace");
+        assert_eq!(
+            json["modules"][0]["entries"][0]["children"][0]["properties"]["relativePath"],
+            "Onboarding/welcome-video.mp4"
+        );
+        assert_eq!(json["modules"][0]["entries"][1]["kind"], "data");
+        assert_eq!(
+            json["modules"][0]["entries"][1]["properties"]["fileName"],
+            "faq.pdf"
+        );
 
         fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
     }

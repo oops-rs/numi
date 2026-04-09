@@ -1,0 +1,12 @@
+version = 1
+
+[[jobs]]
+name = "files"
+output = "Generated/Files.swift"
+
+[[jobs.inputs]]
+type = "files"
+path = "Resources/Fixtures"
+
+[jobs.template]
+builtin = "files"

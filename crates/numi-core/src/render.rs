@@ -10,6 +10,7 @@ use crate::context::AssetTemplateContext;
 const SWIFTUI_ASSETS_TEMPLATE: &str =
     include_str!("../../../templates/builtin/swiftui-assets.jinja");
 const L10N_TEMPLATE: &str = include_str!("../../../templates/builtin/l10n.jinja");
+const FILES_TEMPLATE: &str = include_str!("../../../templates/builtin/files.jinja");
 const ENTRY_TEMPLATE_NAME: &str = "__numi_entry__";
 const FILE_TEMPLATE_PREFIX: &str = "file:";
 const INCLUDE_REQUEST_PREFIX: &str = "include:";
@@ -47,6 +48,7 @@ pub fn render_builtin(
     let template_source = match builtin_name {
         "swiftui-assets" => SWIFTUI_ASSETS_TEMPLATE,
         "l10n" => L10N_TEMPLATE,
+        "files" => FILES_TEMPLATE,
         other => return Err(RenderError::UnknownBuiltin(other.to_owned())),
     };
 
@@ -361,6 +363,87 @@ internal enum L10n {
 
 private func tr(_ table: String, _ key: String) -> String {
     NSLocalizedString(key, tableName: table, bundle: .main, value: "", comment: "")
+}
+"#
+        );
+    }
+
+    #[test]
+    fn renders_builtin_files_template() {
+        let context = AssetTemplateContext::new(
+            "files",
+            "Generated/Files.swift",
+            "internal",
+            "module",
+            None,
+            &[ResourceModule {
+                id: "Fixtures".to_string(),
+                kind: ModuleKind::Files,
+                name: "Fixtures".to_string(),
+                entries: vec![
+                    ResourceEntry {
+                        id: "Onboarding".to_string(),
+                        name: "Onboarding".to_string(),
+                        source_path: Utf8PathBuf::from("virtual"),
+                        swift_identifier: "Onboarding".to_string(),
+                        kind: EntryKind::Namespace,
+                        children: vec![ResourceEntry {
+                            id: "Onboarding/welcome-video.mp4".to_string(),
+                            name: "welcome-video.mp4".to_string(),
+                            source_path: Utf8PathBuf::from("fixture"),
+                            swift_identifier: "WelcomeVideoMp4".to_string(),
+                            kind: EntryKind::Data,
+                            children: Vec::new(),
+                            properties: Metadata::from([(
+                                "relativePath".to_string(),
+                                json!("Onboarding/welcome-video.mp4"),
+                            )]),
+                            metadata: Metadata::new(),
+                        }],
+                        properties: Metadata::new(),
+                        metadata: Metadata::new(),
+                    },
+                    ResourceEntry {
+                        id: "faq.pdf".to_string(),
+                        name: "faq.pdf".to_string(),
+                        source_path: Utf8PathBuf::from("fixture"),
+                        swift_identifier: "FaqPdf".to_string(),
+                        kind: EntryKind::Data,
+                        children: Vec::new(),
+                        properties: Metadata::from([(
+                            "relativePath".to_string(),
+                            json!("faq.pdf"),
+                        )]),
+                        metadata: Metadata::new(),
+                    },
+                ],
+                metadata: Metadata::new(),
+            }],
+        )
+        .expect("context should build");
+
+        let rendered = render_builtin("files", &context).expect("template should render");
+
+        assert_eq!(
+            rendered,
+            r#"import Foundation
+
+internal enum Files {
+    internal enum Onboarding {
+        internal static let welcomeVideoMp4 = file("Onboarding/welcome-video.mp4")
+    }
+    internal static let faqPdf = file("faq.pdf")
+}
+
+private func resourceBundle() -> Bundle {
+    Bundle.module
+}
+
+private func file(_ path: String) -> URL {
+    guard let url = resourceBundle().url(forResource: path, withExtension: nil) else {
+        fatalError("Missing file resource: \(path)")
+    }
+    return url
 }
 "#
         );

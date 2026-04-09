@@ -1,6 +1,7 @@
 pub mod cli;
 
 use std::{
+    borrow::Cow,
     fs,
     path::{Path, PathBuf},
 };
@@ -10,7 +11,7 @@ use cli::{
 };
 use numi_config::CONFIG_FILE_NAME;
 
-const STARTER_CONFIG: &str = include_str!("../../../docs/examples/starter-swiftgen.toml");
+const STARTER_CONFIG_FALLBACK: &str = include_str!("../../../docs/examples/starter-numi.toml");
 
 #[derive(Debug)]
 pub struct CliError {
@@ -113,7 +114,8 @@ fn run_init(args: &InitArgs) -> Result<(), CliError> {
         )));
     }
 
-    fs::write(&config_path, STARTER_CONFIG).map_err(|error| {
+    let starter_config = load_starter_config()?;
+    fs::write(&config_path, starter_config.as_ref()).map_err(|error| {
         CliError::new(format!(
             "failed to write starter config {}: {error}",
             config_path.display()
@@ -142,6 +144,22 @@ fn run_config_print(args: &PrintArgs) -> Result<(), CliError> {
 
 fn current_dir() -> Result<PathBuf, CliError> {
     std::env::current_dir().map_err(|error| CliError::new(format!("failed to read cwd: {error}")))
+}
+
+fn load_starter_config() -> Result<Cow<'static, str>, CliError> {
+    let preferred_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/examples/starter-numi.toml");
+
+    match fs::read_to_string(&preferred_path) {
+        Ok(contents) => Ok(Cow::Owned(contents)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(Cow::Borrowed(STARTER_CONFIG_FALLBACK))
+        }
+        Err(error) => Err(CliError::new(format!(
+            "failed to read starter config {}: {error}",
+            preferred_path.display()
+        ))),
+    }
 }
 
 fn discover_config_path(explicit_path: Option<&Path>) -> Result<PathBuf, CliError> {

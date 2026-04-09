@@ -93,7 +93,7 @@ pub fn resolve_selected_jobs<'a>(
                     None => diagnostics.push(
                         Diagnostic::error(format!("job `{selected_job}` was not found"))
                             .with_job(selected_job.clone())
-                            .with_hint("select one of the job names declared in swiftgen.toml"),
+                            .with_hint("select one of the job names declared in numi.toml"),
                     ),
                 }
             }
@@ -210,6 +210,30 @@ builtin = "swiftui-assets"
         assert!(message.contains("defaults.bundle.mode"));
         assert!(message.contains("[job: assets]"));
         assert!(message.contains("jobs.inputs[].type"));
+    }
+
+    #[test]
+    fn accepts_files_as_valid_input_kind() {
+        let config = parse_str(
+            r#"
+version = 1
+
+[[jobs]]
+name = "files"
+output = "Generated/Files.swift"
+
+[[jobs.inputs]]
+type = "files"
+path = "Resources"
+
+[jobs.template]
+path = "Templates/files.stencil"
+"#,
+        )
+        .expect("config should parse");
+
+        assert_eq!(config.jobs.len(), 1);
+        assert_eq!(config.jobs[0].inputs[0].kind, "files");
     }
 
     #[test]

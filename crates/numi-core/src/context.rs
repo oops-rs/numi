@@ -101,6 +101,7 @@ impl ModuleTemplateContext {
         Ok(Self {
             kind: match &module.kind {
                 ModuleKind::Xcassets => "xcassets".to_string(),
+                ModuleKind::Files => "files".to_string(),
                 ModuleKind::Strings => "strings".to_string(),
                 ModuleKind::Xcstrings => "xcstrings".to_string(),
                 other => return Err(ContextError::unsupported_module(other)),
@@ -127,6 +128,7 @@ impl EntryTemplateContext {
             EntryKind::Image => "image".to_string(),
             EntryKind::Color => "color".to_string(),
             EntryKind::StringKey => "string".to_string(),
+            EntryKind::Data => "data".to_string(),
             other => return Err(ContextError::unsupported_entry(other, &entry.id)),
         };
 
@@ -296,6 +298,8 @@ mod tests {
                             "translation".to_string(),
                             json!("Hello %#@name@, you have %#@count@ messages"),
                         ),
+                        ("status".to_string(), json!("translated")),
+                        ("comment".to_string(), json!("Greeting")),
                         (
                             "placeholders".to_string(),
                             json!([
@@ -336,6 +340,14 @@ mod tests {
 
         assert_eq!(serialized["modules"][0]["kind"], "xcstrings");
         assert_eq!(
+            serialized["modules"][0]["entries"][0]["properties"]["status"],
+            "translated"
+        );
+        assert_eq!(
+            serialized["modules"][0]["entries"][0]["properties"]["comment"],
+            "Greeting"
+        );
+        assert_eq!(
             serialized["modules"][0]["entries"][0]["properties"]["placeholders"],
             json!([
                 {"name": "count", "format": "lld", "swiftType": "Int"},
@@ -347,6 +359,49 @@ mod tests {
                 .as_object()
                 .expect("entry properties should be an object")
                 .contains_key("placeholders")
+        );
+    }
+
+    #[test]
+    fn builds_stable_template_surface_for_files_data_entries() {
+        let module = ResourceModule {
+            id: "Files".to_string(),
+            kind: ModuleKind::Files,
+            name: "Files".to_string(),
+            entries: vec![ResourceEntry {
+                id: "readme".to_string(),
+                name: "readme".to_string(),
+                source_path: Utf8PathBuf::from("fixture"),
+                swift_identifier: "Readme".to_string(),
+                kind: EntryKind::Data,
+                children: Vec::new(),
+                properties: Metadata::from([("path".to_string(), json!("readme.md"))]),
+                metadata: Metadata::new(),
+            }],
+            metadata: Metadata::new(),
+        };
+
+        let context = AssetTemplateContext::new(
+            "files",
+            "Generated/Files.swift",
+            "internal",
+            "module",
+            None,
+            &[module],
+        )
+        .expect("context should build");
+        let serialized = serde_json::to_value(&context).expect("context should serialize");
+
+        assert_eq!(serialized["modules"][0]["kind"], "files");
+        assert_eq!(serialized["modules"][0]["name"], "Files");
+        assert_eq!(
+            serialized["modules"][0]["entries"][0]["swiftIdentifier"],
+            "Readme"
+        );
+        assert_eq!(serialized["modules"][0]["entries"][0]["kind"], "data");
+        assert_eq!(
+            serialized["modules"][0]["entries"][0]["properties"]["path"],
+            "readme.md"
         );
     }
 }

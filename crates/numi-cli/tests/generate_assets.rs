@@ -67,6 +67,9 @@ fn generate_writes_swiftui_assets_from_xcassets_fixture() {
     let generated = fs::read_to_string(working_root.join("Generated/Assets.swift"))
         .expect("generated assets file should exist");
 
+    assert!(generated.contains("ImageAsset(name: \"Icons/add\")"));
+    assert!(generated.contains("ColorAsset(name: \"Brand\")"));
+
     assert_eq!(
         generated,
         r#"import SwiftUI

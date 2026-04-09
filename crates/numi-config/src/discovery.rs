@@ -60,6 +60,14 @@ pub fn discover_config(
     start_dir: &Path,
     explicit_path: Option<&Path>,
 ) -> Result<PathBuf, DiscoveryError> {
+    discover_named_file(start_dir, explicit_path, CONFIG_FILE_NAME)
+}
+
+pub(crate) fn discover_named_file(
+    start_dir: &Path,
+    explicit_path: Option<&Path>,
+    file_name: &str,
+) -> Result<PathBuf, DiscoveryError> {
     if let Some(explicit_path) = explicit_path {
         let resolved = resolve_explicit_path(start_dir, explicit_path)?;
         if resolved.is_file() {
@@ -72,12 +80,12 @@ pub fn discover_config(
 
     let canonical_start = start_dir.canonicalize()?;
 
-    if let Some(path) = find_in_ancestors(&canonical_start) {
+    if let Some(path) = find_in_ancestors(&canonical_start, file_name) {
         return Ok(path);
     }
 
     let mut matches = Vec::new();
-    collect_descendants(&canonical_start, &canonical_start, &mut matches)?;
+    collect_descendants(&canonical_start, &canonical_start, file_name, &mut matches)?;
     matches.sort();
 
     match matches.len() {
@@ -109,9 +117,9 @@ fn resolve_explicit_path(
     }
 }
 
-fn find_in_ancestors(start_dir: &Path) -> Option<PathBuf> {
+fn find_in_ancestors(start_dir: &Path, file_name: &str) -> Option<PathBuf> {
     for directory in start_dir.ancestors() {
-        let candidate = directory.join(CONFIG_FILE_NAME);
+        let candidate = directory.join(file_name);
         if candidate.is_file() {
             return Some(candidate);
         }
@@ -122,6 +130,7 @@ fn find_in_ancestors(start_dir: &Path) -> Option<PathBuf> {
 fn collect_descendants(
     root: &Path,
     current_dir: &Path,
+    file_name: &str,
     matches: &mut Vec<PathBuf>,
 ) -> Result<(), DiscoveryError> {
     let mut entries: Vec<_> = fs::read_dir(current_dir)?.collect::<Result<_, _>>()?;
@@ -132,8 +141,8 @@ fn collect_descendants(
         let file_type = entry.file_type()?;
 
         if file_type.is_dir() {
-            collect_descendants(root, &path, matches)?;
-        } else if file_type.is_file() && entry.file_name() == CONFIG_FILE_NAME {
+            collect_descendants(root, &path, file_name, matches)?;
+        } else if file_type.is_file() && entry.file_name() == file_name {
             let relative = path
                 .strip_prefix(root)
                 .expect("descendant path should stay under root")

@@ -1,6 +1,7 @@
 mod discovery;
 mod model;
 mod validate;
+mod workspace;
 
 use std::{
     fs,
@@ -9,11 +10,15 @@ use std::{
 
 use numi_diagnostics::Diagnostic;
 
-pub use discovery::{CONFIG_FILE_NAME, DiscoveryError, discover_config};
+pub use discovery::{discover_config, DiscoveryError, CONFIG_FILE_NAME};
 pub use model::{
-    ACCESS_LEVEL_VALUES, BUNDLE_MODE_VALUES, BuiltinTemplateConfig, BundleConfig, Config,
-    DEFAULT_ACCESS_LEVEL, DEFAULT_BUNDLE_MODE, DefaultsConfig, INPUT_KIND_VALUES, InputConfig,
-    JobConfig, TemplateConfig,
+    BuiltinTemplateConfig, BundleConfig, Config, DefaultsConfig, InputConfig, JobConfig,
+    TemplateConfig, ACCESS_LEVEL_VALUES, BUNDLE_MODE_VALUES, DEFAULT_ACCESS_LEVEL,
+    DEFAULT_BUNDLE_MODE, INPUT_KIND_VALUES,
+};
+pub use workspace::{
+    discover_workspace, load_workspace_from_path, LoadedWorkspace, WorkspaceConfig,
+    WorkspaceMember, WORKSPACE_FILE_NAME,
 };
 
 #[derive(Debug)]
@@ -157,6 +162,33 @@ pub fn resolve_config(config: &Config) -> Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        sync::atomic::{AtomicU64, Ordering},
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    fn create_temp_dir(label: &str) -> PathBuf {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+        let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after unix epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("numi-config-{label}-{nanos}-{unique}"));
+        fs::create_dir_all(&path).expect("temp dir should be created");
+        path
+    }
+
+    fn write_file(path: &Path, contents: &str) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("parent directory should be created");
+        }
+
+        fs::write(path, contents).expect("file should be written");
+    }
 
     #[test]
     fn parses_defaults_and_jobs_from_toml() {
@@ -400,13 +432,11 @@ path = "Templates/assets.jinja"
             config.jobs[0].template.path.as_deref(),
             Some("Templates/assets.jinja")
         );
-        assert!(
-            config.jobs[0]
-                .template
-                .builtin
-                .as_ref()
-                .is_some_and(|builtin| builtin.swift.is_none())
-        );
+        assert!(config.jobs[0]
+            .template
+            .builtin
+            .as_ref()
+            .is_some_and(|builtin| builtin.swift.is_none()));
     }
 
     #[test]
@@ -561,5 +591,189 @@ swift = "swiftui-assets"
         assert_eq!(resolved.defaults.access_level.as_deref(), Some("internal"));
         assert_eq!(resolved.defaults.bundle.mode.as_deref(), Some("module"));
         assert!(resolved.jobs[0].bundle.is_empty());
+    }
+
+    #[test]
+    fn parses_workspace_manifest() {
+        let temp_dir = create_temp_dir("parse-workspace-manifest");
+        let manifest_path = temp_dir.join("numi-workspace.toml");
+        write_file(
+            &manifest_path,
+            r#"
+version = 1
+
+[[members]]
+config = "App/numi.toml"
+jobs = ["assets", "l10n"]
+
+[[members]]
+config = "Core/numi.toml"
+"#,
+        );
+
+        let loaded =
+            load_workspace_from_path(&manifest_path).expect("workspace manifest should parse");
+
+        assert_eq!(loaded.config.version, 1);
+        assert_eq!(loaded.config.members.len(), 2);
+        assert_eq!(loaded.config.members[0].config, "App/numi.toml");
+        assert_eq!(loaded.config.members[0].jobs, vec!["assets", "l10n"]);
+        assert!(loaded.config.members[1].jobs.is_empty());
+    }
+
+    #[test]
+    fn rejects_duplicate_workspace_members() {
+        let temp_dir = create_temp_dir("duplicate-workspace-members");
+        let manifest_path = temp_dir.join("numi-workspace.toml");
+        write_file(
+            &manifest_path,
+            r#"
+version = 1
+
+[[members]]
+config = "App/numi.toml"
+
+[[members]]
+config = "App/numi.toml"
+"#,
+        );
+
+        let error = load_workspace_from_path(&manifest_path)
+            .expect_err("duplicate workspace members should fail validation");
+
+        assert!(error
+            .to_string()
+            .contains("members[].config must be unique"));
+    }
+
+    #[test]
+    fn rejects_empty_workspace_members() {
+        let temp_dir = create_temp_dir("empty-workspace-members");
+        let manifest_path = temp_dir.join("numi-workspace.toml");
+        write_file(&manifest_path, "version = 1\nmembers = []\n");
+
+        let error = load_workspace_from_path(&manifest_path)
+            .expect_err("workspace manifest requires at least one member");
+
+        assert!(error
+            .to_string()
+            .contains("workspace must declare at least one member"));
+    }
+
+    #[test]
+    fn rejects_unsupported_workspace_version() {
+        let temp_dir = create_temp_dir("unsupported-workspace-version");
+        let manifest_path = temp_dir.join("numi-workspace.toml");
+        write_file(
+            &manifest_path,
+            r#"
+version = 2
+
+[[members]]
+config = "App/numi.toml"
+"#,
+        );
+
+        let error = load_workspace_from_path(&manifest_path)
+            .expect_err("workspace manifest should reject unsupported versions");
+
+        assert!(error.to_string().contains("workspace version must be 1"));
+    }
+
+    #[test]
+    fn rejects_empty_and_duplicate_workspace_jobs() {
+        let temp_dir = create_temp_dir("invalid-workspace-jobs");
+        let manifest_path = temp_dir.join("numi-workspace.toml");
+        write_file(
+            &manifest_path,
+            r#"
+version = 1
+
+[[members]]
+config = "App/numi.toml"
+jobs = []
+
+[[members]]
+config = "Core/numi.toml"
+jobs = ["assets", "assets"]
+"#,
+        );
+
+        let error = load_workspace_from_path(&manifest_path)
+            .expect_err("workspace jobs should reject empty and duplicate selections");
+
+        let message = error.to_string();
+        assert!(message.contains("members[].jobs must not be empty when present"));
+        assert!(message.contains("members[].jobs must not contain duplicates"));
+    }
+
+    #[test]
+    fn discovers_workspace_manifest_with_same_rules_as_single_config() {
+        let ancestor_root = create_temp_dir("workspace-discovery-ancestor");
+        let ancestor_manifest = ancestor_root.join("numi-workspace.toml");
+        write_file(
+            &ancestor_manifest,
+            "version = 1\n[[members]]\nconfig = \"App/numi.toml\"\n",
+        );
+
+        let nested = ancestor_root.join("apps/ios/App");
+        fs::create_dir_all(&nested).expect("nested directory should exist");
+
+        let discovered = discover_workspace(&nested, None)
+            .expect("ancestor workspace manifest should be discovered");
+        assert_eq!(
+            discovered,
+            ancestor_manifest
+                .canonicalize()
+                .expect("manifest path should canonicalize")
+        );
+
+        let descendant_root = create_temp_dir("workspace-discovery-descendant");
+        let descendant_manifest = descendant_root.join("apps/App/numi-workspace.toml");
+        write_file(
+            &descendant_manifest,
+            "version = 1\n[[members]]\nconfig = \"apps/App/numi.toml\"\n",
+        );
+
+        let discovered = discover_workspace(&descendant_root, None)
+            .expect("single descendant workspace manifest should be discovered");
+        assert_eq!(
+            discovered,
+            descendant_manifest
+                .canonicalize()
+                .expect("manifest path should canonicalize")
+        );
+
+        let ambiguous_root = create_temp_dir("workspace-discovery-ambiguous");
+        write_file(
+            &ambiguous_root.join("apps/App/numi-workspace.toml"),
+            "version = 1\n[[members]]\nconfig = \"apps/App/numi.toml\"\n",
+        );
+        write_file(
+            &ambiguous_root.join("packages/Core/numi-workspace.toml"),
+            "version = 1\n[[members]]\nconfig = \"packages/Core/numi.toml\"\n",
+        );
+
+        let error = discover_workspace(&ambiguous_root, None)
+            .expect_err("multiple descendant workspace manifests should be ambiguous");
+
+        match error {
+            DiscoveryError::Ambiguous { root, matches } => {
+                assert_eq!(
+                    root,
+                    ambiguous_root
+                        .canonicalize()
+                        .expect("path should canonicalize")
+                );
+                assert_eq!(
+                    matches,
+                    vec![
+                        PathBuf::from("apps/App/numi-workspace.toml"),
+                        PathBuf::from("packages/Core/numi-workspace.toml"),
+                    ]
+                );
+            }
+            other => panic!("expected ambiguous discovery error, got {other:?}"),
+        }
     }
 }

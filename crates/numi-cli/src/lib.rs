@@ -61,9 +61,10 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
         },
         Command::DumpContext(args) => {
             let config_path = discover_config_path(args.config.as_deref())?;
-            let json = numi_core::dump_context(&config_path, &args.job)
+            let report = numi_core::dump_context(&config_path, &args.job)
                 .map_err(|error| CliError::new(error.to_string()))?;
-            println!("{json}");
+            print_warnings(&report.warnings);
+            println!("{}", report.json);
             Ok(())
         }
     }
@@ -72,8 +73,9 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
 fn run_generate(args: &GenerateArgs) -> Result<(), CliError> {
     let config_path = discover_config_path(args.config.as_deref())?;
     let selected_jobs = selected_jobs(&args.jobs);
-    numi_core::generate(&config_path, selected_jobs)
+    let report = numi_core::generate(&config_path, selected_jobs)
         .map_err(|error| CliError::new(error.to_string()))?;
+    print_warnings(&report.warnings);
     Ok(())
 }
 
@@ -81,21 +83,23 @@ fn run_check(args: &CheckArgs) -> Result<(), CliError> {
     let config_path = discover_config_path(args.config.as_deref())?;
     let selected_jobs = selected_jobs(&args.jobs);
 
-    match numi_core::check(&config_path, selected_jobs)
-        .map_err(|error| CliError::new(error.to_string()))?
-    {
-        numi_core::CheckReport::UpToDate => Ok(()),
-        numi_core::CheckReport::Stale(paths) => {
-            let lines = paths
-                .iter()
-                .map(display_path)
-                .collect::<Vec<_>>()
-                .join("\n");
-            Err(CliError::with_exit_code(
-                format!("stale generated outputs:\n{lines}"),
-                2,
-            ))
-        }
+    let report = numi_core::check(&config_path, selected_jobs)
+        .map_err(|error| CliError::new(error.to_string()))?;
+    print_warnings(&report.warnings);
+
+    if report.stale_paths.is_empty() {
+        Ok(())
+    } else {
+        let lines = report
+            .stale_paths
+            .iter()
+            .map(display_path)
+            .collect::<Vec<_>>()
+            .join("\n");
+        Err(CliError::with_exit_code(
+            format!("stale generated outputs:\n{lines}"),
+            2,
+        ))
     }
 }
 
@@ -148,6 +152,12 @@ fn discover_config_path(explicit_path: Option<&Path>) -> Result<PathBuf, CliErro
 
 fn selected_jobs(jobs: &[String]) -> Option<&[String]> {
     (!jobs.is_empty()).then_some(jobs)
+}
+
+fn print_warnings<T: std::fmt::Display>(warnings: &[T]) {
+    for warning in warnings {
+        eprintln!("{warning}");
+    }
 }
 
 fn display_path(path: impl AsRef<Path>) -> String {

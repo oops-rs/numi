@@ -1,0 +1,34 @@
+{
+  "version": "1.0",
+  "sourceLanguage": "en",
+  "strings": {
+    "greeting.message": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hello %#@name@, you have %#@count@ messages"
+          },
+          "substitutions": {
+            "count": {
+              "formatSpecifier": "lld"
+            },
+            "name": {
+              "formatSpecifier": "@"
+            }
+          }
+        }
+      }
+    },
+    "profile.title": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Profile"
+          }
+        }
+      }
+    }
+  }
+}

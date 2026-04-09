@@ -275,4 +275,78 @@ mod tests {
             "Profile"
         );
     }
+
+    #[test]
+    fn builds_stable_template_surface_for_xcstrings_localization() {
+        let module = ResourceModule {
+            id: "Localizable".to_string(),
+            kind: ModuleKind::Xcstrings,
+            name: "Localizable".to_string(),
+            entries: vec![
+                ResourceEntry {
+                    id: "greeting.message".to_string(),
+                    name: "greeting.message".to_string(),
+                    source_path: Utf8PathBuf::from("fixture"),
+                    swift_identifier: "GreetingMessage".to_string(),
+                    kind: EntryKind::StringKey,
+                    children: Vec::new(),
+                    properties: Metadata::from([
+                        ("key".to_string(), json!("greeting.message")),
+                        (
+                            "translation".to_string(),
+                            json!("Hello %#@name@, you have %#@count@ messages"),
+                        ),
+                        (
+                            "placeholders".to_string(),
+                            json!([
+                                {"name": "count", "format": "lld", "swiftType": "Int"},
+                                {"name": "name", "format": "@", "swiftType": "String"}
+                            ]),
+                        ),
+                    ]),
+                    metadata: Metadata::new(),
+                },
+                ResourceEntry {
+                    id: "profile.title".to_string(),
+                    name: "profile.title".to_string(),
+                    source_path: Utf8PathBuf::from("fixture"),
+                    swift_identifier: "ProfileTitle".to_string(),
+                    kind: EntryKind::StringKey,
+                    children: Vec::new(),
+                    properties: Metadata::from([
+                        ("key".to_string(), json!("profile.title")),
+                        ("translation".to_string(), json!("Profile")),
+                    ]),
+                    metadata: Metadata::new(),
+                },
+            ],
+            metadata: Metadata::from([("tableName".to_string(), json!("Localizable"))]),
+        };
+
+        let context = AssetTemplateContext::new(
+            "l10n",
+            "Generated/L10n.swift",
+            "internal",
+            "module",
+            None,
+            &[module],
+        )
+        .expect("context should build");
+        let serialized = serde_json::to_value(&context).expect("context should serialize");
+
+        assert_eq!(serialized["modules"][0]["kind"], "xcstrings");
+        assert_eq!(
+            serialized["modules"][0]["entries"][0]["properties"]["placeholders"],
+            json!([
+                {"name": "count", "format": "lld", "swiftType": "Int"},
+                {"name": "name", "format": "@", "swiftType": "String"}
+            ])
+        );
+        assert!(
+            !serialized["modules"][0]["entries"][1]["properties"]
+                .as_object()
+                .expect("entry properties should be an object")
+                .contains_key("placeholders")
+        );
+    }
 }

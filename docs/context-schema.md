@@ -44,10 +44,12 @@ Current v1 module kinds:
 
 - `xcassets`
 - `strings`
+- `xcstrings`
 
 Current stable module property keys:
 
 - `tableName` for `strings` modules
+- `tableName` for `xcstrings` modules
 
 ### `modules[].entries[]`
 
@@ -71,6 +73,9 @@ Current stable entry property keys:
 - `assetName` for asset entries
 - `key` for localization string entries
 - `translation` for localization string entries
+- `placeholders` for localization string entries when placeholder metadata exists
+
+`placeholders` is additive metadata for localization entries. It is omitted entirely when a string has no placeholders.
 
 ## Determinism
 

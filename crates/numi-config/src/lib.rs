@@ -213,6 +213,30 @@ builtin = "swiftui-assets"
     }
 
     #[test]
+    fn accepts_files_as_valid_input_kind() {
+        let config = parse_str(
+            r#"
+version = 1
+
+[[jobs]]
+name = "files"
+output = "Generated/Files.swift"
+
+[[jobs.inputs]]
+type = "files"
+path = "Resources"
+
+[jobs.template]
+path = "Templates/files.stencil"
+"#,
+        )
+        .expect("config should parse");
+
+        assert_eq!(config.jobs.len(), 1);
+        assert_eq!(config.jobs[0].inputs[0].kind, "files");
+    }
+
+    #[test]
     fn rejects_unknown_keys_during_parsing() {
         let error = parse_str(
             r#"

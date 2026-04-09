@@ -458,6 +458,38 @@ fn config_print_validation_hints_reference_numi_toml() {
 }
 
 #[test]
+fn config_print_rejects_workspace_manifests() {
+    let root = make_temp_dir("config-print-workspace-manifest");
+    fs::create_dir_all(root.join("apps/assets")).expect("workspace member dir should exist");
+    fs::write(
+        root.join("numi.toml"),
+        r#"
+version = 1
+
+[workspace]
+members = ["apps/assets"]
+"#,
+    )
+    .expect("workspace manifest should be written");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_numi"))
+        .args(["config", "print", "--config", "numi.toml"])
+        .current_dir(&root)
+        .output()
+        .expect("numi config print should run");
+
+    assert!(!output.status.success(), "command unexpectedly succeeded");
+
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
+    assert_eq!(
+        stderr.trim(),
+        "`config print` only supports single-config manifests; run it from a member directory or pass `--config <member>/numi.toml`"
+    );
+
+    fs::remove_dir_all(root).expect("temp dir should be removed");
+}
+
+#[test]
 fn generate_missing_job_hint_references_numi_toml() {
     let root = make_temp_dir("generate-missing-job-hint");
     let config_path = root.join("numi.toml");

@@ -231,14 +231,20 @@ fn run_config_locate(args: &LocateArgs) -> Result<(), CliError> {
 }
 
 fn run_config_print(args: &PrintArgs) -> Result<(), CliError> {
-    let config_path = discover_config_path(args.config.as_deref())?;
-    let loaded = numi_config::load_from_path(&config_path)
-        .map_err(|error| CliError::new(error.to_string()))?;
-    let resolved = numi_config::resolve_config(&loaded.config);
-    let rendered = toml::to_string_pretty(&resolved)
-        .map_err(|error| CliError::new(format!("failed to serialize config TOML: {error}")))?;
-    print!("{rendered}");
-    Ok(())
+    let loaded = load_cli_manifest(args.config.as_deref(), false)?;
+    match &loaded.manifest {
+        Manifest::Config(config) => {
+            let resolved = numi_config::resolve_config(config);
+            let rendered = toml::to_string_pretty(&resolved).map_err(|error| {
+                CliError::new(format!("failed to serialize config TOML: {error}"))
+            })?;
+            print!("{rendered}");
+            Ok(())
+        }
+        Manifest::Workspace(_) => Err(CliError::new(
+            "`config print` only supports single-config manifests; run it from a member directory or pass `--config <member>/numi.toml`",
+        )),
+    }
 }
 
 fn load_cli_manifest(

@@ -321,13 +321,144 @@ fn path_declares_workspace_manifest(path: &Path) -> Result<bool, CliError> {
 }
 
 fn manifest_text_declares_workspace(contents: &str) -> bool {
-    contents.lines().any(|line| {
-        let trimmed = line.trim();
-        trimmed == "[workspace]"
-            || trimmed.starts_with("[workspace.")
-            || trimmed.starts_with("workspace =")
-            || trimmed == "[[members]]"
-    })
+    let mut in_root = true;
+
+    for line in contents.lines() {
+        let Some(trimmed) = strip_toml_comment(line) else {
+            continue;
+        };
+
+        if let Some(header) = parse_toml_table_header(trimmed) {
+            in_root = false;
+
+            if header.is_array {
+                if header.path.len() == 1 && header.path[0] == "members" {
+                    return true;
+                }
+            } else if header
+                .path
+                .first()
+                .is_some_and(|segment| *segment == "workspace")
+            {
+                return true;
+            }
+
+            continue;
+        }
+
+        if in_root
+            && parse_toml_key_path_before_equals(trimmed)
+                .and_then(|path| path.first().copied())
+                .is_some_and(|segment| segment == "workspace")
+        {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn strip_toml_comment(line: &str) -> Option<&str> {
+    let mut in_basic = false;
+    let mut in_literal = false;
+    let mut escape = false;
+
+    for (index, ch) in line.char_indices() {
+        match ch {
+            '"' if !in_literal && !escape => in_basic = !in_basic,
+            '\'' if !in_basic => in_literal = !in_literal,
+            '#' if !in_basic && !in_literal => {
+                let trimmed = line[..index].trim();
+                return (!trimmed.is_empty()).then_some(trimmed);
+            }
+            _ => {}
+        }
+
+        escape = in_basic && ch == '\\' && !escape;
+        if ch != '\\' {
+            escape = false;
+        }
+    }
+
+    let trimmed = line.trim();
+    (!trimmed.is_empty()).then_some(trimmed)
+}
+
+struct TomlHeader<'a> {
+    is_array: bool,
+    path: Vec<&'a str>,
+}
+
+fn parse_toml_table_header(line: &str) -> Option<TomlHeader<'_>> {
+    if let Some(inner) = line
+        .strip_prefix("[[")
+        .and_then(|rest| rest.strip_suffix("]]"))
+    {
+        return Some(TomlHeader {
+            is_array: true,
+            path: parse_toml_path(inner)?,
+        });
+    }
+
+    line.strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+        .and_then(parse_toml_path)
+        .map(|path| TomlHeader {
+            is_array: false,
+            path,
+        })
+}
+
+fn parse_toml_key_path_before_equals(line: &str) -> Option<Vec<&str>> {
+    let mut in_basic = false;
+    let mut in_literal = false;
+    let mut escape = false;
+
+    for (index, ch) in line.char_indices() {
+        match ch {
+            '"' if !in_literal && !escape => in_basic = !in_basic,
+            '\'' if !in_basic => in_literal = !in_literal,
+            '=' if !in_basic && !in_literal => return parse_toml_path(&line[..index]),
+            _ => {}
+        }
+
+        escape = in_basic && ch == '\\' && !escape;
+        if ch != '\\' {
+            escape = false;
+        }
+    }
+
+    None
+}
+
+fn parse_toml_path(input: &str) -> Option<Vec<&str>> {
+    let path = input
+        .split('.')
+        .map(|segment| segment.trim())
+        .filter(|segment| !segment.is_empty())
+        .map(unquote_toml_key_segment)
+        .collect::<Vec<_>>();
+
+    (!path.is_empty()).then_some(path)
+}
+
+fn unquote_toml_key_segment(segment: &str) -> &str {
+    if segment.len() >= 2 {
+        if let Some(unquoted) = segment
+            .strip_prefix('"')
+            .and_then(|rest| rest.strip_suffix('"'))
+        {
+            return unquoted.trim();
+        }
+        if let Some(unquoted) = segment
+            .strip_prefix('\'')
+            .and_then(|rest| rest.strip_suffix('\''))
+        {
+            return unquoted.trim();
+        }
+    }
+
+    segment
 }
 
 fn workspace_manifest_discovery_error(error: numi_config::DiscoveryError) -> CliError {

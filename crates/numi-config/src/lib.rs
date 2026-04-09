@@ -55,7 +55,13 @@ impl std::fmt::Display for ConfigError {
 impl std::error::Error for ConfigError {}
 
 pub fn parse_str(input: &str) -> Result<Config, ConfigError> {
-    let config: Config = toml::from_str(input).map_err(ConfigError::ParseToml)?;
+    let value: toml::Value = toml::from_str(input).map_err(ConfigError::ParseToml)?;
+    let legacy_diagnostics = detect_legacy_flat_builtin_template_syntax(&value);
+    if !legacy_diagnostics.is_empty() {
+        return Err(ConfigError::Invalid(legacy_diagnostics));
+    }
+
+    let config: Config = value.try_into().map_err(ConfigError::ParseToml)?;
     let diagnostics = validate::validate_config(&config);
 
     if diagnostics.is_empty() {
@@ -63,6 +69,32 @@ pub fn parse_str(input: &str) -> Result<Config, ConfigError> {
     } else {
         Err(ConfigError::Invalid(diagnostics))
     }
+}
+
+fn detect_legacy_flat_builtin_template_syntax(value: &toml::Value) -> Vec<Diagnostic> {
+    value
+        .get("jobs")
+        .and_then(toml::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|job| {
+            let template = job.get("template")?.as_table()?;
+            let builtin = template.get("builtin")?;
+            let builtin_name = builtin.as_str()?;
+
+            let mut diagnostic =
+                Diagnostic::error("legacy flat built-in template syntax is no longer supported")
+                    .with_hint(format!(
+                        "use `[jobs.template.builtin] swift = \"...\"` instead; for example, replace `[jobs.template] builtin = \"{builtin_name}\"` with `[jobs.template.builtin] swift = \"{builtin_name}\"`"
+                    ));
+
+            if let Some(job_name) = job.get("name").and_then(toml::Value::as_str) {
+                diagnostic = diagnostic.with_job(job_name);
+            }
+
+            Some(diagnostic)
+        })
+        .collect()
 }
 
 pub fn load_from_path(path: &Path) -> Result<LoadedConfig, ConfigError> {
@@ -267,6 +299,32 @@ path = "Resources/Assets.xcassets"
     }
 
     #[test]
+    fn rejects_legacy_flat_builtin_template_shape_with_migration_hint() {
+        let error = parse_str(
+            r#"
+version = 1
+
+[[jobs]]
+name = "assets"
+output = "Generated/Assets.swift"
+
+[[jobs.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.template]
+builtin = "swiftui-assets"
+"#,
+        )
+        .expect_err("legacy flat builtin syntax should fail with a migration diagnostic");
+
+        let message = error.to_string();
+        assert!(message.contains("legacy flat built-in template syntax is no longer supported"));
+        assert!(message.contains("[jobs.template.builtin] swift = \"...\""));
+        assert!(!message.contains("invalid type: string"));
+    }
+
+    #[test]
     fn rejects_empty_swift_builtin_template_name() {
         let error = parse_str(
             r#"
@@ -314,6 +372,41 @@ swift = "not-a-real-template"
         let message = error.to_string();
         assert!(message.contains("jobs.template.builtin.swift must be one of"));
         assert!(message.contains("not-a-real-template"));
+    }
+
+    #[test]
+    fn accepts_path_template_with_empty_builtin_table() {
+        let config = parse_str(
+            r#"
+version = 1
+
+[[jobs]]
+name = "assets"
+output = "Generated/Assets.swift"
+
+[[jobs.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.template]
+path = "Templates/assets.jinja"
+
+[jobs.template.builtin]
+"#,
+        )
+        .expect("path template should remain valid when an empty builtin table is present");
+
+        assert_eq!(
+            config.jobs[0].template.path.as_deref(),
+            Some("Templates/assets.jinja")
+        );
+        assert!(
+            config.jobs[0]
+                .template
+                .builtin
+                .as_ref()
+                .is_some_and(|builtin| builtin.swift.is_none())
+        );
     }
 
     #[test]

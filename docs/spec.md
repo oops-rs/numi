@@ -415,6 +415,7 @@ pub enum ModuleKind {
     Xcassets,
     Strings,
     Xcstrings,
+    Files,
     Custom(String),
 }
 

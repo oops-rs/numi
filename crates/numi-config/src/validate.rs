@@ -110,7 +110,7 @@ pub fn validate_config(config: &Config) -> Vec<Diagnostic> {
         }
 
         if let Some(builtin) = &job.template.builtin {
-            if builtin.swift.is_none() {
+            if builtin.swift.is_none() && job.template.path.is_none() {
                 diagnostics.push(
                     Diagnostic::error("job template builtin must set exactly one namespace")
                         .with_job(job.name.clone())

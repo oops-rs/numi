@@ -208,11 +208,6 @@ fn parse_xcstrings_file(path: &Path) -> Result<LocalizationTable, ParseL10nError
     let mut warnings = Vec::new();
 
     for (key, record) in catalog.strings {
-        if let Some(reason) = record.unsupported_variation_reason() {
-            warnings.push(xcstrings_warning(path, &key, reason));
-            continue;
-        }
-
         let Some(localization) = record
             .selected_localization(catalog.source_language.as_deref())
         else {
@@ -221,6 +216,11 @@ fn parse_xcstrings_file(path: &Path) -> Result<LocalizationTable, ParseL10nError
                 message: format!("xcstrings key `{key}` does not contain a supported string unit"),
             });
         };
+
+        if let Some(reason) = localization.unsupported_variation_reason() {
+            warnings.push(xcstrings_warning(path, &key, reason));
+            continue;
+        }
 
         let translation = localization.string_unit.as_ref().ok_or_else(|| ParseL10nError::ParseFile {
             path: path.to_path_buf(),
@@ -539,8 +539,6 @@ struct XcstringsCatalog {
 struct XcstringsRecord {
     #[serde(default)]
     localizations: BTreeMap<String, XcstringsLocalization>,
-    #[serde(flatten)]
-    other: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -584,33 +582,11 @@ impl XcstringsRecord {
     fn selected_localization(&self, source_language: Option<&str>) -> Option<&XcstringsLocalization> {
         if let Some(source_language) = source_language {
             if let Some(localization) = self.localizations.get(source_language) {
-                if localization.string_unit.is_some() {
-                    return Some(localization);
-                }
+                return Some(localization);
             }
         }
 
-        self.localizations
-            .values()
-            .find(|localization| localization.string_unit.is_some())
-    }
-
-    fn unsupported_variation_reason(&self) -> Option<&'static str> {
-        if self
-            .other
-            .get("variations")
-            .is_some_and(|value| !is_empty_variation_value(value))
-        {
-            return Some("unsupported variation tree");
-        }
-
-        for localization in self.localizations.values() {
-            if let Some(reason) = localization.unsupported_variation_reason() {
-                return Some(reason);
-            }
-        }
-
-        None
+        self.localizations.values().next()
     }
 }
 
@@ -937,6 +913,64 @@ mod tests {
             tables[0].warnings[0].path,
             Some(xcstrings_path.clone())
         );
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn keeps_xcstrings_plain_string_when_other_localization_has_plural_variations() {
+        let temp_dir = make_temp_dir("parse-xcstrings-other-loc-variations");
+        let xcstrings_path = temp_dir.join("Localizable.xcstrings");
+        fs::write(
+            &xcstrings_path,
+            r#"{
+  "version": "1.0",
+  "sourceLanguage": "en",
+  "strings": {
+    "greeting.message": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hello world"
+          }
+        },
+        "de": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Hallo Welt"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Hallo Welten"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"#,
+        )
+        .expect("xcstrings file should be written");
+
+        let tables = parse_xcstrings(&xcstrings_path).expect("xcstrings should parse");
+
+        assert_eq!(tables.len(), 1);
+        assert_eq!(tables[0].entries.len(), 1);
+        assert_eq!(tables[0].entries[0].path, "greeting.message");
+        assert_eq!(
+            tables[0].entries[0].properties["translation"],
+            Value::String("Hello world".to_string())
+        );
+        assert!(tables[0].warnings.is_empty());
 
         fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
     }

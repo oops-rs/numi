@@ -69,25 +69,25 @@ fn cleanup_fixture(fixture: PreparedFixture) {
     fs::remove_dir_all(fixture.temp_root).expect("temp dir should be removed");
 }
 
-fn benchmark_generate_assets_repeated_fixture(c: &mut Criterion) {
+fn benchmark_generate_assets_cache_hit_fixture(c: &mut Criterion) {
     let fixture = prepare_fixture("xcassets-basic", "pipeline-assets-basic");
     let config_path = fixture.config_path();
     numi_core::generate(&config_path, None).expect("fixture warm-up generate should succeed");
 
-    c.bench_function("generate_assets_repeated_fixture", |b| {
+    c.bench_function("generate_assets_cache_hit_fixture", |b| {
         b.iter(|| numi_core::generate(&config_path, None).expect("fixture generate should work"));
     });
 
     cleanup_fixture(fixture);
 }
 
-fn benchmark_generate_mixed_large_repeated_fixture(c: &mut Criterion) {
+fn benchmark_generate_mixed_large_cache_hit_fixture(c: &mut Criterion) {
     let fixture = prepare_fixture("bench-mixed-large", "pipeline-mixed-large");
     let config_path = fixture.config_path();
 
     numi_core::generate(&config_path, None).expect("fixture warm-up generate should succeed");
 
-    c.bench_function("generate_mixed_large_repeated_fixture", |b| {
+    c.bench_function("generate_mixed_large_cache_hit_fixture", |b| {
         b.iter(|| numi_core::generate(&config_path, None).expect("fixture generate should work"));
     });
 
@@ -113,8 +113,8 @@ fn benchmark_discover_multimodule_root_ambiguous_fixture(c: &mut Criterion) {
 
 criterion_group!(
     benches,
-    benchmark_generate_assets_repeated_fixture,
-    benchmark_generate_mixed_large_repeated_fixture,
+    benchmark_generate_assets_cache_hit_fixture,
+    benchmark_generate_mixed_large_cache_hit_fixture,
     benchmark_discover_multimodule_root_ambiguous_fixture
 );
 criterion_main!(benches);

@@ -1,13 +1,14 @@
 # Numi
 
-Numi is a Rust CLI for generating Swift code from resource files.
+Numi is a Rust CLI for generating code from structured project resources.
+Today it ships Swift templates for the Apple ecosystem.
 
 Today it supports:
 
 - `.xcassets` inputs
 - `.strings` inputs
 - `.xcstrings` inputs
-- built-in templates for SwiftUI assets and localization
+- shipped Swift templates for SwiftUI assets, localization, and file helpers
 - custom Minijinja templates, including `{% include %}` support
 
 This README is aimed at developers working on or integrating Numi locally.
@@ -81,7 +82,8 @@ type = "xcassets"
 path = "Resources/Assets.xcassets"
 
 [jobs.template]
-builtin = "swiftui-assets"
+[jobs.template.builtin]
+swift = "swiftui-assets"
 
 [[jobs]]
 name = "l10n"
@@ -92,7 +94,8 @@ type = "strings"
 path = "Resources/Localization"
 
 [jobs.template]
-builtin = "l10n"
+[jobs.template.builtin]
+swift = "l10n"
 ```
 
 You can also point a localization job at `.xcstrings`:
@@ -107,7 +110,8 @@ type = "xcstrings"
 path = "Resources/Localization"
 
 [jobs.template]
-builtin = "l10n"
+[jobs.template.builtin]
+swift = "l10n"
 ```
 
 The starter config shipped with `numi init` lives in [docs/examples/starter-numi.toml](docs/examples/starter-numi.toml).
@@ -163,16 +167,17 @@ numi dump-context --job l10n
 
 ## Built-In Templates
 
-Current built-ins:
+Current shipped Swift templates in `templates/swift` for the Apple ecosystem:
 
 - `swiftui-assets` for SwiftUI-friendly asset accessors
 - `l10n` for simple localization accessors from `.strings` or supported `.xcstrings` records
+- `files` for file-oriented helpers
 
 Current `.xcstrings` limitation:
 
 - plural and device-specific variations are skipped with warnings
 - supported plain-string records still generate normally
-- placeholder metadata is preserved in template context, but the built-in `l10n` template currently emits simple no-argument accessors
+- placeholder metadata is preserved in template context, but the shipped `l10n` Swift template currently emits simple no-argument accessors
 
 ## Custom Templates
 

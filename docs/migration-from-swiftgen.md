@@ -1,6 +1,7 @@
 # Migration From SwiftGen
 
 Numi is intentionally close to SwiftGen for the MVP path, but it makes a few contracts more explicit.
+Numi is a general-purpose code generator that currently ships Swift templates for the Apple ecosystem.
 
 ## What Stays Familiar
 
@@ -24,15 +25,24 @@ The SwiftGen MVP concepts map directly onto Numi's current config surface:
 
 - `[[jobs]]` describes one generation unit
 - `[[jobs.inputs]]` declares each resource input
-- `[jobs.template]` selects either a built-in template or a custom template path
+- `[jobs.template]` contains either `[jobs.template.builtin]` for a shipped Swift template or a custom template path
+- `[jobs.template.builtin]` names the shipped template family, such as `swift`
 - `[defaults]` and `[defaults.bundle]` provide shared defaults across jobs
 
 ## Built-In Templates
 
-Current built-ins cover the MVP resource types:
+Current shipped Swift templates in `templates/swift` cover the MVP resource types:
 
 - `swiftui-assets` for SwiftUI-friendly asset accessors
 - `l10n` for `.strings` and `.xcstrings` localization accessors
+- `files` for file-oriented helpers
+
+Example:
+
+```toml
+[jobs.template.builtin]
+swift = "l10n"
+```
 
 If a SwiftGen setup relied on a custom Stencil template, the closest Numi migration path is to move that output shape into a custom Minijinja template and validate it with `numi dump-context`.
 
@@ -41,7 +51,7 @@ If a SwiftGen setup relied on a custom Stencil template, the closest Numi migrat
 - `.strings` is supported in v1
 - `.xcstrings` is supported in v1, but plural and device-specific variations are skipped with warnings in the current release
 - Bundle handling is explicit in the template context through `bundle.mode` and `bundle.identifier`
-- The stable context contract is documented in [context-schema.md](/Users/wendell/Developer/oops-rs/numi/docs/context-schema.md)
+- The stable context contract is documented in [context-schema.md](docs/context-schema.md)
 
 ## Suggested Migration Flow
 

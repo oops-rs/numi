@@ -98,8 +98,18 @@ pub fn validate_config(config: &Config) -> Vec<Diagnostic> {
             diagnostics.push(
                 Diagnostic::error("job template must set exactly one source")
                     .with_job(job.name.clone())
-                    .with_hint("set either `[jobs.template].builtin` or `[jobs.template].path`"),
+                    .with_hint("set either `[jobs.template.builtin] swift = \"...\"` or `[jobs.template] path = \"...\"`"),
             );
+        }
+
+        if let Some(builtin) = &job.template.builtin {
+            if builtin.swift.is_none() {
+                diagnostics.push(
+                    Diagnostic::error("job template builtin must set exactly one namespace")
+                        .with_job(job.name.clone())
+                        .with_hint("set `[jobs.template.builtin] swift = \"...\"`"),
+                );
+            }
         }
     }
 

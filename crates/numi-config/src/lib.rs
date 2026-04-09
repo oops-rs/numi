@@ -11,8 +11,9 @@ use numi_diagnostics::Diagnostic;
 
 pub use discovery::{CONFIG_FILE_NAME, DiscoveryError, discover_config};
 pub use model::{
-    ACCESS_LEVEL_VALUES, BUNDLE_MODE_VALUES, BundleConfig, Config, DEFAULT_ACCESS_LEVEL,
-    DEFAULT_BUNDLE_MODE, DefaultsConfig, INPUT_KIND_VALUES, InputConfig, JobConfig, TemplateConfig,
+    ACCESS_LEVEL_VALUES, BUNDLE_MODE_VALUES, BundleConfig, BuiltinTemplateConfig, Config,
+    DEFAULT_ACCESS_LEVEL, DEFAULT_BUNDLE_MODE, DefaultsConfig, INPUT_KIND_VALUES, InputConfig,
+    JobConfig, TemplateConfig,
 };
 
 #[derive(Debug)]
@@ -146,7 +147,8 @@ type = "xcassets"
 path = "Resources/Assets.xcassets"
 
 [jobs.template]
-builtin = "swiftui-assets"
+[jobs.template.builtin]
+swift = "swiftui-assets"
 
 [[jobs]]
 name = "l10n"
@@ -169,13 +171,99 @@ path = "Templates/l10n.stencil"
         assert_eq!(config.jobs[0].name, "assets");
         assert_eq!(config.jobs[0].inputs.len(), 1);
         assert_eq!(
-            config.jobs[0].template.builtin.as_deref(),
+            config.jobs[0]
+                .template
+                .builtin
+                .as_ref()
+                .and_then(|builtin| builtin.swift.as_deref()),
             Some("swiftui-assets")
         );
         assert_eq!(
             config.jobs[1].template.path.as_deref(),
             Some("Templates/l10n.stencil")
         );
+    }
+
+    #[test]
+    fn parses_namespaced_builtin_template_config() {
+        let config = parse_str(
+            r#"
+version = 1
+
+[[jobs]]
+name = "assets"
+output = "Generated/Assets.swift"
+
+[[jobs.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.template.builtin]
+swift = "swiftui-assets"
+"#,
+        )
+        .expect("config should parse");
+
+        assert_eq!(
+            config.jobs[0]
+                .template
+                .builtin
+                .as_ref()
+                .and_then(|builtin| builtin.swift.as_deref()),
+            Some("swiftui-assets")
+        );
+    }
+
+    #[test]
+    fn rejects_template_configs_that_set_both_builtin_and_path() {
+        let error = parse_str(
+            r#"
+version = 1
+
+[[jobs]]
+name = "assets"
+output = "Generated/Assets.swift"
+
+[[jobs.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.template]
+path = "Templates/assets.stencil"
+
+[jobs.template.builtin]
+swift = "swiftui-assets"
+"#,
+        )
+        .expect_err("config with both template sources should fail validation");
+
+        let message = error.to_string();
+        assert!(message.contains("job template must set exactly one source"));
+        assert!(message.contains("set either `[jobs.template.builtin] swift = \"...\"` or `[jobs.template] path = \"...\"`"));
+    }
+
+    #[test]
+    fn rejects_empty_builtin_template_namespace() {
+        let error = parse_str(
+            r#"
+version = 1
+
+[[jobs]]
+name = "assets"
+output = "Generated/Assets.swift"
+
+[[jobs.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.template.builtin]
+"#,
+        )
+        .expect_err("empty built-in namespace should fail validation");
+
+        let message = error.to_string();
+        assert!(message.contains("job template builtin must set exactly one namespace"));
+        assert!(message.contains("set `[jobs.template.builtin] swift = \"...\"`"));
     }
 
     #[test]
@@ -200,7 +288,8 @@ type = "images"
 path = "Resources/Assets.xcassets"
 
 [jobs.template]
-builtin = "swiftui-assets"
+[jobs.template.builtin]
+swift = "swiftui-assets"
 "#,
         )
         .expect_err("invalid v1 enum values should fail validation");
@@ -257,7 +346,8 @@ path = "Resources/Assets.xcassets"
 pth = "Resources/Typo.xcassets"
 
 [jobs.template]
-builtin = "swiftui-assets"
+[jobs.template.builtin]
+swift = "swiftui-assets"
 "#,
         )
         .expect_err("unknown keys should fail during parsing");
@@ -289,7 +379,8 @@ type = "xcassets"
 path = "Resources/Assets.xcassets"
 
 [jobs.template]
-builtin = "swiftui-assets"
+[jobs.template.builtin]
+swift = "swiftui-assets"
 "#,
         )
         .expect("config should parse");

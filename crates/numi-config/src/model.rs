@@ -54,8 +54,15 @@ pub struct InputConfig {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TemplateConfig {
-    pub builtin: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub builtin: Option<BuiltinTemplateConfig>,
     pub path: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BuiltinTemplateConfig {
+    pub swift: Option<String>,
 }
 
 impl DefaultsConfig {

@@ -1,0 +1,26 @@
+version = 1
+
+[defaults]
+access_level = "internal"
+
+[[jobs]]
+name = "assets"
+output = "Generated/Assets.swift"
+
+[[jobs.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.template.builtin]
+swift = "swiftui-assets"
+
+[[jobs]]
+name = "l10n"
+output = "Generated/L10n.swift"
+
+[[jobs.inputs]]
+type = "strings"
+path = "Resources/Localization"
+
+[jobs.template.builtin]
+swift = "l10n"

@@ -298,20 +298,18 @@ fn generate_job(
     let incremental = resolve_incremental(defaults, job, options);
     let generation_fingerprint = compute_generation_fingerprint(config_dir, defaults, job);
 
-    if incremental {
-        if let Some(fingerprint) = generation_fingerprint.as_deref() {
-            if generation_cache::is_fresh(config_path, &job.name, fingerprint, &output_path)
-                .ok()
-                .unwrap_or(false)
-            {
-                return Ok(JobExecution {
-                    job_name: job.name.clone(),
-                    output_path: to_utf8_path(&output_path)?,
-                    outcome: WriteOutcome::Skipped,
-                    warnings: Vec::new(),
-                });
-            }
-        }
+    if incremental
+        && let Some(fingerprint) = generation_fingerprint.as_deref()
+        && generation_cache::is_fresh(config_path, &job.name, fingerprint, &output_path)
+            .ok()
+            .unwrap_or(false)
+    {
+        return Ok(JobExecution {
+            job_name: job.name.clone(),
+            output_path: to_utf8_path(&output_path)?,
+            outcome: WriteOutcome::Skipped,
+            warnings: Vec::new(),
+        });
     }
 
     let (context, warnings) = build_context(config_path, config_dir, defaults, job)?;

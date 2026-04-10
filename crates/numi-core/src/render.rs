@@ -354,9 +354,7 @@ fn extract_literal_template_references(template_source: &str) -> Option<Vec<Stri
             continue;
         }
 
-        let Some((literal, _tail)) = parse_quoted_literal(remainder.trim_start()) else {
-            return None;
-        };
+        let (literal, _tail) = parse_quoted_literal(remainder.trim_start())?;
         references.push(literal.to_owned());
     }
 

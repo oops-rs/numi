@@ -277,10 +277,10 @@ fn parse_xcstrings_file(path: &Path) -> Result<LocalizationTable, ParseL10nError
             ("translation".to_string(), Value::String(translation)),
         ]);
 
-        if let Some(metadata) = adapter_metadata.get(&key) {
-            if let Some(placeholders) = build_placeholder_metadata(&metadata.placeholder_specs) {
-                properties.insert("placeholders".to_string(), Value::Array(placeholders));
-            }
+        if let Some(metadata) = adapter_metadata.get(&key)
+            && let Some(placeholders) = build_placeholder_metadata(&metadata.placeholder_specs)
+        {
+            properties.insert("placeholders".to_string(), Value::Array(placeholders));
         }
 
         entries.push(RawEntry {
@@ -355,8 +355,10 @@ fn parse_xcstrings_adapter_metadata(
             continue;
         };
 
-        let mut metadata = XcstringsEntryMetadata::default();
-        metadata.variation_reason = unsupported_variation_reason_from_value(localization);
+        let mut metadata = XcstringsEntryMetadata {
+            variation_reason: unsupported_variation_reason_from_value(localization),
+            ..XcstringsEntryMetadata::default()
+        };
 
         if let Some(substitutions) = localization.get("substitutions").and_then(Value::as_object) {
             for (name, substitution) in substitutions {
@@ -435,7 +437,7 @@ fn decode_utf16_units(
     path: &Path,
     decode_unit: fn([u8; 2]) -> u16,
 ) -> Result<String, ParseL10nError> {
-    if bytes.len() % 2 != 0 {
+    if !bytes.len().is_multiple_of(2) {
         return Err(ParseL10nError::ParseFile {
             path: path.to_path_buf(),
             message: "UTF-16 file has an odd number of bytes".to_string(),
@@ -635,9 +637,11 @@ fn extract_printf_placeholders(translation: &str) -> Vec<String> {
         }
 
         let modifier_start = cursor;
-        if chars.get(cursor) == Some(&'h') && chars.get(cursor + 1) == Some(&'h') {
-            cursor += 2;
-        } else if chars.get(cursor) == Some(&'l') && chars.get(cursor + 1) == Some(&'l') {
+        if matches!(
+            (chars.get(cursor), chars.get(cursor + 1)),
+            (Some('h' | 'l'), Some('h' | 'l'))
+        ) && chars.get(cursor) == chars.get(cursor + 1)
+        {
             cursor += 2;
         } else if chars
             .get(cursor)

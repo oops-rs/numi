@@ -123,10 +123,10 @@ fn asset_name_from_relative(relative: &Path, suffix: &str) -> String {
         .map(|component| component.to_string_lossy().into_owned())
         .collect::<Vec<_>>();
 
-    if let Some(last) = components.last_mut() {
-        if let Some(stripped) = last.strip_suffix(suffix) {
-            *last = stripped.to_owned();
-        }
+    if let Some(last) = components.last_mut()
+        && let Some(stripped) = last.strip_suffix(suffix)
+    {
+        *last = stripped.to_owned();
     }
 
     components.join("/")

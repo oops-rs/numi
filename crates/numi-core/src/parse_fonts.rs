@@ -367,7 +367,7 @@ fn decode_name_string(
 }
 
 fn decode_utf16_be(bytes: &[u8]) -> Result<String, ParseFontsError> {
-    if bytes.len() % 2 != 0 {
+    if !bytes.len().is_multiple_of(2) {
         return Err(ParseFontsError::InvalidFont {
             path: PathBuf::from("<memory>"),
             detail: "UTF-16BE string has an odd byte count".to_string(),
@@ -484,16 +484,16 @@ mod tests {
         bytes
     }
 
-    fn make_test_font_bytes(family: &str, style: &str, post_script_name: &str) -> Vec<u8> {
-        let full_name = if style == "Regular" {
-            family.to_string()
-        } else {
-            format!("{family} {style}")
-        };
+    fn make_test_font_bytes_with_full_name(
+        family: &str,
+        style: &str,
+        full_name: &str,
+        post_script_name: &str,
+    ) -> Vec<u8> {
         let name_records = [
             (1_u16, utf16be(family)),
             (2_u16, utf16be(style)),
-            (4_u16, utf16be(&full_name)),
+            (4_u16, utf16be(full_name)),
             (6_u16, utf16be(post_script_name)),
         ];
 
@@ -533,13 +533,27 @@ mod tests {
         font
     }
 
+    fn make_test_font_bytes(family: &str, style: &str, post_script_name: &str) -> Vec<u8> {
+        let full_name = if style == "Regular" {
+            family.to_string()
+        } else {
+            format!("{family} {style}")
+        };
+        make_test_font_bytes_with_full_name(family, style, &full_name, post_script_name)
+    }
+
     #[test]
     fn parses_font_name_table_metadata() {
         let temp_dir = make_temp_dir("parse-fonts-metadata");
         let font_path = temp_dir.join("rank.otf");
         fs::write(
             &font_path,
-            make_test_font_bytes("Lettown Hills Italic", "Italic", "LettownHills-Italic"),
+            make_test_font_bytes_with_full_name(
+                "Lettown Hills Italic",
+                "Italic",
+                "Lettown Hills Italic",
+                "LettownHills-Italic",
+            ),
         )
         .expect("font should be written");
 
@@ -567,7 +581,7 @@ mod tests {
         .expect("first font should be written");
         fs::write(
             fonts_root.join("Nested").join("level.ttf"),
-            make_test_font_bytes("fonteditor", "Medium", "fonteditor"),
+            make_test_font_bytes_with_full_name("fonteditor", "Medium", "fonteditor", "fonteditor"),
         )
         .expect("second font should be written");
 

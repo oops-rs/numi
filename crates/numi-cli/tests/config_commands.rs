@@ -676,11 +676,15 @@ fn generate_from_workspace_root_uses_nearest_workspace_manifest() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        working_root.join("apps/assets/Generated/Assets.swift").exists(),
+        working_root
+            .join("apps/assets/Generated/Assets.swift")
+            .exists(),
         "workspace assets output was not generated"
     );
     assert!(
-        working_root.join("packages/files/Generated/Files.swift").exists(),
+        working_root
+            .join("packages/files/Generated/Files.swift")
+            .exists(),
         "workspace files output was not generated"
     );
 

@@ -326,7 +326,7 @@ fn generate_warns_and_succeeds_for_langcodec_skipped_xcstrings_entries() {
     let localization_root = working_root.join("Resources/Localization");
     fs::create_dir_all(&localization_root).expect("localization directory should exist");
     fs::write(
-        &working_root.join("numi.toml"),
+        working_root.join("numi.toml"),
         r#"
 version = 1
 

@@ -26,7 +26,7 @@ use crate::{
     parse_xcassets::{ParseXcassetsError, parse_catalog},
     render::{
         RenderError, builtin_template_source, collect_custom_template_dependencies, render_builtin,
-        render_path,
+        render_path, resolve_template_entry_path,
     },
 };
 
@@ -1011,7 +1011,13 @@ fn render_job(
     }
 
     if let Some(template_path) = job.template.path.as_deref() {
-        let resolved_path = config_dir.join(template_path);
+        let resolved_path =
+            resolve_template_entry_path(config_dir, template_path).map_err(|source| {
+                GenerateError::Render {
+                    job: job.name.clone(),
+                    source,
+                }
+            })?;
         return render_path(&resolved_path, config_dir, context).map_err(|source| {
             GenerateError::Render {
                 job: job.name.clone(),
@@ -1068,7 +1074,7 @@ fn compute_generation_fingerprint(
             fingerprint: generation_cache::blake3_hex([source.as_bytes()]),
         }
     } else if let Some(template_path) = job.template.path.as_deref() {
-        let resolved_path = config_dir.join(template_path);
+        let resolved_path = resolve_template_entry_path(config_dir, template_path).ok()?;
         let dependencies = collect_custom_template_dependencies(&resolved_path, config_dir)
             .ok()??
             .into_iter()
@@ -1356,6 +1362,26 @@ path = "Resources/Localization"
 [jobs.l10n.template]
 [jobs.l10n.template.builtin]
 swift = "l10n"
+"#,
+        )
+        .expect("config should be written");
+    }
+
+    fn write_extensionless_l10n_job_config(config_path: &Path) {
+        fs::write(
+            config_path,
+            r#"
+version = 1
+
+[jobs.l10n]
+output = "Generated/L10n.swift"
+
+[[jobs.l10n.inputs]]
+type = "strings"
+path = "Resources/Localization"
+
+[jobs.l10n.template]
+path = "Templates/l10n"
 "#,
         )
         .expect("config should be written");
@@ -1657,6 +1683,43 @@ path = "Templates/main.jinja"
         assert_eq!(report.jobs.len(), 1);
         assert_eq!(report.jobs[0].outcome, WriteOutcome::Created);
         assert_eq!(rendered, "SHARED|L10n|Localizable\n");
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn generate_resolves_extensionless_template_path_to_jinja_file() {
+        let temp_dir = make_temp_dir("pipeline-extensionless-template-path");
+        let config_path = temp_dir.join("numi.toml");
+        let localization_root = temp_dir.join("Resources/Localization/en.lproj");
+        let template_path = temp_dir.join("Templates/l10n.jinja");
+        let generated_path = temp_dir.join("Generated/L10n.swift");
+
+        fs::create_dir_all(&localization_root).expect("localization dir should exist");
+        fs::create_dir_all(
+            template_path
+                .parent()
+                .expect("template path should have parent"),
+        )
+        .expect("template dir should exist");
+        fs::write(
+            localization_root.join("Localizable.strings"),
+            "\"profile.title\" = \"Profile\";\n",
+        )
+        .expect("strings file should be written");
+        fs::write(
+            &template_path,
+            "{{ job.swiftIdentifier }}|{{ modules[0].name }}\n",
+        )
+        .expect("template should be written");
+        write_extensionless_l10n_job_config(&config_path);
+
+        let report = generate(&config_path, None).expect("generation should succeed");
+        let rendered = fs::read_to_string(&generated_path).expect("output should be written");
+
+        assert_eq!(report.jobs.len(), 1);
+        assert_eq!(report.jobs[0].outcome, WriteOutcome::Created);
+        assert_eq!(rendered, "L10n|Localizable\n");
 
         fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
     }

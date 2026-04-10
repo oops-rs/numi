@@ -59,6 +59,32 @@ pub fn builtin_template_source(builtin_name: &str) -> Result<&'static str, Rende
     }
 }
 
+pub fn resolve_template_entry_path(
+    config_root: &Path,
+    configured_path: &str,
+) -> Result<PathBuf, RenderError> {
+    let direct = config_root.join(configured_path);
+    let with_jinja = config_root.join(format!("{configured_path}.jinja"));
+
+    match (direct.is_file(), with_jinja.is_file()) {
+        (true, false) => Ok(direct),
+        (false, true) => Ok(with_jinja),
+        (false, false) => Err(RenderError::ReadTemplate {
+            path: direct,
+            source: std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "template file was not found",
+            ),
+        }),
+        (true, true) => Err(RenderError::Render(minijinja::Error::new(
+            minijinja::ErrorKind::InvalidOperation,
+            format!(
+                "ambiguous template path `{configured_path}` matched both extensionless and `.jinja` files"
+            ),
+        ))),
+    }
+}
+
 pub fn render_path(
     path: &Path,
     config_root: &Path,
@@ -767,6 +793,101 @@ private func file(_ path: String) -> URL {
         .expect("template should render");
 
         assert_eq!(rendered, "ROOT|L10n\n");
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn resolves_template_entry_path_when_configured_path_exists_directly() {
+        let temp_dir = make_temp_dir("resolve-template-entry-direct");
+        let config_root = temp_dir.join("Config");
+        let template_path = config_root.join("Templates/l10n");
+        fs::create_dir_all(
+            template_path
+                .parent()
+                .expect("template path should have parent"),
+        )
+        .expect("template directory should exist");
+        fs::write(&template_path, "{{ job.swiftIdentifier }}\n")
+            .expect("template should be written");
+
+        let resolved = resolve_template_entry_path(&config_root, "Templates/l10n")
+            .expect("direct template path should resolve");
+
+        assert_eq!(resolved, template_path);
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn resolves_template_entry_path_via_jinja_suffix() {
+        let temp_dir = make_temp_dir("resolve-template-entry-jinja");
+        let config_root = temp_dir.join("Config");
+        let template_path = config_root.join("Templates/l10n.jinja");
+        fs::create_dir_all(
+            template_path
+                .parent()
+                .expect("template path should have parent"),
+        )
+        .expect("template directory should exist");
+        fs::write(&template_path, "{{ job.swiftIdentifier }}\n")
+            .expect("template should be written");
+
+        let resolved = resolve_template_entry_path(&config_root, "Templates/l10n")
+            .expect("jinja template path should resolve");
+
+        assert_eq!(resolved, template_path);
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn resolve_template_entry_path_reports_missing_path() {
+        let temp_dir = make_temp_dir("resolve-template-entry-missing");
+        let config_root = temp_dir.join("Config");
+        fs::create_dir_all(&config_root).expect("config root should exist");
+
+        let error = resolve_template_entry_path(&config_root, "Templates/l10n")
+            .expect_err("missing template path should fail");
+
+        match error {
+            RenderError::ReadTemplate { path, source } => {
+                assert_eq!(path, config_root.join("Templates/l10n"));
+                assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
+            }
+            other => panic!("expected read template error, got {other:?}"),
+        }
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn resolve_template_entry_path_rejects_ambiguous_matches() {
+        let temp_dir = make_temp_dir("resolve-template-entry-ambiguous");
+        let config_root = temp_dir.join("Config");
+        let direct_path = config_root.join("Templates/l10n");
+        let jinja_path = config_root.join("Templates/l10n.jinja");
+        fs::create_dir_all(
+            direct_path
+                .parent()
+                .expect("template path should have parent"),
+        )
+        .expect("template directory should exist");
+        fs::write(&direct_path, "DIRECT").expect("direct template should be written");
+        fs::write(&jinja_path, "JINJA").expect("jinja template should be written");
+
+        let error = resolve_template_entry_path(&config_root, "Templates/l10n")
+            .expect_err("ambiguous template path should fail");
+
+        match error {
+            RenderError::Render(source) => {
+                let message = source.to_string();
+                assert!(message.contains("ambiguous template path `Templates/l10n`"));
+                assert!(message.contains("extensionless"));
+                assert!(message.contains(".jinja"));
+            }
+            other => panic!("expected render error, got {other:?}"),
+        }
 
         fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
     }

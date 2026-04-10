@@ -676,12 +676,12 @@ fn generate_from_workspace_root_uses_nearest_workspace_manifest() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        working_root.join("AppUI/Generated/Assets.swift").exists(),
+        working_root.join("apps/assets/Generated/Assets.swift").exists(),
         "workspace assets output was not generated"
     );
     assert!(
-        working_root.join("Core/Generated/L10n.swift").exists(),
-        "workspace localization output was not generated"
+        working_root.join("packages/files/Generated/Files.swift").exists(),
+        "workspace files output was not generated"
     );
 
     fs::remove_dir_all(temp_root).expect("temp dir should be removed");

@@ -95,7 +95,7 @@ fn benchmark_generate_mixed_large_cache_hit_fixture(c: &mut Criterion) {
 
 fn benchmark_discover_workspace_from_member_directory(c: &mut Criterion) {
     let fixture = prepare_fixture("multimodule-repo", "pipeline-discover-multimodule");
-    let member_root = fixture.working_root.join("AppUI");
+    let member_root = fixture.working_root.join("apps/assets");
     let discovery_result = numi_config::discover_workspace_ancestor(&member_root, None);
     assert!(
         matches!(

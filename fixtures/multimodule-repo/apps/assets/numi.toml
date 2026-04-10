@@ -1,5 +1,11 @@
 version = 1
 
+[defaults]
+access_level = "internal"
+
+[defaults.bundle]
+mode = "module"
+
 [jobs.assets]
 output = "Generated/Assets.swift"
 

@@ -66,13 +66,13 @@ Numi uses `numi.toml` as its config filename.
 The current discovery behavior is:
 
 - use `--config <path>` when provided
-- otherwise prefer the nearest ancestor `numi.toml`
-- if no ancestor exists, allow a single unambiguous descendant match
-- fail loudly if discovery is ambiguous
+- otherwise use the nearest local or ancestor `numi.toml`
+- do not scan descendant directories for `numi.toml`
+- fail loudly when no local/ancestor manifest exists
 - `numi generate` and `numi check` dispatch from that nearest manifest first:
   - `[jobs]` runs one local config
   - `[workspace]` runs the local workspace
-- `--workspace` keeps the search local-first but requires an ancestor workspace `numi.toml`
+- `--workspace` skips a nearer member manifest and looks up the nearest ancestor workspace `numi.toml`
 
 A minimal config looks like this:
 

@@ -286,28 +286,24 @@ A future alias like `numi.toml` can be considered later.
 
 #### 7.2.1 Priority Order
 1. If `--config` is provided, use it.
-2. Search current directory and ancestors for nearest config.
-3. If none found, search descendants under current directory.
-4. If descendant search finds exactly one config, use it.
-5. If descendant search finds multiple configs, fail with an ambiguity error.
+2. Otherwise use the nearest `numi.toml` in the current directory or an ancestor directory.
+3. If no local or ancestor manifest exists, fail.
+4. When `--workspace` is set, skip a nearer member manifest and search ancestors for the nearest workspace `numi.toml`.
 
 #### 7.2.2 Discovery Rules
+- Discovery is ancestor-only unless `--config` is explicit.
 - Ancestor search uses nearest match.
-- Descendant search must collect all matches before deciding.
-- Descendant search must not choose based on traversal order.
+- Descendant directories are not scanned for `numi.toml`.
 - Relative paths in config are always resolved relative to the config file directory.
 
-#### 7.2.3 Ambiguity Error
+#### 7.2.3 Missing Manifest Error
 Example:
 
 ```text
-Multiple configuration files found under /repo:
-  - AppUI/numi.toml
-  - Core/numi.toml
-  - Modules/Profile/numi.toml
+No configuration file found from /repo
 
 Please specify one with:
-  numi generate --config <path>
+  numi config locate --config <path>
 ```
 
 ### 7.3 Config Schema
@@ -950,7 +946,7 @@ To reduce decision load, start with these defaults:
 - Output naming: preserve hierarchy
 - Collision strategy: hard error
 - Check mode: strict
-- Config discovery: ancestor first, then single-match descendant
+- Config discovery: nearest local or ancestor manifest only
 
 ## 25. AI-Agent Execution Notes
 This section is intended for an implementation agent.

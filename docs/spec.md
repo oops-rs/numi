@@ -215,11 +215,10 @@ Numi v1 should support:
 ```bash
 numi generate
 numi generate --config AppUI/numi.toml
+numi generate --workspace
 numi generate --job assets
 numi check
-numi workspace generate
-numi workspace generate --workspace numi-workspace.toml --member Core/numi.toml
-numi workspace check
+numi check --workspace
 numi init
 numi config locate
 numi config print
@@ -229,7 +228,9 @@ numi dump-context --job assets
 #### 6.3.2 Command Definitions
 `numi generate`:
 - Discover config
-- Resolve exactly one `numi.toml`
+- Resolve the nearest `numi.toml`
+- Run a single config for `[jobs]` manifests
+- Run a workspace for `[workspace]` manifests
 - Resolve jobs
 - Parse inputs
 - Normalize IR
@@ -244,19 +245,17 @@ numi dump-context --job assets
 `numi check`:
 - Run generation logically without modifying files
 - Exit non-zero if any output is stale, missing, or would change
-- Resolve exactly one `numi.toml`
+- Resolve the nearest `numi.toml`
+- Check a single config for `[jobs]` manifests
+- Check a workspace for `[workspace]` manifests
 - May reuse cached parser outputs when inputs are unchanged
 - Cache invalidation occurs on relevant file add, remove, rename, or content change
 - Normalization, rendering, and output checks still run every time
 
-`numi workspace generate`:
-- Resolve a workspace manifest, defaulting to `numi-workspace.toml`
-- Run generation across member configs
-- Allow targeting one member with `--member`
-
-`numi workspace check`:
-- Resolve a workspace manifest, defaulting to `numi-workspace.toml`
-- Run check-mode evaluation across member configs
+`--workspace` on `generate` and `check`:
+- Require a workspace `numi.toml`
+- Search ancestors for the nearest workspace `numi.toml`
+- Ignore a nearer member manifest when repo-level orchestration is requested
 - Support repo-level CI orchestration for multi-module repositories
 
 `numi init`:
@@ -404,28 +403,32 @@ Possible v1 naming controls:
 
 ### 7.4 Workspace Manifest
 
-Workspace orchestration uses a separate `numi-workspace.toml` file so each module can keep its own `numi.toml`.
+Workspace orchestration uses the same `numi.toml` filename as single-config mode. A manifest is either a `[jobs]` config or a `[workspace]` config, never both.
 
 Example:
 
 ```toml
 version = 1
 
-[[members]]
-config = "AppUI/numi.toml"
+[workspace]
+members = ["AppUI", "Core"]
 
-[[members]]
-config = "Core/numi.toml"
+[workspace.defaults.jobs.l10n.template]
+path = "Templates/l10n"
+
+[workspace.member_overrides.Core]
 jobs = ["l10n"]
 ```
 
 Workspace manifest fields:
 - `version`: schema version, required
-- `members`: required list of workspace members
+- `workspace.members`: required list of relative member roots
+- `workspace.defaults`: optional job defaults applied before member execution
+- `workspace.member_overrides`: optional per-member overrides keyed by member root
 
 Each workspace member contains:
-- `config`: path to a member `numi.toml`, required
-- `jobs`: optional subset of jobs to run for that member
+- one directory root that resolves to `<member>/numi.toml`
+- optional member overrides, including `jobs`, keyed by that member root
 
 ## 8. Intermediate Representation (IR)
 
@@ -750,13 +753,13 @@ error: identifier collision in job `assets`
 The project should include benchmark fixtures for:
 - single asset catalog repeated generation
 - mixed assets + localization repeated generation
-- ambiguous multi-module repo config discovery from a repo root
+- nearest-workspace discovery from a member directory
 
 ## 16. Filesystem and Repo Integration
 
 ### 16.1 Multi-module Repo Support
 Numi must support repositories where config may live in a submodule directory rather than the repo root.
-For repositories with multiple module configs, a repo-level `numi-workspace.toml` should orchestrate existing per-module `numi.toml` files without replacing them.
+For repositories with multiple module configs, a repo-level `numi.toml` with `[workspace]` should orchestrate existing per-module `numi.toml` files without replacing them.
 
 ### 16.2 Relative Path Semantics
 All relative paths are resolved relative to the config file directory.

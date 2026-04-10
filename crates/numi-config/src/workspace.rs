@@ -104,12 +104,12 @@ impl std::fmt::Display for WorkspaceError {
             Self::Read { path, source } => {
                 write!(
                     f,
-                    "failed to read workspace manifest {}: {source}",
+                    "failed to read workspace numi.toml {}: {source}",
                     path.display()
                 )
             }
             Self::ParseToml(error) => {
-                write!(f, "failed to parse workspace manifest TOML: {error}")
+                write!(f, "failed to parse workspace numi.toml TOML: {error}")
             }
             Self::Invalid(diagnostics) => {
                 for (index, diagnostic) in diagnostics.iter().enumerate() {
@@ -193,7 +193,7 @@ fn validate_workspace(config: &WorkspaceConfig) -> Vec<Diagnostic> {
             diagnostics.push(
                 Diagnostic::error("workspace.members entries must not point at the workspace root")
                     .with_hint(
-                        "declare member directories like `AppUI` or `Core`; the workspace root numi.toml is the workspace manifest, not a member config",
+                        "declare member directories like `AppUI` or `Core`; the workspace root numi.toml carries `[workspace]`, not a member config path",
                     )
                     .with_path(PathBuf::from(member)),
             );

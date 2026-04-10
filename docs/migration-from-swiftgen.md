@@ -18,6 +18,7 @@ Numi is a general-purpose code generator that currently ships Swift templates fo
 - Output writing is deterministic and no-op stable, so unchanged files are not rewritten
 - Diagnostics are designed to fail loudly with actionable messages instead of silently picking a fallback
 - `.xcstrings` records are parsed into the same stable localization surface as `.strings`, with placeholder metadata preserved when present
+- `numi generate` and `numi check` stay nearest-manifest-first; add `--workspace` from a member directory when you want the ancestor workspace `numi.toml`
 
 ## Config Mapping
 
@@ -52,8 +53,8 @@ If a SwiftGen setup relied on a custom Stencil template, the closest Numi migrat
 - `.xcstrings` is supported in v1, but plural and device-specific variations are skipped with warnings in the current release
 - Bundle handling is explicit in the template context through `bundle.mode` and `bundle.identifier`
 - The stable context contract is documented in [context-schema.md](context-schema.md)
-- In monorepos, you can keep per-module `numi.toml` files and add a repo-level `numi-workspace.toml` to orchestrate them
-- CI can keep using `numi check` either once per config or through a workspace-level `numi workspace check`
+- In monorepos, you can keep per-module `numi.toml` files and add a repo-level `numi.toml` with `[workspace]` to orchestrate them
+- CI can keep using `numi check` either once per config or once from the repo root, or force ancestor workspace orchestration from a member directory with `numi check --workspace`
 
 ## Suggested Migration Flow
 

@@ -55,8 +55,8 @@ numi check
 Workspace orchestration is also available when a repo has multiple `numi.toml` files:
 
 ```bash
-numi workspace generate
-numi workspace check
+numi generate --workspace
+numi check --workspace
 ```
 
 ## Config File
@@ -69,6 +69,10 @@ The current discovery behavior is:
 - otherwise prefer the nearest ancestor `numi.toml`
 - if no ancestor exists, allow a single unambiguous descendant match
 - fail loudly if discovery is ambiguous
+- `numi generate` and `numi check` dispatch from that nearest manifest first:
+  - `[jobs]` runs one local config
+  - `[workspace]` runs the local workspace
+- `--workspace` keeps the search local-first but requires an ancestor workspace `numi.toml`
 
 A minimal config looks like this:
 
@@ -120,27 +124,30 @@ The starter config shipped with `numi init` lives in [docs/examples/starter-numi
 
 ## Workspace Manifest
 
-Repos with more than one `numi.toml` can add a repo-level `numi-workspace.toml`:
+Repos with more than one `numi.toml` can orchestrate them from a repo-level `numi.toml`:
 
 ```toml
 version = 1
 
-[[members]]
-config = "AppUI/numi.toml"
+[workspace]
+members = ["AppUI", "Core"]
 
-[[members]]
-config = "Core/numi.toml"
+[workspace.defaults.jobs.l10n.template]
+path = "Templates/l10n"
+
+[workspace.member_overrides.Core]
 jobs = ["l10n"]
 ```
 
-Use workspace commands to orchestrate those member configs together. `numi generate` and `numi check` still resolve exactly one `numi.toml`.
+Workspace members are directory roots, not config-file paths. From the repo root, plain `numi generate` and `numi check` use that nearest workspace `numi.toml` automatically. From inside a member directory, add `--workspace` when you want the ancestor workspace instead of the local member manifest.
 
 ## Commands
 
 `numi generate`
 
-- discovers config unless `--config` is passed
-- still resolves exactly one `numi.toml`
+- discovers the nearest manifest unless `--config` is passed
+- uses the nearest local `numi.toml` first
+- runs one config for `[jobs]` manifests and the whole workspace for `[workspace]` manifests
 - generates outputs for all named jobs, or only selected jobs when `--job` is repeated
 - prints non-fatal warnings to stderr
 - repeated runs may reuse cached parser outputs when inputs are unchanged
@@ -152,13 +159,16 @@ Examples:
 ```bash
 numi generate
 numi generate --config AppUI/numi.toml
+numi generate --workspace
 numi generate --job assets --job l10n
 ```
 
 `numi check`
 
 - computes what `generate` would write
-- still resolves exactly one `numi.toml`
+- discovers the nearest manifest unless `--config` is passed
+- uses the nearest local `numi.toml` first
+- checks one config for `[jobs]` manifests and the whole workspace for `[workspace]` manifests
 - exits `0` when outputs are current
 - exits `2` when outputs are stale
 - prints warnings to stderr without turning the run into a failure
@@ -170,30 +180,21 @@ Example:
 
 ```bash
 numi check --job l10n
+numi check --workspace
 ```
 
-`numi workspace generate`
+`--workspace`
 
-- resolves a workspace manifest, defaulting to `numi-workspace.toml`
-- runs generation for all members, or one member when `--member` is passed
-- lets each member keep its own `numi.toml`
+- forces `generate` or `check` to use a workspace `numi.toml`
+- ignores a nearer member `numi.toml` and searches ancestors for the nearest workspace
+- keeps each member in its own normal `numi.toml`
 
 Examples:
 
 ```bash
-numi workspace generate
-numi workspace generate --workspace numi-workspace.toml --member Core/numi.toml
-```
-
-`numi workspace check`
-
-- resolves a workspace manifest, defaulting to `numi-workspace.toml`
-- checks every member config from one repo-level command
-
-Example:
-
-```bash
-numi workspace check
+numi generate --workspace
+numi check --workspace
+numi generate --workspace --config numi.toml
 ```
 
 `numi dump-context`
@@ -310,7 +311,7 @@ Benchmark scenarios currently measured:
 
 - repeated generation for a single asset fixture
 - repeated generation for a mixed assets + localization fixture
-- ambiguous multimodule config discovery from a repo root
+- workspace discovery from a member directory
 
 ## Current Status
 

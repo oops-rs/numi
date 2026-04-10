@@ -5,7 +5,7 @@ output = "Generated/L10n.swift"
 
 [[jobs.l10n.inputs]]
 type = "strings"
-path = "Resources/Localization"
+path = "Resources/Localization/en.lproj/Localizable.strings"
 
 [jobs.l10n.template.builtin]
 swift = "l10n"

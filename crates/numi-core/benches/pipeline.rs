@@ -1,5 +1,4 @@
 use criterion::{Criterion, criterion_group, criterion_main};
-use numi_config::DiscoveryError;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -94,17 +93,27 @@ fn benchmark_generate_mixed_large_cache_hit_fixture(c: &mut Criterion) {
     cleanup_fixture(fixture);
 }
 
-fn benchmark_discover_multimodule_root_ambiguous_fixture(c: &mut Criterion) {
+fn benchmark_discover_workspace_from_member_directory(c: &mut Criterion) {
     let fixture = prepare_fixture("multimodule-repo", "pipeline-discover-multimodule");
-    let discovery_result = numi_config::discover_config(&fixture.working_root, None);
+    let member_root = fixture.working_root.join("AppUI");
+    let discovery_result = numi_config::discover_workspace_ancestor(&member_root, None);
     assert!(
-        matches!(discovery_result, Err(DiscoveryError::Ambiguous { .. })),
-        "fixture root should remain ambiguous"
+        matches!(
+            discovery_result,
+            Ok(path)
+                if path
+                    == fixture
+                        .working_root
+                        .join("numi.toml")
+                        .canonicalize()
+                        .expect("workspace manifest should canonicalize")
+        ),
+        "member directory should discover the repo-root workspace numi.toml"
     );
 
-    c.bench_function("discover_multimodule_root_ambiguous_fixture", |b| {
+    c.bench_function("discover_workspace_from_member_directory", |b| {
         b.iter(|| {
-            let _ = numi_config::discover_config(&fixture.working_root, None);
+            let _ = numi_config::discover_workspace_ancestor(&member_root, None);
         });
     });
 
@@ -115,6 +124,6 @@ criterion_group!(
     benches,
     benchmark_generate_assets_cache_hit_fixture,
     benchmark_generate_mixed_large_cache_hit_fixture,
-    benchmark_discover_multimodule_root_ambiguous_fixture
+    benchmark_discover_workspace_from_member_directory
 );
 criterion_main!(benches);

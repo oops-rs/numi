@@ -1569,7 +1569,7 @@ members = ["{member}"]
             );
             assert!(
                 message.contains(
-                    "declare member directories like `AppUI` or `Core`; the workspace root numi.toml is the workspace manifest, not a member config"
+                    "declare member directories like `AppUI` or `Core`; the workspace root numi.toml carries `[workspace]`, not a member config path"
                 ),
                 "message was: {message}"
             );
@@ -1741,7 +1741,7 @@ jobs = ["assets", "assets"]
         let error = load_workspace_from_path(&missing)
             .expect_err("missing workspace manifest should return a read error");
         let message = error.to_string();
-        assert!(message.contains("workspace manifest"));
+        assert!(message.contains("workspace numi.toml"));
         assert!(!message.contains("failed to read config"));
 
         let temp_dir = create_temp_dir("workspace-parse-error");
@@ -1751,7 +1751,7 @@ jobs = ["assets", "assets"]
         let error = load_workspace_from_path(&manifest_path)
             .expect_err("invalid workspace manifest should return a parse error");
         let message = error.to_string();
-        assert!(message.contains("workspace manifest TOML"));
+        assert!(message.contains("workspace numi.toml TOML"));
         assert!(!message.contains("config TOML"));
     }
 

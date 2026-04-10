@@ -25,3 +25,11 @@ path = "Resources/Localization"
 
 [jobs.l10n.template.builtin]
 swift = "l10n"
+
+# For multi-module repositories, a repo-root numi.toml can switch to:
+#
+# [workspace]
+# members = ["AppUI", "Core"]
+#
+# [workspace.defaults.jobs.l10n.template]
+# path = "Templates/l10n"

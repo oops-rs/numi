@@ -1,0 +1,10 @@
+version = 1
+
+[workspace]
+members = ["AppUI", "Core"]
+
+[workspace.defaults.jobs.l10n.template.builtin]
+swift = "l10n"
+
+[workspace.member_overrides.Core]
+jobs = ["l10n"]

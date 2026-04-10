@@ -657,6 +657,37 @@ members = ["apps/assets", "packages/files"]
 }
 
 #[test]
+fn generate_from_workspace_root_uses_nearest_workspace_manifest() {
+    let temp_root = make_temp_dir("generate-workspace-root-manifest");
+    let fixture_root = repo_root().join("fixtures/multimodule-repo");
+    let working_root = temp_root.join("fixture");
+    copy_dir_all(&fixture_root, &working_root);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_numi"))
+        .arg("generate")
+        .current_dir(&working_root)
+        .output()
+        .expect("numi generate should run");
+
+    assert!(
+        output.status.success(),
+        "command failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        working_root.join("AppUI/Generated/Assets.swift").exists(),
+        "workspace assets output was not generated"
+    );
+    assert!(
+        working_root.join("Core/Generated/L10n.swift").exists(),
+        "workspace localization output was not generated"
+    );
+
+    fs::remove_dir_all(temp_root).expect("temp dir should be removed");
+}
+
+#[test]
 fn generate_workspace_from_member_directory_uses_ancestor_workspace_manifest() {
     let temp_root = make_temp_dir("generate-workspace-ancestor");
     let workspace_root = temp_root.join("workspace");
@@ -995,6 +1026,11 @@ fn generate_workspace_reports_workspace_specific_guidance_when_missing() {
         !stderr.contains("numi config locate --config <path>"),
         "stderr was: {stderr}"
     );
+    assert!(
+        !stderr.contains("numi-workspace.toml"),
+        "stderr was: {stderr}"
+    );
+    assert!(!stderr.contains("numi workspace"), "stderr was: {stderr}");
 
     fs::remove_dir_all(root).expect("temp dir should be removed");
 }

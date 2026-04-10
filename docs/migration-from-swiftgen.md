@@ -14,11 +14,11 @@ Numi is a general-purpose code generator that currently ships Swift templates fo
 ## What Changes
 
 - Numi renders from a stable template context instead of hard-coded generators
-- Config discovery is explicit: nearest ancestor config wins, then a single descendant match is allowed
+- Config discovery is explicit: the nearest local or ancestor `numi.toml` wins, with no descendant fallback
 - Output writing is deterministic and no-op stable, so unchanged files are not rewritten
 - Diagnostics are designed to fail loudly with actionable messages instead of silently picking a fallback
 - `.xcstrings` records are parsed into the same stable localization surface as `.strings`, with placeholder metadata preserved when present
-- `numi generate` and `numi check` stay nearest-manifest-first; add `--workspace` from a member directory when you want the ancestor workspace `numi.toml`
+- `numi generate` and `numi check` stay nearest-manifest-first; use `--workspace` from a member directory when you want the nearest ancestor workspace `numi.toml`
 
 ## Config Mapping
 

@@ -39,80 +39,43 @@ pub struct XcassetsReport {
 }
 
 pub fn parse_catalog(catalog_path: &Path) -> Result<XcassetsReport, ParseXcassetsError> {
-    let report = xcassets::parse_catalog(catalog_path).map_err(ParseXcassetsError::from)?;
+    let index = xcassets::index_asset_references(catalog_path).map_err(ParseXcassetsError::from)?;
     let mut entries = Vec::new();
-    let mut warnings = map_xcassets_diagnostics(&report.diagnostics, catalog_path);
+    let mut warnings = map_xcassets_diagnostics(&index.diagnostics, catalog_path);
 
-    walk_nodes(
-        &report.catalog.children,
-        catalog_path,
-        &mut entries,
-        &mut warnings,
-    )?;
+    for reference in &index.references {
+        match reference.kind {
+            xcassets::AssetReferenceKind::Image | xcassets::AssetReferenceKind::Color => {
+                entries.push(entry_from_reference(reference, catalog_path)?);
+            }
+            xcassets::AssetReferenceKind::AppIcon => warnings.push(unsupported_node_warning(
+                catalog_path,
+                &reference.relative_path,
+                "appiconset",
+            )),
+        }
+    }
+
     entries.sort_by(|left, right| left.path.cmp(&right.path));
     Ok(XcassetsReport { entries, warnings })
 }
 
-fn walk_nodes(
-    nodes: &[xcassets::Node],
-    catalog_root: &Path,
-    entries: &mut Vec<RawEntry>,
-    warnings: &mut Vec<Diagnostic>,
-) -> Result<(), ParseXcassetsError> {
-    for node in nodes {
-        match node {
-            xcassets::Node::Group(group) => {
-                walk_nodes(&group.children, catalog_root, entries, warnings)?;
-            }
-            xcassets::Node::ImageSet(node) => {
-                if node.contents.is_some() {
-                    entries.push(image_entry(node, catalog_root)?);
-                }
-            }
-            xcassets::Node::ColorSet(node) => {
-                if node.contents.is_some() {
-                    entries.push(color_entry(node, catalog_root)?);
-                }
-            }
-            xcassets::Node::AppIconSet(node) => warnings.push(unsupported_node_warning(
-                catalog_root,
-                &node.relative_path,
-                "appiconset",
-            )),
-            xcassets::Node::Opaque(node) => {
-                walk_nodes(&node.children, catalog_root, entries, warnings)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-fn image_entry(
-    node: &xcassets::ImageSetNode,
+fn entry_from_reference(
+    reference: &xcassets::AssetReference,
     catalog_root: &Path,
 ) -> Result<RawEntry, ParseXcassetsError> {
-    let asset_name = asset_name_from_relative(&node.relative_path, ".imageset");
-    let source_path = utf8_path(&catalog_root.join(&node.relative_path))?;
+    let (kind, suffix) = match reference.kind {
+        xcassets::AssetReferenceKind::Image => (EntryKind::Image, ".imageset"),
+        xcassets::AssetReferenceKind::Color => (EntryKind::Color, ".colorset"),
+        xcassets::AssetReferenceKind::AppIcon => unreachable!("app icon references are warnings"),
+    };
+    let asset_name = asset_name_from_relative(&reference.relative_path, suffix);
+    let source_path = utf8_path(&catalog_root.join(&reference.relative_path))?;
 
     Ok(RawEntry {
         path: asset_name.clone(),
         source_path,
-        kind: EntryKind::Image,
-        properties: asset_properties(&asset_name),
-    })
-}
-
-fn color_entry(
-    node: &xcassets::ColorSetNode,
-    catalog_root: &Path,
-) -> Result<RawEntry, ParseXcassetsError> {
-    let asset_name = asset_name_from_relative(&node.relative_path, ".colorset");
-    let source_path = utf8_path(&catalog_root.join(&node.relative_path))?;
-
-    Ok(RawEntry {
-        path: asset_name.clone(),
-        source_path,
-        kind: EntryKind::Color,
+        kind,
         properties: asset_properties(&asset_name),
     })
 }
@@ -151,12 +114,18 @@ fn map_xcassets_diagnostics(
         .map(|diagnostic| {
             let resolved_path = if diagnostic.path.as_os_str().is_empty() {
                 catalog_path.to_path_buf()
+            } else if diagnostic.path.is_absolute() {
+                diagnostic.path.clone()
             } else {
                 catalog_path.join(&diagnostic.path)
             };
+            let severity = match diagnostic.severity {
+                xcassets::Severity::Warning => Severity::Warning,
+                xcassets::Severity::Error => Severity::Error,
+            };
 
             Diagnostic {
-                severity: Severity::Warning,
+                severity,
                 message: diagnostic.message.clone(),
                 hint: None,
                 job: None,
@@ -249,7 +218,7 @@ mod tests {
     }
 
     #[test]
-    fn malformed_imageset_is_skipped_from_entries() {
+    fn malformed_imageset_still_emits_entry_reference() {
         let temp_dir = make_temp_dir("parse-xcassets-malformed-imageset");
         let catalog_dir = temp_dir.join("Assets.xcassets");
         let valid_imageset_dir = catalog_dir.join("Valid.imageset");
@@ -275,21 +244,52 @@ mod tests {
 
         let report = parse_catalog(&catalog_dir).expect("catalog should parse");
 
-        assert_eq!(report.entries.len(), 1);
-        assert_eq!(report.entries[0].path, "Valid");
+        assert_eq!(report.entries.len(), 2);
         assert!(
             report
-                .warnings
+                .entries
                 .iter()
-                .any(|warning| warning.message.contains("invalid Contents.json")),
-            "malformed imageset should emit a parser warning"
+                .any(|entry| entry.kind == EntryKind::Image && entry.path == "Broken")
+        );
+        assert!(
+            report
+                .entries
+                .iter()
+                .any(|entry| entry.kind == EntryKind::Image && entry.path == "Valid")
         );
 
         fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
     }
 
     #[test]
-    fn unsupported_opaque_folder_emits_single_warning() {
+    fn imageset_without_leaf_contents_json_still_emits_entry() {
+        let temp_dir = make_temp_dir("parse-xcassets-missing-leaf-contents");
+        let catalog_dir = temp_dir.join("Assets.xcassets");
+        let imageset_dir = catalog_dir.join("Loose.imageset");
+
+        fs::create_dir_all(&imageset_dir).expect("imageset dir should exist");
+
+        fs::write(
+            catalog_dir.join("Contents.json"),
+            r#"{"info": {"author": "xcode", "version": 1}}"#,
+        )
+        .expect("catalog contents should be written");
+
+        let report = parse_catalog(&catalog_dir).expect("catalog should parse");
+
+        assert!(
+            report
+                .entries
+                .iter()
+                .any(|entry| entry.kind == EntryKind::Image && entry.path == "Loose"),
+            "imageset without leaf Contents.json should still produce an image entry"
+        );
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn unsupported_opaque_folder_is_ignored_without_warning() {
         let temp_dir = make_temp_dir("parse-xcassets-opaque-warning");
         let catalog_dir = temp_dir.join("Assets.xcassets");
         let opaque_dir = catalog_dir.join("Widget.imagestack");
@@ -309,28 +309,9 @@ mod tests {
         .expect("opaque folder contents should be written");
 
         let report = parse_catalog(&catalog_dir).expect("catalog should parse");
-        let opaque_warnings = report
-            .warnings
-            .iter()
-            .filter(|warning| {
-                warning
-                    .path
-                    .as_ref()
-                    .is_some_and(|path| path.ends_with("Widget.imagestack"))
-            })
-            .collect::<Vec<_>>();
 
         assert!(report.entries.is_empty());
-        assert_eq!(opaque_warnings.len(), 1);
-        assert!(
-            opaque_warnings[0]
-                .message
-                .contains("unsupported folder type")
-                || opaque_warnings[0]
-                    .message
-                    .contains("unsupported asset node kind"),
-            "opaque warning should be present once"
-        );
+        assert!(report.warnings.is_empty());
 
         fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
     }

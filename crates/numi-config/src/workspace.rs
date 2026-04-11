@@ -150,7 +150,13 @@ pub fn load_workspace_from_path(path: &Path) -> Result<LoadedWorkspace, Workspac
 }
 
 pub(crate) fn parse_workspace_str(input: &str) -> Result<WorkspaceConfig, WorkspaceError> {
-    let config: WorkspaceConfig = toml::from_str(input).map_err(WorkspaceError::ParseToml)?;
+    let value: toml::Value = toml::from_str(input).map_err(WorkspaceError::ParseToml)?;
+    let legacy_diagnostics = detect_legacy_flat_builtin_template_syntax(&value);
+    if !legacy_diagnostics.is_empty() {
+        return Err(WorkspaceError::Invalid(legacy_diagnostics));
+    }
+
+    let config: WorkspaceConfig = value.try_into().map_err(WorkspaceError::ParseToml)?;
     let diagnostics = validate_workspace(&config);
 
     if diagnostics.is_empty() {
@@ -158,6 +164,36 @@ pub(crate) fn parse_workspace_str(input: &str) -> Result<WorkspaceConfig, Worksp
     } else {
         Err(WorkspaceError::Invalid(diagnostics))
     }
+}
+
+fn detect_legacy_flat_builtin_template_syntax(value: &toml::Value) -> Vec<Diagnostic> {
+    let Some(workspace) = value.get("workspace").and_then(toml::Value::as_table) else {
+        return Vec::new();
+    };
+    let Some(defaults) = workspace.get("defaults").and_then(toml::Value::as_table) else {
+        return Vec::new();
+    };
+    let Some(jobs) = defaults.get("jobs").and_then(toml::Value::as_table) else {
+        return Vec::new();
+    };
+
+    jobs.iter()
+        .filter_map(|(job_name, job)| {
+            let template = job.get("template")?.as_table()?;
+            let builtin = template.get("builtin")?;
+            let builtin_name = builtin.as_str()?;
+
+            let diagnostic = Diagnostic::error(
+                "legacy flat built-in template syntax is no longer supported",
+            )
+            .with_hint(format!(
+                "use `[workspace.defaults.jobs.{job_name}.template.builtin] language = \"...\" name = \"...\"` instead; for example, replace `[workspace.defaults.jobs.{job_name}.template] builtin = \"{builtin_name}\"` with `[workspace.defaults.jobs.{job_name}.template.builtin] language = \"swift\" name = \"{builtin_name}\"`"
+            ))
+            .with_job(job_name.to_owned());
+
+            Some(diagnostic)
+        })
+        .collect()
 }
 
 fn validate_workspace(config: &WorkspaceConfig) -> Vec<Diagnostic> {

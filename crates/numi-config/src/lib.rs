@@ -596,6 +596,26 @@ jobs = ["assets", "l10n"]
     }
 
     #[test]
+    fn rejects_legacy_workspace_default_builtin_shape_with_migration_hint() {
+        let error = parse_manifest_str(
+            r#"
+version = 1
+
+[workspace]
+members = ["AppUI", "Core"]
+
+[workspace.defaults.jobs.l10n.template]
+builtin = "l10n"
+"#,
+        )
+        .expect_err("legacy workspace default builtin shape should fail");
+
+        let message = error.to_string();
+        assert!(message.contains("legacy flat built-in template syntax is no longer supported"));
+        assert!(message.contains("[workspace.defaults.jobs.l10n.template.builtin] language = \"...\" name = \"...\""));
+    }
+
+    #[test]
     fn sniffs_inline_table_workspace_manifest_as_workspace_like() {
         assert_eq!(
             sniff_manifest_kind_str(
@@ -1060,6 +1080,54 @@ name = "assets"
             .expect("builtin should exist");
         assert_eq!(builtin.language.as_deref(), Some("objc"));
         assert_eq!(builtin.name.as_deref(), Some("assets"));
+    }
+
+    #[test]
+    fn rejects_builtin_template_language_without_name() {
+        let error = parse_str(
+            r#"
+version = 1
+
+[jobs.assets]
+output = "Generated/Assets.swift"
+
+[[jobs.assets.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.assets.template.builtin]
+language = "swift"
+"#,
+        )
+        .expect_err("partial builtin language should fail validation");
+
+        let message = error.to_string();
+        assert!(message.contains("job template builtin must set both language and name"));
+        assert!(message.contains("set `[jobs.assets.template.builtin] language = \"...\" name = \"...\"`"));
+    }
+
+    #[test]
+    fn rejects_builtin_template_name_without_language() {
+        let error = parse_str(
+            r#"
+version = 1
+
+[jobs.assets]
+output = "Generated/Assets.swift"
+
+[[jobs.assets.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.assets.template.builtin]
+name = "swiftui-assets"
+"#,
+        )
+        .expect_err("partial builtin name should fail validation");
+
+        let message = error.to_string();
+        assert!(message.contains("job template builtin must set both language and name"));
+        assert!(message.contains("set `[jobs.assets.template.builtin] language = \"...\" name = \"...\"`"));
     }
 
     #[test]

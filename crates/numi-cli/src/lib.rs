@@ -16,7 +16,7 @@ use numi_config::{
     WorkspaceMember, resolve_workspace_member_config, workspace_member_config_path,
 };
 
-const STARTER_CONFIG_FALLBACK: &str = include_str!("../../../docs/examples/starter-numi.toml");
+const STARTER_CONFIG_FALLBACK: &str = include_str!("../assets/starter-numi.toml");
 
 #[derive(Debug)]
 pub struct CliError {

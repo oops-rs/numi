@@ -1,0 +1,37 @@
+version = 1
+
+[defaults]
+access_level = "internal"
+
+[defaults.bundle]
+mode = "module"
+
+[jobs.assets]
+output = "Generated/Assets.swift"
+
+[[jobs.assets.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.assets.template.builtin]
+language = "swift"
+name = "swiftui-assets"
+
+[jobs.l10n]
+output = "Generated/L10n.swift"
+
+[[jobs.l10n.inputs]]
+type = "strings"
+path = "Resources/Localization"
+
+[jobs.l10n.template.builtin]
+language = "swift"
+name = "l10n"
+
+# For multi-module repositories, a repo-root numi.toml can switch to:
+#
+# [workspace]
+# members = ["AppUI", "Core"]
+#
+# [workspace.defaults.jobs.l10n.template]
+# path = "Templates/l10n"

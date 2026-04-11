@@ -487,6 +487,8 @@ fn build_modules(
     let mut modules = Vec::new();
     let mut asset_entries = Vec::new();
     let mut duplicate_table_sources = BTreeMap::<String, Utf8PathBuf>::new();
+    let mut duplicate_files_module_sources = BTreeMap::<String, (String, PathBuf)>::new();
+    let mut duplicate_fonts_module_sources = BTreeMap::<String, (String, PathBuf)>::new();
     let mut diagnostics = Vec::new();
     let mut warnings = Vec::new();
 
@@ -623,10 +625,22 @@ fn build_modules(
                     .and_then(|name| name.to_str())
                     .unwrap_or("Files")
                     .to_string();
+                let module_name = swift_identifier(&module_id);
+                if let Some(diagnostic) = duplicate_input_module_diagnostic(
+                    &mut duplicate_files_module_sources,
+                    "files",
+                    &job.name,
+                    &module_id,
+                    &module_name,
+                    &input_path,
+                ) {
+                    diagnostics.push(diagnostic);
+                    continue;
+                }
                 modules.push(ResourceModule {
                     id: module_id.clone(),
                     kind: ModuleKind::Files,
-                    name: swift_identifier(&module_id),
+                    name: module_name,
                     entries,
                     metadata: Metadata::new(),
                 });
@@ -651,10 +665,22 @@ fn build_modules(
                     .and_then(|name| name.to_str())
                     .unwrap_or("Fonts")
                     .to_string();
+                let module_name = swift_identifier(&module_id);
+                if let Some(diagnostic) = duplicate_input_module_diagnostic(
+                    &mut duplicate_fonts_module_sources,
+                    "fonts",
+                    &job.name,
+                    &module_id,
+                    &module_name,
+                    &input_path,
+                ) {
+                    diagnostics.push(diagnostic);
+                    continue;
+                }
                 modules.push(ResourceModule {
                     id: module_id.clone(),
                     kind: ModuleKind::Fonts,
-                    name: swift_identifier(&module_id),
+                    name: module_name,
                     entries,
                     metadata: build_font_module_metadata(&parsed_fonts),
                 });
@@ -690,6 +716,39 @@ fn build_modules(
     }
 
     Ok(BuildModulesResult { modules, warnings })
+}
+
+fn duplicate_input_module_diagnostic(
+    seen_modules: &mut BTreeMap<String, (String, PathBuf)>,
+    input_kind: &str,
+    job_name: &str,
+    module_id: &str,
+    module_name: &str,
+    input_path: &Path,
+) -> Option<Diagnostic> {
+    if let Some((first_module_id, first_source)) =
+        seen_modules.insert(module_name.to_string(), (module_id.to_string(), input_path.to_path_buf()))
+    {
+        let detail = if first_module_id == module_id {
+            format!("both inputs normalize to module `{module_name}`")
+        } else {
+            format!(
+                "module names `{first_module_id}` and `{module_id}` both normalize to `{module_name}`"
+            )
+        };
+        return Some(
+            Diagnostic::error(format!("duplicate {input_kind} module `{module_name}`"))
+                .with_job(job_name)
+                .with_path(input_path)
+                .with_hint(format!(
+                    "found `{}` and `{}`; {detail}",
+                    first_source.display(),
+                    input_path.display()
+                )),
+        );
+    }
+
+    None
 }
 
 fn annotate_swiftgen_sort_keys(entries: &mut [numi_ir::ResourceEntry]) {
@@ -1398,6 +1457,71 @@ mod tests {
         }
     }
 
+    fn push_u16(buffer: &mut Vec<u8>, value: u16) {
+        buffer.extend_from_slice(&value.to_be_bytes());
+    }
+
+    fn push_u32(buffer: &mut Vec<u8>, value: u32) {
+        buffer.extend_from_slice(&value.to_be_bytes());
+    }
+
+    fn utf16be(value: &str) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        for unit in value.encode_utf16() {
+            bytes.extend_from_slice(&unit.to_be_bytes());
+        }
+        bytes
+    }
+
+    fn make_test_font_bytes(family: &str, style: &str, post_script_name: &str) -> Vec<u8> {
+        let full_name = if style == "Regular" {
+            family.to_string()
+        } else {
+            format!("{family} {style}")
+        };
+        let name_records = [
+            (1_u16, utf16be(family)),
+            (2_u16, utf16be(style)),
+            (4_u16, utf16be(&full_name)),
+            (6_u16, utf16be(post_script_name)),
+        ];
+
+        let string_offset = 6 + (name_records.len() as u16 * 12);
+        let mut name_table = Vec::new();
+        push_u16(&mut name_table, 0);
+        push_u16(&mut name_table, name_records.len() as u16);
+        push_u16(&mut name_table, string_offset);
+
+        let mut storage = Vec::new();
+        for (name_id, encoded) in &name_records {
+            push_u16(&mut name_table, 3);
+            push_u16(&mut name_table, 1);
+            push_u16(&mut name_table, 0x0409);
+            push_u16(&mut name_table, *name_id);
+            push_u16(&mut name_table, encoded.len() as u16);
+            push_u16(&mut name_table, storage.len() as u16);
+            storage.extend_from_slice(encoded);
+        }
+        name_table.extend_from_slice(&storage);
+
+        let table_offset = 12 + 16;
+        let mut font = Vec::new();
+        push_u32(&mut font, 0x0001_0000);
+        push_u16(&mut font, 1);
+        push_u16(&mut font, 16);
+        push_u16(&mut font, 0);
+        push_u16(&mut font, 0);
+        font.extend_from_slice(b"name");
+        push_u32(&mut font, 0);
+        push_u32(&mut font, table_offset as u32);
+        push_u32(&mut font, name_table.len() as u32);
+        font.extend_from_slice(&name_table);
+        while font.len() % 4 != 0 {
+            font.push(0);
+        }
+        font
+    }
+
     #[test]
     fn file_sort_keys_match_case_insensitive_name_ordering() {
         let sibling_names = [
@@ -1733,6 +1857,103 @@ name = "l10n"
         assert!(message.contains("duplicate localization table `Localizable`"));
         assert!(message.contains("en.lproj/Localizable.strings"));
         assert!(message.contains("fr.lproj/Localizable.strings"));
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn generate_rejects_duplicate_files_module_names_from_distinct_inputs() {
+        let temp_dir = make_temp_dir("duplicate-files-module");
+        let config_path = temp_dir.join("numi.toml");
+        let first_root = temp_dir.join("Resources/A/Fixtures");
+        let second_root = temp_dir.join("Resources/B/Fixtures");
+        fs::create_dir_all(&first_root).expect("first files directory should exist");
+        fs::create_dir_all(&second_root).expect("second files directory should exist");
+        fs::write(first_root.join("faq.pdf"), "faq").expect("first file should be written");
+        fs::write(second_root.join("faq.pdf"), "faq").expect("second file should be written");
+        fs::write(
+            &config_path,
+            r#"
+version = 1
+
+[jobs.files]
+output = "Generated/Files.swift"
+
+[[jobs.files.inputs]]
+type = "files"
+path = "Resources/A/Fixtures"
+
+[[jobs.files.inputs]]
+type = "files"
+path = "Resources/B/Fixtures"
+
+[jobs.files.template]
+[jobs.files.template.builtin]
+language = "swift"
+name = "files"
+"#,
+        )
+        .expect("config should be written");
+
+        let error = generate(&config_path, None).expect_err("duplicate modules should fail");
+        let message = error.to_string();
+
+        assert!(message.contains("duplicate files module `Fixtures`"));
+        assert!(message.contains("Resources/A/Fixtures"));
+        assert!(message.contains("Resources/B/Fixtures"));
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn generate_rejects_duplicate_fonts_module_names_from_distinct_inputs() {
+        let temp_dir = make_temp_dir("duplicate-fonts-module");
+        let config_path = temp_dir.join("numi.toml");
+        let first_root = temp_dir.join("Resources/A/Fonts");
+        let second_root = temp_dir.join("Resources/B/Fonts");
+        fs::create_dir_all(&first_root).expect("first fonts directory should exist");
+        fs::create_dir_all(&second_root).expect("second fonts directory should exist");
+        fs::write(
+            first_root.join("Baloo2-Bold.ttf"),
+            make_test_font_bytes("Baloo 2", "Bold", "Baloo2-Bold"),
+        )
+        .expect("first font should be written");
+        fs::write(
+            second_root.join("Baloo2-Regular.ttf"),
+            make_test_font_bytes("Baloo 2", "Regular", "Baloo2-Regular"),
+        )
+        .expect("second font should be written");
+        fs::write(
+            &config_path,
+            r#"
+version = 1
+
+[jobs.fonts]
+output = "Generated/Fonts.swift"
+
+[[jobs.fonts.inputs]]
+type = "fonts"
+path = "Resources/A/Fonts"
+
+[[jobs.fonts.inputs]]
+type = "fonts"
+path = "Resources/B/Fonts"
+
+[jobs.fonts.template]
+path = "Templates/fonts.jinja"
+"#,
+        )
+        .expect("config should be written");
+        fs::create_dir_all(temp_dir.join("Templates")).expect("templates dir should exist");
+        fs::write(temp_dir.join("Templates/fonts.jinja"), "{{ modules | length }}\n")
+            .expect("template should be written");
+
+        let error = generate(&config_path, None).expect_err("duplicate modules should fail");
+        let message = error.to_string();
+
+        assert!(message.contains("duplicate fonts module `Fonts`"));
+        assert!(message.contains("Resources/A/Fonts"));
+        assert!(message.contains("Resources/B/Fonts"));
 
         fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
     }

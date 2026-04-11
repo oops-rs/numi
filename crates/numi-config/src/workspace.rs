@@ -8,7 +8,10 @@ use numi_diagnostics::Diagnostic;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{
-    ConfigError, model::TemplateConfig, validate::validate_template, workspace_member_config_path,
+    ConfigError,
+    model::{BUILTIN_TEMPLATE_LANGUAGES, TemplateConfig},
+    validate::validate_template,
+    workspace_member_config_path,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -310,16 +313,68 @@ fn validate_workspace(config: &WorkspaceConfig) -> Vec<Diagnostic> {
     }
 
     for (job_name, job_defaults) in &config.workspace.defaults.jobs {
-        validate_template(
+        validate_workspace_default_template(
             &mut diagnostics,
             &job_defaults.template,
-            "workspace default job template",
             &format!("workspace.defaults.jobs.{job_name}.template"),
             Some(job_name.as_str()),
         );
     }
 
     diagnostics
+}
+
+fn validate_workspace_default_template(
+    diagnostics: &mut Vec<Diagnostic>,
+    template: &TemplateConfig,
+    field_path: &str,
+    job: Option<&str>,
+) {
+    let Some(builtin) = template.builtin.as_ref() else {
+        validate_template(
+            diagnostics,
+            template,
+            "workspace default job template",
+            field_path,
+            job,
+        );
+        return;
+    };
+
+    if template.path.is_none() && builtin.language.is_some() && builtin.name.is_none() {
+        let language = builtin.language.as_deref().expect("language is present");
+        if !BUILTIN_TEMPLATE_LANGUAGES.contains(&language) {
+            let diagnostic = Diagnostic::error(format!(
+                "{field_path}.builtin.language must be one of {} (got `{language}`)",
+                BUILTIN_TEMPLATE_LANGUAGES
+                    .iter()
+                    .map(|value| format!("`{value}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))
+            .with_hint(format!(
+                "use one of: {}",
+                BUILTIN_TEMPLATE_LANGUAGES
+                    .iter()
+                    .map(|value| format!("`{value}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+            diagnostics.push(match job {
+                Some(job) => diagnostic.with_job(job.to_owned()),
+                None => diagnostic,
+            });
+        }
+        return;
+    }
+
+    validate_template(
+        diagnostics,
+        template,
+        "workspace default job template",
+        field_path,
+        job,
+    );
 }
 
 fn is_config_path(member: &str) -> bool {

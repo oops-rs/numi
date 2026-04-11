@@ -465,10 +465,14 @@ pub fn resolve_workspace_member_config(
     let mut resolved = member_config.clone();
 
     for job in &mut resolved.jobs {
-        if job.template.is_empty()
-            && let Some(defaults) = workspace.workspace.defaults.jobs.get(&job.name)
+        if let Some(defaults) = workspace.workspace.defaults.jobs.get(&job.name)
+            && let (Some(job_builtin), Some(default_builtin)) = (
+                job.template.builtin.as_mut(),
+                defaults.template.builtin.as_ref(),
+            )
+            && job_builtin.language.is_none()
         {
-            job.template = defaults.template.clone();
+            job_builtin.language = default_builtin.language.clone();
         }
     }
 
@@ -896,7 +900,7 @@ name = "l10n"
     }
 
     #[test]
-    fn resolves_workspace_member_config_by_inheriting_missing_templates_only() {
+    fn workspace_defaults_can_supply_builtin_language() {
         let manifest = parse_manifest_str(
             r#"
 version = 1
@@ -904,16 +908,11 @@ version = 1
 [workspace]
 members = ["AppUI"]
 
-[workspace.defaults.jobs.l10n.template.builtin]
-language = "swift"
-name = "l10n"
-
 [workspace.defaults.jobs.assets.template.builtin]
-language = "swift"
-name = "files"
+language = "objc"
 "#,
         )
-        .expect("workspace manifest should parse");
+        .expect("workspace should parse");
         let Manifest::Workspace(workspace) = manifest else {
             panic!("expected workspace manifest");
         };
@@ -923,7 +922,95 @@ name = "files"
 version = 1
 
 [jobs.assets]
-output = "Generated/Assets.swift"
+output = "Generated/Assets.h"
+
+[[jobs.assets.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.assets.template.builtin]
+name = "assets"
+"#,
+        )
+        .expect("member config should deserialize");
+
+        let resolved = resolve_workspace_member_config(&workspace, "AppUI", &member_config)
+            .expect("workspace defaults should resolve");
+
+        let builtin = resolved.jobs[0].template.builtin.as_ref().expect("builtin should exist");
+        assert_eq!(builtin.language.as_deref(), Some("objc"));
+        assert_eq!(builtin.name.as_deref(), Some("assets"));
+    }
+
+    #[test]
+    fn workspace_defaults_do_not_invent_builtin_name() {
+        let manifest = parse_manifest_str(
+            r#"
+version = 1
+
+[workspace]
+members = ["AppUI"]
+
+[workspace.defaults.jobs.assets.template.builtin]
+language = "objc"
+"#,
+        )
+        .expect("workspace should parse");
+        let Manifest::Workspace(workspace) = manifest else {
+            panic!("expected workspace manifest");
+        };
+
+        let member_config = toml::from_str::<Config>(
+            r#"
+version = 1
+
+[jobs.assets]
+output = "Generated/Assets.h"
+
+[[jobs.assets.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.assets.template]
+path = "Templates/assets.stencil"
+"#,
+        )
+        .expect("member config should deserialize");
+
+        let resolved = resolve_workspace_member_config(&workspace, "AppUI", &member_config)
+            .expect("workspace defaults should resolve");
+
+        assert!(resolved.jobs[0].template.builtin.is_none());
+        assert_eq!(
+            resolved.jobs[0].template.path.as_deref(),
+            Some("Templates/assets.stencil")
+        );
+    }
+
+    #[test]
+    fn job_level_builtin_language_overrides_workspace_default_language() {
+        let manifest = parse_manifest_str(
+            r#"
+version = 1
+
+[workspace]
+members = ["AppUI"]
+
+[workspace.defaults.jobs.assets.template.builtin]
+language = "objc"
+"#,
+        )
+        .expect("workspace should parse");
+        let Manifest::Workspace(workspace) = manifest else {
+            panic!("expected workspace manifest");
+        };
+
+        let member_config = toml::from_str::<Config>(
+            r#"
+version = 1
+
+[jobs.assets]
+output = "Generated/Assets.h"
 
 [[jobs.assets.inputs]]
 type = "xcassets"
@@ -932,38 +1019,16 @@ path = "Resources/Assets.xcassets"
 [jobs.assets.template.builtin]
 language = "swift"
 name = "swiftui-assets"
-
-[jobs.l10n]
-output = "Generated/L10n.swift"
-
-[[jobs.l10n.inputs]]
-type = "strings"
-path = "Resources/Localization"
 "#,
         )
-        .expect("member config should deserialize without template inheritance applied");
+        .expect("member config should deserialize");
 
         let resolved = resolve_workspace_member_config(&workspace, "AppUI", &member_config)
-            .expect("workspace defaults should fill missing member templates");
+            .expect("workspace defaults should resolve");
 
-        assert_eq!(
-            resolved
-                .jobs
-                .iter()
-                .find(|job| job.name == "l10n")
-                .and_then(|job| job.template.builtin.as_ref())
-                .and_then(|builtin| builtin.name.as_deref()),
-            Some("l10n")
-        );
-        assert_eq!(
-            resolved
-                .jobs
-                .iter()
-                .find(|job| job.name == "assets")
-                .and_then(|job| job.template.builtin.as_ref())
-                .and_then(|builtin| builtin.name.as_deref()),
-            Some("swiftui-assets")
-        );
+        let builtin = resolved.jobs[0].template.builtin.as_ref().expect("builtin should exist");
+        assert_eq!(builtin.language.as_deref(), Some("swift"));
+        assert_eq!(builtin.name.as_deref(), Some("swiftui-assets"));
     }
 
     #[test]

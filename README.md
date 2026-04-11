@@ -198,3 +198,5 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
+
+crates.io release notes for the workspace live in [docs/crates-io-release.md](docs/crates-io-release.md).

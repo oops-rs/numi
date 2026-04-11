@@ -66,6 +66,14 @@ cargo publish --dry-run -p numi-diagnostics
 
 If those pass, failures in downstream crates that mention missing unpublished internal crates are expected for the initial release. They are not manifest-shape failures.
 
+## GitHub Releases And Homebrew
+
+GitHub Releases package prebuilt `numi` binaries for the supported release targets and attach them as release assets.
+
+When `HOMEBREW_TAP_TOKEN` is configured in GitHub Actions, the release workflow also updates the `oops-rs/homebrew-tap` formula for `numi` from the tagged source release.
+
+crates.io publication remains manual and follows the workspace publish order described below.
+
 ## First Release Sequence
 
 Publish one crate at a time and wait for the index to catch up between steps.

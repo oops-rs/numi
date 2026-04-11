@@ -70,8 +70,8 @@ If those pass, failures in downstream crates that mention missing unpublished in
 
 GitHub Releases package prebuilt `numi` binaries for the supported release targets and attach them as release assets.
 
-When `HOMEBREW_TAP_TOKEN` is configured in GitHub Actions, the release workflow also updates the `oops-rs/homebrew-tap` formula for `numi` from the tagged source release.
-Homebrew remains source-based here: it builds from the tagged GitHub source archive rather than reusing the attached release binaries.
+When `HOMEBREW_TAP_TOKEN` is configured in GitHub Actions, the release workflow also updates the `oops-rs/homebrew-tap` formula for `numi` to match the tagged GitHub release assets.
+Homebrew consumes the release archives documented below, so their names and top-level layout are a stable external contract.
 
 crates.io publication remains manual and follows the workspace publish order described below.
 

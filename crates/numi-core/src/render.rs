@@ -8,12 +8,12 @@ use std::{
 
 use crate::context::AssetTemplateContext;
 
-const SWIFTUI_ASSETS_TEMPLATE: &str = include_str!("../../../templates/swift/swiftui-assets.jinja");
-const L10N_TEMPLATE: &str = include_str!("../../../templates/swift/l10n.jinja");
-const FILES_TEMPLATE: &str = include_str!("../../../templates/swift/files.jinja");
-const OBJC_ASSETS_TEMPLATE: &str = include_str!("../../../templates/objc/assets.jinja");
-const OBJC_L10N_TEMPLATE: &str = include_str!("../../../templates/objc/l10n.jinja");
-const OBJC_FILES_TEMPLATE: &str = include_str!("../../../templates/objc/files.jinja");
+const SWIFTUI_ASSETS_TEMPLATE: &str = include_str!("../templates/swift/swiftui-assets.jinja");
+const L10N_TEMPLATE: &str = include_str!("../templates/swift/l10n.jinja");
+const FILES_TEMPLATE: &str = include_str!("../templates/swift/files.jinja");
+const OBJC_ASSETS_TEMPLATE: &str = include_str!("../templates/objc/assets.jinja");
+const OBJC_L10N_TEMPLATE: &str = include_str!("../templates/objc/l10n.jinja");
+const OBJC_FILES_TEMPLATE: &str = include_str!("../templates/objc/files.jinja");
 const ENTRY_TEMPLATE_NAME: &str = "__numi_entry__";
 const FILE_TEMPLATE_PREFIX: &str = "file:";
 const INCLUDE_REQUEST_PREFIX: &str = "include:";

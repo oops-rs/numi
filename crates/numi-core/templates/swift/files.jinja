@@ -1,0 +1,33 @@
+import Foundation
+
+{% macro render_entries(entries, indent) -%}
+{% for entry in entries -%}
+{% if entry.kind == "namespace" -%}
+{{ indent }}{{ access_level }} enum {{ entry.swiftIdentifier }} {
+{{ render_entries(entry.children, indent ~ "    ") }}{{ indent }}}
+{% elif entry.kind == "data" -%}
+{{ indent }}{{ access_level }} static let {{ entry.swiftIdentifier | lower_first }} = file({{ entry.properties.relativePath | string_literal }})
+{% endif -%}
+{% endfor -%}
+{%- endmacro %}
+
+{{ access_level }} enum {{ job.swiftIdentifier }} {
+{% if modules | length == 1 -%}
+{{ render_entries(modules[0].entries, "    ") }}{% else -%}
+{% for module in modules -%}
+    {{ access_level }} enum {{ module.name }} {
+{{ render_entries(module.entries, "        ") }}    }
+{% endfor -%}
+{% endif -%}
+}
+
+private func resourceBundle() -> Bundle {
+    {% if bundle.mode == "module" %}Bundle.module{% elif bundle.mode == "main" %}.main{% else %}Bundle(identifier: {{ bundle.identifier | string_literal }})!{% endif %}
+}
+
+private func file(_ path: String) -> URL {
+    guard let url = resourceBundle().url(forResource: path, withExtension: nil) else {
+        fatalError("Missing file resource: \(path)")
+    }
+    return url
+}

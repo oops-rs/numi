@@ -1440,13 +1440,14 @@ mod tests {
                 .expect("clock should be after epoch")
                 .as_nanos()
         );
-        let mut temp_root = std::env::temp_dir();
-        while !temp_root.is_dir() {
-            assert!(
-                temp_root.pop(),
-                "temp dir root should have a directory ancestor"
-            );
-        }
+        // Some tests intentionally override TMPDIR to a file path. Use a stable
+        // scratch root so unrelated tests never inherit that override.
+        let temp_root = if cfg!(unix) {
+            PathBuf::from("/tmp")
+        } else {
+            std::env::temp_dir()
+        };
+        assert!(temp_root.is_dir(), "temp dir root should exist");
         let path = temp_root.join(unique);
         fs::create_dir_all(&path).expect("temp dir should be created");
         path
@@ -1812,9 +1813,13 @@ name = "files"
             };
 
             assert!(recovered.is_dir());
-            assert!(recovered.starts_with(&temp_dir));
+            assert!(!recovered.starts_with(&bad_tmp));
+            if cfg!(unix) {
+                assert_eq!(recovered.parent(), Some(Path::new("/tmp")));
+            }
 
             fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+            fs::remove_dir_all(recovered).expect("recovered temp dir should be removed");
         });
     }
 

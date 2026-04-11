@@ -45,14 +45,28 @@ pub(crate) struct InputSnapshot {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct InputSnapshotEntry {
     relative_path: PathBuf,
+    kind: InputSnapshotEntryKind,
     len: u64,
     modified: Option<SystemTime>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InputSnapshotEntryKind {
+    File,
+    Directory,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FingerprintedInput {
     pub(crate) fingerprint: String,
     pub(crate) snapshot: InputSnapshot,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RelevantInputEntry {
+    absolute_path: PathBuf,
+    relative_path: PathBuf,
+    kind: InputSnapshotEntryKind,
 }
 
 #[derive(Debug)]
@@ -165,33 +179,40 @@ pub(crate) fn fingerprint_input_with_snapshot(
     path: &Path,
 ) -> Result<FingerprintedInput, CacheError> {
     let root = canonicalize(path)?;
-    let files = relevant_files(kind, &root)?;
-    let base = fingerprint_base(&root);
+    let entries_to_track = relevant_entries(kind, &root)?;
     let mut hasher = Hasher::new();
-    let mut entries = Vec::with_capacity(files.len());
+    let mut entries = Vec::with_capacity(entries_to_track.len());
 
     hasher.update(kind.cache_key().as_bytes());
     hasher.update(b"\0");
-    hasher.update(base.as_os_str().as_encoded_bytes());
+    hasher.update(root.as_os_str().as_encoded_bytes());
     hasher.update(b"\0");
 
-    for file in files {
-        let relative = file.strip_prefix(&base).unwrap_or(&file);
-        let metadata = fs::metadata(&file).map_err(|source| CacheError::ReadFile {
-            path: file.clone(),
-            source,
-        })?;
-        let contents = fs::read(&file).map_err(|source| CacheError::ReadFile {
-            path: file.clone(),
+    for entry in entries_to_track {
+        let metadata = fs::metadata(&entry.absolute_path).map_err(|source| CacheError::ReadFile {
+            path: entry.absolute_path.clone(),
             source,
         })?;
 
-        hasher.update(relative.as_os_str().as_encoded_bytes());
+        hasher.update(match entry.kind {
+            InputSnapshotEntryKind::File => b"file".as_slice(),
+            InputSnapshotEntryKind::Directory => b"dir".as_slice(),
+        });
         hasher.update(b"\0");
-        hasher.update(&contents);
+        hasher.update(entry.relative_path.as_os_str().as_encoded_bytes());
         hasher.update(b"\0");
+        if entry.kind == InputSnapshotEntryKind::File {
+            let contents =
+                fs::read(&entry.absolute_path).map_err(|source| CacheError::ReadFile {
+                    path: entry.absolute_path.clone(),
+                    source,
+                })?;
+            hasher.update(&contents);
+            hasher.update(b"\0");
+        }
         entries.push(InputSnapshotEntry {
-            relative_path: relative.to_path_buf(),
+            relative_path: entry.relative_path,
+            kind: entry.kind,
             len: metadata.len(),
             modified: metadata.modified().ok(),
         });
@@ -350,18 +371,17 @@ fn validate_record(
 }
 
 fn build_input_snapshot(kind: CacheKind, root: &Path) -> Result<InputSnapshot, CacheError> {
-    let files = relevant_files(kind, root)?;
-    let base = fingerprint_base(root);
-    let mut entries = Vec::with_capacity(files.len());
+    let entries_to_track = relevant_entries(kind, root)?;
+    let mut entries = Vec::with_capacity(entries_to_track.len());
 
-    for file in files {
-        let relative = file.strip_prefix(&base).unwrap_or(&file);
-        let metadata = fs::metadata(&file).map_err(|source| CacheError::ReadFile {
-            path: file.clone(),
+    for entry in entries_to_track {
+        let metadata = fs::metadata(&entry.absolute_path).map_err(|source| CacheError::ReadFile {
+            path: entry.absolute_path.clone(),
             source,
         })?;
         entries.push(InputSnapshotEntry {
-            relative_path: relative.to_path_buf(),
+            relative_path: entry.relative_path,
+            kind: entry.kind,
             len: metadata.len(),
             modified: metadata.modified().ok(),
         });
@@ -374,10 +394,21 @@ fn build_input_snapshot(kind: CacheKind, root: &Path) -> Result<InputSnapshot, C
     })
 }
 
-fn relevant_files(kind: CacheKind, path: &Path) -> Result<Vec<PathBuf>, CacheError> {
+fn relevant_entries(kind: CacheKind, path: &Path) -> Result<Vec<RelevantInputEntry>, CacheError> {
+    if kind == CacheKind::Xcassets {
+        return relevant_xcassets_entries(path);
+    }
+
     if path.is_file() {
         return Ok(if is_relevant_file(kind, path) {
-            vec![path.to_path_buf()]
+            vec![RelevantInputEntry {
+                absolute_path: path.to_path_buf(),
+                relative_path: path
+                    .file_name()
+                    .map(PathBuf::from)
+                    .unwrap_or_else(PathBuf::new),
+                kind: InputSnapshotEntryKind::File,
+            }]
         } else {
             Vec::new()
         });
@@ -389,12 +420,19 @@ fn relevant_files(kind: CacheKind, path: &Path) -> Result<Vec<PathBuf>, CacheErr
 
     let mut files = Vec::new();
     collect_relevant_files(kind, path, &mut files)?;
-    files.sort_by(|left, right| {
-        let left_rel = left.strip_prefix(path).unwrap_or(left);
-        let right_rel = right.strip_prefix(path).unwrap_or(right);
-        left_rel.cmp(right_rel)
-    });
-    Ok(files)
+    let mut entries = files
+        .into_iter()
+        .map(|absolute_path| RelevantInputEntry {
+            relative_path: absolute_path
+                .strip_prefix(path)
+                .unwrap_or(&absolute_path)
+                .to_path_buf(),
+            absolute_path,
+            kind: InputSnapshotEntryKind::File,
+        })
+        .collect::<Vec<_>>();
+    entries.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+    Ok(entries)
 }
 
 fn collect_relevant_files(
@@ -433,6 +471,101 @@ fn collect_relevant_files(
     Ok(())
 }
 
+fn relevant_xcassets_entries(path: &Path) -> Result<Vec<RelevantInputEntry>, CacheError> {
+    if path.is_file() || !path.is_dir() {
+        return Ok(Vec::new());
+    }
+
+    let mut entries = Vec::new();
+    collect_relevant_xcassets_entries(path, path, &mut entries)?;
+    entries.sort_by(|left, right| {
+        left.relative_path
+            .cmp(&right.relative_path)
+            .then_with(|| match (left.kind, right.kind) {
+                (InputSnapshotEntryKind::Directory, InputSnapshotEntryKind::File) => {
+                    std::cmp::Ordering::Less
+                }
+                (InputSnapshotEntryKind::File, InputSnapshotEntryKind::Directory) => {
+                    std::cmp::Ordering::Greater
+                }
+                _ => std::cmp::Ordering::Equal,
+            })
+    });
+    Ok(entries)
+}
+
+fn collect_relevant_xcassets_entries(
+    root: &Path,
+    directory: &Path,
+    entries: &mut Vec<RelevantInputEntry>,
+) -> Result<(), CacheError> {
+    let read_dir = fs::read_dir(directory).map_err(|source| CacheError::ReadDirectory {
+        path: directory.to_path_buf(),
+        source,
+    })?;
+
+    for entry in read_dir {
+        let entry = entry.map_err(|source| CacheError::ReadDirectory {
+            path: directory.to_path_buf(),
+            source,
+        })?;
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .map_err(|source| CacheError::ReadDirectory {
+                path: path.clone(),
+                source,
+            })?;
+
+        if file_type.is_dir() {
+            let relative_path = path.strip_prefix(root).unwrap_or(&path).to_path_buf();
+            entries.push(RelevantInputEntry {
+                absolute_path: path.clone(),
+                relative_path,
+                kind: InputSnapshotEntryKind::Directory,
+            });
+            collect_relevant_xcassets_entries(root, &path, entries)?;
+            continue;
+        }
+
+        if file_type.is_file() && is_relevant_xcassets_file(root, &path) {
+            entries.push(RelevantInputEntry {
+                relative_path: path.strip_prefix(root).unwrap_or(&path).to_path_buf(),
+                absolute_path: path,
+                kind: InputSnapshotEntryKind::File,
+            });
+        }
+    }
+
+    Ok(())
+}
+
+fn is_relevant_xcassets_file(root: &Path, path: &Path) -> bool {
+    if path.file_name().and_then(|name| name.to_str()) != Some("Contents.json") {
+        return false;
+    }
+
+    let Some(parent) = path.parent() else {
+        return false;
+    };
+    let Ok(relative_parent) = parent.strip_prefix(root) else {
+        return false;
+    };
+    if relative_parent.as_os_str().is_empty() {
+        return false;
+    }
+
+    let folder_name = relative_parent
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    let extension = Path::new(folder_name)
+        .extension()
+        .and_then(|extension| extension.to_str());
+
+    extension.is_none() || extension == Some("spriteatlas")
+}
+
 fn is_relevant_file(kind: CacheKind, path: &Path) -> bool {
     match kind {
         CacheKind::Xcassets => path.is_file(),
@@ -450,17 +583,6 @@ fn canonicalize(path: &Path) -> Result<PathBuf, CacheError> {
         path: path.to_path_buf(),
         source,
     })
-}
-
-fn fingerprint_base(path: &Path) -> PathBuf {
-    if path.is_file() {
-        path.parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."))
-            .to_path_buf()
-    } else {
-        path.to_path_buf()
-    }
 }
 
 impl CacheKind {
@@ -666,6 +788,108 @@ mod tests {
             !input_matches_snapshot(CacheKind::Strings, &strings_path, &snapshot)
                 .expect("mutated snapshot check should succeed")
         );
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn xcassets_fingerprint_ignores_image_binary_changes() {
+        let temp_dir = make_temp_dir("parse-cache-xcassets-ignore-image-binaries");
+        let catalog_path = temp_dir.join("Assets.xcassets");
+        let imageset_path = catalog_path.join("Logo.imageset");
+        fs::create_dir_all(&imageset_path).expect("imageset dir should exist");
+        fs::write(
+            imageset_path.join("Contents.json"),
+            "{\"images\":[{\"filename\":\"logo.png\"}],\"info\":{\"author\":\"xcode\",\"version\":1}}",
+        )
+        .expect("imageset contents should exist");
+        fs::write(imageset_path.join("logo.png"), "before").expect("image file should exist");
+
+        let before = fingerprint_input(CacheKind::Xcassets, &catalog_path)
+            .expect("fingerprint should succeed");
+
+        fs::write(imageset_path.join("logo.png"), "after").expect("image file should mutate");
+
+        let after = fingerprint_input(CacheKind::Xcassets, &catalog_path)
+            .expect("fingerprint should still succeed");
+
+        assert_eq!(before, after);
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn xcassets_snapshot_ignores_image_binary_changes() {
+        let temp_dir = make_temp_dir("parse-cache-xcassets-snapshot-ignore-image-binaries");
+        let catalog_path = temp_dir.join("Assets.xcassets");
+        let imageset_path = catalog_path.join("Logo.imageset");
+        fs::create_dir_all(&imageset_path).expect("imageset dir should exist");
+        fs::write(
+            imageset_path.join("Contents.json"),
+            "{\"images\":[{\"filename\":\"logo.png\"}],\"info\":{\"author\":\"xcode\",\"version\":1}}",
+        )
+        .expect("imageset contents should exist");
+        fs::write(imageset_path.join("logo.png"), "before").expect("image file should exist");
+
+        let snapshot = snapshot_input(CacheKind::Xcassets, &catalog_path)
+            .expect("snapshot should succeed");
+
+        fs::write(imageset_path.join("logo.png"), "after").expect("image file should mutate");
+
+        assert!(
+            input_matches_snapshot(CacheKind::Xcassets, &catalog_path, &snapshot)
+                .expect("snapshot comparison should succeed"),
+            "image payload changes should not invalidate xcassets snapshot relevance"
+        );
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn xcassets_fingerprint_changes_when_asset_folder_changes() {
+        let temp_dir = make_temp_dir("parse-cache-xcassets-folder-change");
+        let catalog_path = temp_dir.join("Assets.xcassets");
+        fs::create_dir_all(catalog_path.join("Logo.imageset")).expect("imageset dir should exist");
+
+        let before = fingerprint_input(CacheKind::Xcassets, &catalog_path)
+            .expect("fingerprint should succeed");
+
+        fs::create_dir_all(catalog_path.join("Badge.imageset"))
+            .expect("new imageset dir should exist");
+
+        let after = fingerprint_input(CacheKind::Xcassets, &catalog_path)
+            .expect("fingerprint should still succeed");
+
+        assert_ne!(before, after);
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn xcassets_fingerprint_changes_when_namespace_contents_change() {
+        let temp_dir = make_temp_dir("parse-cache-xcassets-namespace-change");
+        let catalog_path = temp_dir.join("Assets.xcassets");
+        let group_path = catalog_path.join("Icons");
+        fs::create_dir_all(group_path.join("Logo.imageset")).expect("nested imageset dir should exist");
+        fs::write(
+            group_path.join("Contents.json"),
+            "{\"properties\":{\"provides-namespace\":false}}",
+        )
+        .expect("group contents should exist");
+
+        let before = fingerprint_input(CacheKind::Xcassets, &catalog_path)
+            .expect("fingerprint should succeed");
+
+        fs::write(
+            group_path.join("Contents.json"),
+            "{\"properties\":{\"provides-namespace\":true}}",
+        )
+        .expect("group contents should mutate");
+
+        let after = fingerprint_input(CacheKind::Xcassets, &catalog_path)
+            .expect("fingerprint should still succeed");
+
+        assert_ne!(before, after);
 
         fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
     }

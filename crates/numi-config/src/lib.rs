@@ -913,6 +913,28 @@ name = "l10n"
     }
 
     #[test]
+    fn rejects_mixed_workspace_default_path_and_builtin_language() {
+        let error = parse_manifest_str(
+            r#"
+version = 1
+
+[workspace]
+members = ["AppUI"]
+
+[workspace.defaults.jobs.assets.template]
+path = "Templates/assets.stencil"
+[workspace.defaults.jobs.assets.template.builtin]
+language = "objc"
+"#,
+        )
+        .expect_err("mixed workspace default template sources should fail");
+
+        let message = error.to_string();
+        assert!(message.contains("workspace default job template must set exactly one source"));
+        assert!(message.contains("remove either `path` or `builtin.language`"));
+    }
+
+    #[test]
     fn workspace_member_config_path_joins_member_root_with_numi_toml() {
         assert_eq!(
             workspace_member_config_path(Path::new("/tmp/workspace"), "AppUI"),

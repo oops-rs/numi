@@ -355,6 +355,20 @@ fn validate_workspace_default_template(
         return;
     }
 
+    if template.path.is_some() && builtin.language.is_some() {
+        let diagnostic = Diagnostic::error(
+            "workspace default job template must set exactly one source",
+        )
+        .with_hint(
+            "remove either `path` or `builtin.language` from `[workspace.defaults.jobs.<job>.template]`",
+        );
+        diagnostics.push(match job {
+            Some(job) => diagnostic.with_job(job.to_owned()),
+            None => diagnostic,
+        });
+        return;
+    }
+
     if let Some(language) = builtin.language.as_deref() {
         validate_workspace_default_builtin_language(diagnostics, language, field_path, job);
         return;

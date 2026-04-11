@@ -1,13 +1,16 @@
 [package]
-name = "numi-cli"
+name = "numi"
 version = "0.1.0"
 edition = "2024"
 description = "CLI for generating Swift code from Apple project resources."
 license = "MIT"
 repository = "https://github.com/oops-rs/numi"
 homepage = "https://github.com/oops-rs/numi"
-documentation = "https://docs.rs/numi-cli"
+documentation = "https://docs.rs/numi"
 readme = "../../README.md"
+
+[lib]
+name = "numi_cli"
 
 [[bin]]
 name = "numi"

@@ -1,26 +1,25 @@
 # Numi
 
-Numi is a Rust CLI for generating Swift code from Apple project resources.
-It is an early, template-driven alternative to SwiftGen for teams that want deterministic code generation and custom template workflows.
+Numi is a blazingly fast CLI for generating Swift code from Apple project resources.
+It turns asset catalogs, localization files, and file lists into generated accessors and helpers using built-in or custom templates.
 
 ## Install
 
 ```bash
-cargo install numi-cli
+cargo install numi
 ```
 
 The installed binary is named `numi`.
 
-## What Numi Supports Today
+## What Numi Does
 
-- `.xcassets` inputs for image and color asset accessors
-- `.strings` inputs for localization generation
-- `.xcstrings` plain-string inputs for localization generation
-- `files` inputs for file-oriented helper generation
-- custom Minijinja templates, including `{% include %}` support
-- built-in Swift templates for `swiftui-assets`, `l10n`, and `files`
+- reads `.xcassets` and generates image and color accessors
+- reads `.strings` and `.xcstrings` and generates localization helpers
+- reads `files` inputs and generates file-oriented helpers
+- renders built-in templates or custom Minijinja templates
+- supports workspace orchestration when a repo has multiple `numi.toml` files
 
-Numi is intentionally narrower than SwiftGen today. The first public release focuses on the currently proven resource types rather than full SwiftGen feature parity.
+Numi is built for deterministic generation workflows: check in the outputs you want, regenerate them locally, and verify them in CI with `numi check`.
 
 ## Quick Start
 
@@ -134,7 +133,7 @@ The starter config shipped with `numi init` lives in [docs/examples/starter-numi
 
 ## Built-In Templates
 
-Numi currently ships these Swift templates:
+Numi currently ships these built-in templates:
 
 - `swiftui-assets`
 - `l10n`
@@ -146,7 +145,6 @@ Fonts are supported in the template context and in custom-template workflows, bu
 
 - `.xcstrings` plural and device-specific variations are skipped with warnings
 - the shipped `l10n` template currently emits simple no-argument accessors even when placeholder metadata is present in template context
-- full SwiftGen feature parity is out of scope for this release
 
 ## Workspace Manifests
 
@@ -190,10 +188,6 @@ numi dump-context --job l10n
 ```
 
 The stable context contract is documented in [docs/context-schema.md](docs/context-schema.md).
-
-## Migration Notes
-
-If you are migrating from SwiftGen, start with [docs/migration-from-swiftgen.md](docs/migration-from-swiftgen.md). Numi is closest to SwiftGen in the asset, localization, and template-driven generation workflows covered in this repository today.
 
 ## Development
 

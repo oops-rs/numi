@@ -563,7 +563,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "numi-cli"
+name = "numi"
 version = "0.1.0"
 dependencies = [
  "clap",

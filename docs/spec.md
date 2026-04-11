@@ -115,7 +115,7 @@ Discovery and defaults should reduce friction, but behavior must remain explaina
 - Workspace/package naming can use `numi-*` convention
 
 ### 5.2 Proposed Rust Workspace Crates
-- `numi-cli`: CLI entrypoint
+- `numi`: published CLI package and entrypoint (implemented in `crates/numi-cli`)
 - `numi-config`: config parsing, validation, discovery
 - `numi-core`: orchestration APIs
 - `numi-scan`: file discovery and input collection

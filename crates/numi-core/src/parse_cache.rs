@@ -1,12 +1,13 @@
 use crate::{parse_l10n::LocalizationTable, parse_xcassets::XcassetsReport};
 use atomic_write_file::AtomicWriteFile;
+use blake3::Hasher;
 use numi_ir::RawEntry;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::{
     fs, io,
     io::Write,
     path::{Path, PathBuf},
+    time::SystemTime,
 };
 
 const CACHE_SCHEMA_VERSION: u32 = 1;
@@ -32,6 +33,26 @@ pub enum CacheKind {
     Strings,
     Xcstrings,
     Files,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct InputSnapshot {
+    root: PathBuf,
+    is_file: bool,
+    entries: Vec<InputSnapshotEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct InputSnapshotEntry {
+    relative_path: PathBuf,
+    len: u64,
+    modified: Option<SystemTime>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FingerprintedInput {
+    pub(crate) fingerprint: String,
+    pub(crate) snapshot: InputSnapshot,
 }
 
 #[derive(Debug)]
@@ -136,10 +157,18 @@ impl std::fmt::Display for CacheError {
 impl std::error::Error for CacheError {}
 
 pub fn fingerprint_input(kind: CacheKind, path: &Path) -> Result<String, CacheError> {
+    Ok(fingerprint_input_with_snapshot(kind, path)?.fingerprint)
+}
+
+pub(crate) fn fingerprint_input_with_snapshot(
+    kind: CacheKind,
+    path: &Path,
+) -> Result<FingerprintedInput, CacheError> {
     let root = canonicalize(path)?;
     let files = relevant_files(kind, &root)?;
     let base = fingerprint_base(&root);
-    let mut hasher = Sha256::new();
+    let mut hasher = Hasher::new();
+    let mut entries = Vec::with_capacity(files.len());
 
     hasher.update(kind.cache_key().as_bytes());
     hasher.update(b"\0");
@@ -148,6 +177,10 @@ pub fn fingerprint_input(kind: CacheKind, path: &Path) -> Result<String, CacheEr
 
     for file in files {
         let relative = file.strip_prefix(&base).unwrap_or(&file);
+        let metadata = fs::metadata(&file).map_err(|source| CacheError::ReadFile {
+            path: file.clone(),
+            source,
+        })?;
         let contents = fs::read(&file).map_err(|source| CacheError::ReadFile {
             path: file.clone(),
             source,
@@ -157,38 +190,67 @@ pub fn fingerprint_input(kind: CacheKind, path: &Path) -> Result<String, CacheEr
         hasher.update(b"\0");
         hasher.update(&contents);
         hasher.update(b"\0");
+        entries.push(InputSnapshotEntry {
+            relative_path: relative.to_path_buf(),
+            len: metadata.len(),
+            modified: metadata.modified().ok(),
+        });
     }
 
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(FingerprintedInput {
+        fingerprint: hasher.finalize().to_hex().to_string(),
+        snapshot: InputSnapshot {
+            root,
+            is_file: path.is_file(),
+            entries,
+        },
+    })
 }
 
 pub fn load(kind: CacheKind, path: &Path) -> Result<Option<CachedParseData>, CacheError> {
-    let fingerprint = fingerprint_input(kind, path)?;
     let cache_path = cache_file_path(kind, path)?;
-    let bytes = match fs::read(&cache_path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(_) => return Ok(None),
+    let Some(record) = read_cache_record(&cache_path) else {
+        return Ok(None);
+    };
+    let fingerprint = fingerprint_input(kind, path)?;
+    Ok(validate_record(kind, record, &fingerprint))
+}
+
+pub fn load_with_fingerprint(
+    kind: CacheKind,
+    path: &Path,
+    fingerprint: &str,
+) -> Result<Option<CachedParseData>, CacheError> {
+    let cache_path = cache_file_path(kind, path)?;
+    let Some(record) = read_cache_record(&cache_path) else {
+        return Ok(None);
     };
 
-    let record: CacheRecord = match serde_json::from_slice(&bytes) {
-        Ok(record) => record,
-        Err(_) => return Ok(None),
-    };
+    Ok(validate_record(kind, record, fingerprint))
+}
 
-    if record.schema_version != CACHE_SCHEMA_VERSION {
-        return Ok(None);
+#[cfg(test)]
+fn cache_record_exists(kind: CacheKind, path: &Path) -> Result<bool, CacheError> {
+    Ok(cache_file_path(kind, path)?.is_file())
+}
+
+#[cfg(test)]
+pub(crate) fn snapshot_input(kind: CacheKind, path: &Path) -> Result<InputSnapshot, CacheError> {
+    let root = canonicalize(path)?;
+    Ok(build_input_snapshot(kind, &root)?)
+}
+
+pub(crate) fn input_matches_snapshot(
+    kind: CacheKind,
+    path: &Path,
+    snapshot: &InputSnapshot,
+) -> Result<bool, CacheError> {
+    let root = canonicalize(path)?;
+    if root != snapshot.root {
+        return Ok(false);
     }
 
-    if record.fingerprint != fingerprint {
-        return Ok(None);
-    }
-
-    if !kind.matches(&record.data) {
-        return Ok(None);
-    }
-
-    Ok(Some(record.data))
+    Ok(build_input_snapshot(kind, &root)? == *snapshot)
 }
 
 pub fn store(
@@ -249,12 +311,67 @@ fn cache_root() -> PathBuf {
 
 fn cache_file_path(kind: CacheKind, path: &Path) -> Result<PathBuf, CacheError> {
     let canonical = canonicalize(path)?;
-    let mut hasher = Sha256::new();
+    let mut hasher = Hasher::new();
     hasher.update(kind.cache_key().as_bytes());
     hasher.update(b"\0");
     hasher.update(canonical.as_os_str().as_encoded_bytes());
 
-    Ok(cache_root().join(format!("{:x}.json", hasher.finalize())))
+    Ok(cache_root().join(format!("{}.json", hasher.finalize().to_hex())))
+}
+
+fn read_cache_record(cache_path: &Path) -> Option<CacheRecord> {
+    let bytes = match fs::read(cache_path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return None,
+        Err(_) => return None,
+    };
+
+    serde_json::from_slice(&bytes).ok()
+}
+
+fn validate_record(
+    kind: CacheKind,
+    record: CacheRecord,
+    fingerprint: &str,
+) -> Option<CachedParseData> {
+    if record.schema_version != CACHE_SCHEMA_VERSION {
+        return None;
+    }
+
+    if record.fingerprint != fingerprint {
+        return None;
+    }
+
+    if !kind.matches(&record.data) {
+        return None;
+    }
+
+    Some(record.data)
+}
+
+fn build_input_snapshot(kind: CacheKind, root: &Path) -> Result<InputSnapshot, CacheError> {
+    let files = relevant_files(kind, root)?;
+    let base = fingerprint_base(root);
+    let mut entries = Vec::with_capacity(files.len());
+
+    for file in files {
+        let relative = file.strip_prefix(&base).unwrap_or(&file);
+        let metadata = fs::metadata(&file).map_err(|source| CacheError::ReadFile {
+            path: file.clone(),
+            source,
+        })?;
+        entries.push(InputSnapshotEntry {
+            relative_path: relative.to_path_buf(),
+            len: metadata.len(),
+            modified: metadata.modified().ok(),
+        });
+    }
+
+    Ok(InputSnapshot {
+        root: root.to_path_buf(),
+        is_file: root.is_file(),
+        entries,
+    })
 }
 
 fn relevant_files(kind: CacheKind, path: &Path) -> Result<Vec<PathBuf>, CacheError> {
@@ -489,6 +606,66 @@ mod tests {
         let loaded = load(CacheKind::Xcassets, &catalog_path).expect("cache load should succeed");
 
         assert_eq!(loaded, Some(CachedParseData::Xcassets(report)));
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn cache_record_exists_only_after_store() {
+        let temp_dir = make_temp_dir("parse-cache-exists");
+        let catalog_path = temp_dir.join("Assets.xcassets");
+        fs::create_dir_all(&catalog_path).expect("catalog should exist");
+        fs::write(
+            catalog_path.join("Contents.json"),
+            "{\"info\":{\"author\":\"xcode\",\"version\":1}}",
+        )
+        .expect("catalog contents should exist");
+
+        assert!(
+            !cache_record_exists(CacheKind::Xcassets, &catalog_path)
+                .expect("missing cache record check should succeed")
+        );
+
+        let fingerprint = fingerprint_input(CacheKind::Xcassets, &catalog_path)
+            .expect("fingerprint should succeed");
+        let report = sample_xcassets_report(&temp_dir);
+
+        store(
+            CacheKind::Xcassets,
+            &catalog_path,
+            &fingerprint,
+            &CachedParseData::Xcassets(report),
+        )
+        .expect("cache store should succeed");
+
+        assert!(
+            cache_record_exists(CacheKind::Xcassets, &catalog_path)
+                .expect("stored cache record check should succeed")
+        );
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn input_snapshot_detects_when_relevant_file_changes() {
+        let temp_dir = make_temp_dir("parse-cache-input-snapshot");
+        let strings_path = temp_dir.join("Localizable.strings");
+        fs::write(&strings_path, "\"title\" = \"Before\";\n").expect("strings file should exist");
+
+        let snapshot = snapshot_input(CacheKind::Strings, &strings_path)
+            .expect("initial snapshot should succeed");
+
+        assert!(
+            input_matches_snapshot(CacheKind::Strings, &strings_path, &snapshot)
+                .expect("fresh snapshot should still match")
+        );
+
+        fs::write(&strings_path, "\"title\" = \"After\";\n").expect("strings file should mutate");
+
+        assert!(
+            !input_matches_snapshot(CacheKind::Strings, &strings_path, &snapshot)
+                .expect("mutated snapshot check should succeed")
+        );
 
         fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
     }

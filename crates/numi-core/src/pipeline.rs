@@ -242,7 +242,7 @@ pub fn dump_context(
         .expect("selected one job should resolve to one job");
 
     let (context, warnings) =
-        build_context(&loaded.path, config_dir, &loaded.config.defaults, job)?;
+        build_context(&loaded.path, config_dir, &loaded.config.defaults, job, None)?;
     let json = serde_json::to_string_pretty(&context).map_err(GenerateError::SerializeContext)?;
     Ok(DumpContextReport { json, warnings })
 }
@@ -296,11 +296,19 @@ fn generate_job(
 ) -> Result<JobExecution, GenerateError> {
     let output_path = config_dir.join(&job.output);
     let incremental = resolve_incremental(defaults, job, options);
-    let generation_fingerprint = compute_generation_fingerprint(config_dir, defaults, job);
+    let should_check_generation_cache = incremental
+        && generation_cache::cache_record_exists(config_path, &job.name)
+            .ok()
+            .unwrap_or(false);
+    let mut generation_plan = None;
+
+    if should_check_generation_cache {
+        generation_plan = compute_generation_fingerprint(config_dir, defaults, job);
+    }
 
     if incremental
-        && let Some(fingerprint) = generation_fingerprint.as_deref()
-        && generation_cache::is_fresh(config_path, &job.name, fingerprint, &output_path)
+        && let Some(plan) = generation_plan.as_ref()
+        && generation_cache::is_fresh(config_path, &job.name, &plan.fingerprint, &output_path)
             .ok()
             .unwrap_or(false)
     {
@@ -312,7 +320,12 @@ fn generate_job(
         });
     }
 
-    let (context, warnings) = build_context(config_path, config_dir, defaults, job)?;
+    if generation_plan.is_none() {
+        generation_plan = compute_generation_fingerprint(config_dir, defaults, job);
+    }
+
+    let (context, warnings) =
+        build_context(config_path, config_dir, defaults, job, generation_plan.as_ref())?;
     let rendered = render_job(config_dir, job, &context)?;
     let outcome = write_if_changed_atomic(&output_path, &rendered).map_err(|source| {
         GenerateError::WriteOutput {
@@ -321,8 +334,8 @@ fn generate_job(
         }
     })?;
 
-    if let Some(fingerprint) = generation_fingerprint.as_deref() {
-        let _ = generation_cache::store(config_path, &job.name, fingerprint, &output_path);
+    if let Some(plan) = generation_plan.as_ref() {
+        let _ = generation_cache::store(config_path, &job.name, &plan.fingerprint, &output_path);
     }
 
     Ok(JobExecution {
@@ -339,7 +352,7 @@ fn check_job(
     defaults: &DefaultsConfig,
     job: &JobConfig,
 ) -> Result<CheckJobExecution, GenerateError> {
-    let (context, warnings) = build_context(config_path, config_dir, defaults, job)?;
+    let (context, warnings) = build_context(config_path, config_dir, defaults, job, None)?;
     let rendered = render_job(config_dir, job, &context)?;
     let output_path = config_dir.join(&job.output);
     let stale = output_is_stale(&output_path, &rendered).map_err(|source| {
@@ -364,8 +377,10 @@ fn build_context(
     config_dir: &Path,
     defaults: &DefaultsConfig,
     job: &JobConfig,
+    generation_plan: Option<&GenerationFingerprintPlan>,
 ) -> Result<(AssetTemplateContext, Vec<Diagnostic>), GenerateError> {
-    let BuildModulesResult { modules, warnings } = build_modules(config_dir, job)?;
+    let BuildModulesResult { modules, warnings } =
+        build_modules(config_dir, job, generation_plan)?;
     let _graph = ResourceGraph {
         modules: modules.clone(),
         diagnostics: warnings.clone(),
@@ -411,6 +426,16 @@ struct CheckJobExecution {
     warnings: Vec<Diagnostic>,
 }
 
+struct GenerationFingerprintPlan {
+    fingerprint: String,
+    cache_input_fingerprints: BTreeMap<PathBuf, ParseCacheInputPlan>,
+}
+
+struct ParseCacheInputPlan {
+    fingerprint: String,
+    snapshot: parse_cache::InputSnapshot,
+}
+
 #[derive(Debug, Serialize)]
 struct GenerationFingerprintRecord {
     schema_version: u32,
@@ -449,7 +474,11 @@ struct GenerationDependencyFingerprintRecord {
     fingerprint: String,
 }
 
-fn build_modules(config_dir: &Path, job: &JobConfig) -> Result<BuildModulesResult, GenerateError> {
+fn build_modules(
+    config_dir: &Path,
+    job: &JobConfig,
+    generation_plan: Option<&GenerationFingerprintPlan>,
+) -> Result<BuildModulesResult, GenerateError> {
     let mut modules = Vec::new();
     let mut asset_entries = Vec::new();
     let mut duplicate_table_sources = BTreeMap::<String, Utf8PathBuf>::new();
@@ -458,10 +487,19 @@ fn build_modules(config_dir: &Path, job: &JobConfig) -> Result<BuildModulesResul
 
     for input in &job.inputs {
         let input_path = config_dir.join(&input.path);
+        let known_cache_input = generation_plan
+            .and_then(|plan| plan.cache_input_fingerprints.get(&input_path));
+        let known_cache_fingerprint = known_cache_input.map(|plan| plan.fingerprint.as_str());
+        let known_cache_snapshot = known_cache_input.map(|plan| &plan.snapshot);
 
         match input.kind.as_str() {
             "xcassets" => {
-                let report = load_or_parse_xcassets(&input_path, &job.name)?;
+                let report = load_or_parse_xcassets(
+                    &input_path,
+                    &job.name,
+                    known_cache_fingerprint,
+                    known_cache_snapshot,
+                )?;
                 warnings.extend(
                     report
                         .warnings
@@ -471,7 +509,12 @@ fn build_modules(config_dir: &Path, job: &JobConfig) -> Result<BuildModulesResul
                 asset_entries.extend(report.entries);
             }
             "strings" => {
-                let tables = load_or_parse_strings(&input_path, &job.name)?;
+                let tables = load_or_parse_strings(
+                    &input_path,
+                    &job.name,
+                    known_cache_fingerprint,
+                    known_cache_snapshot,
+                )?;
 
                 for table in tables {
                     let table_name = table.table_name.clone();
@@ -513,7 +556,12 @@ fn build_modules(config_dir: &Path, job: &JobConfig) -> Result<BuildModulesResul
                 }
             }
             "xcstrings" => {
-                let tables = load_or_parse_xcstrings(&input_path, &job.name)?;
+                let tables = load_or_parse_xcstrings(
+                    &input_path,
+                    &job.name,
+                    known_cache_fingerprint,
+                    known_cache_snapshot,
+                )?;
 
                 for table in tables {
                     let table_name = table.table_name.clone();
@@ -555,7 +603,12 @@ fn build_modules(config_dir: &Path, job: &JobConfig) -> Result<BuildModulesResul
                 }
             }
             "files" => {
-                let raw_entries = load_or_parse_files(&input_path, &job.name)?;
+                let raw_entries = load_or_parse_files(
+                    &input_path,
+                    &job.name,
+                    known_cache_fingerprint,
+                    known_cache_snapshot,
+                )?;
                 let mut entries =
                     normalize_scope(&job.name, raw_entries).map_err(GenerateError::Diagnostics)?;
                 annotate_swiftgen_file_sort_keys(&mut entries);
@@ -849,10 +902,14 @@ fn canonicalize_font_family_and_style(
 fn load_or_parse_xcassets(
     input_path: &Path,
     job_name: &str,
+    known_fingerprint: Option<&str>,
+    known_snapshot: Option<&parse_cache::InputSnapshot>,
 ) -> Result<crate::parse_xcassets::XcassetsReport, GenerateError> {
     load_or_parse_cached(
         CacheKind::Xcassets,
         input_path,
+        known_fingerprint,
+        known_snapshot,
         || {
             parse_catalog(input_path).map_err(|source| GenerateError::ParseXcassets {
                 job: job_name.to_owned(),
@@ -870,10 +927,14 @@ fn load_or_parse_xcassets(
 fn load_or_parse_strings(
     input_path: &Path,
     job_name: &str,
+    known_fingerprint: Option<&str>,
+    known_snapshot: Option<&parse_cache::InputSnapshot>,
 ) -> Result<Vec<LocalizationTable>, GenerateError> {
     load_or_parse_cached(
         CacheKind::Strings,
         input_path,
+        known_fingerprint,
+        known_snapshot,
         || {
             parse_strings(input_path).map_err(|source| GenerateError::ParseStrings {
                 job: job_name.to_owned(),
@@ -891,10 +952,14 @@ fn load_or_parse_strings(
 fn load_or_parse_xcstrings(
     input_path: &Path,
     job_name: &str,
+    known_fingerprint: Option<&str>,
+    known_snapshot: Option<&parse_cache::InputSnapshot>,
 ) -> Result<Vec<LocalizationTable>, GenerateError> {
     load_or_parse_cached(
         CacheKind::Xcstrings,
         input_path,
+        known_fingerprint,
+        known_snapshot,
         || {
             parse_xcstrings(input_path).map_err(|source| GenerateError::ParseXcstrings {
                 job: job_name.to_owned(),
@@ -912,10 +977,14 @@ fn load_or_parse_xcstrings(
 fn load_or_parse_files(
     input_path: &Path,
     job_name: &str,
+    known_fingerprint: Option<&str>,
+    known_snapshot: Option<&parse_cache::InputSnapshot>,
 ) -> Result<Vec<numi_ir::RawEntry>, GenerateError> {
     load_or_parse_cached(
         CacheKind::Files,
         input_path,
+        known_fingerprint,
+        known_snapshot,
         || {
             parse_files(input_path).map_err(|source| GenerateError::ParseFiles {
                 job: job_name.to_owned(),
@@ -933,6 +1002,8 @@ fn load_or_parse_files(
 fn load_or_parse_cached<T, ParseFn, WrapFn, ExtractFn>(
     kind: CacheKind,
     input_path: &Path,
+    known_fingerprint: Option<&str>,
+    known_snapshot: Option<&parse_cache::InputSnapshot>,
     parse: ParseFn,
     wrap: WrapFn,
     extract: ExtractFn,
@@ -943,16 +1014,28 @@ where
     WrapFn: Fn(T) -> CachedParseData,
     ExtractFn: Fn(CachedParseData) -> Option<T>,
 {
-    if let Some(parsed) = load_cached_parse(kind, input_path, extract) {
+    if let Some(parsed) = load_cached_parse(kind, input_path, known_fingerprint, extract) {
         return Ok(parsed);
     }
 
-    let fingerprint_before_parse = parse_cache::fingerprint_input(kind, input_path).ok();
+    let mut snapshot_before_parse = known_snapshot.cloned();
+    let fingerprint_before_parse = if let Some(fingerprint) = known_fingerprint {
+        Some(fingerprint.to_owned())
+    } else {
+        let fingerprinted = parse_cache::fingerprint_input_with_snapshot(kind, input_path).ok();
+        if let Some(fingerprinted) = fingerprinted {
+            snapshot_before_parse = Some(fingerprinted.snapshot.clone());
+            Some(fingerprinted.fingerprint)
+        } else {
+            None
+        }
+    };
     let parsed = parse()?;
     store_cached_parse(
         kind,
         input_path,
         fingerprint_before_parse.as_deref(),
+        snapshot_before_parse.as_ref(),
         wrap(parsed.clone()),
     );
     Ok(parsed)
@@ -961,12 +1044,17 @@ where
 fn load_cached_parse<T, ExtractFn>(
     kind: CacheKind,
     input_path: &Path,
+    known_fingerprint: Option<&str>,
     extract: ExtractFn,
 ) -> Option<T>
 where
     ExtractFn: Fn(CachedParseData) -> Option<T>,
 {
-    parse_cache::load(kind, input_path)
+    let loaded = match known_fingerprint {
+        Some(fingerprint) => parse_cache::load_with_fingerprint(kind, input_path, fingerprint),
+        None => parse_cache::load(kind, input_path),
+    };
+    loaded
         .ok()
         .flatten()
         .and_then(extract)
@@ -976,16 +1064,28 @@ fn store_cached_parse(
     kind: CacheKind,
     input_path: &Path,
     fingerprint_before_parse: Option<&str>,
+    snapshot_before_parse: Option<&parse_cache::InputSnapshot>,
     data: CachedParseData,
 ) {
     let Some(fingerprint_before_parse) = fingerprint_before_parse else {
         return;
     };
-    let Ok(fingerprint_after_parse) = parse_cache::fingerprint_input(kind, input_path) else {
-        return;
-    };
-    if fingerprint_before_parse != fingerprint_after_parse {
-        return;
+    if let Some(snapshot_before_parse) = snapshot_before_parse {
+        let Ok(snapshot_matches) =
+            parse_cache::input_matches_snapshot(kind, input_path, snapshot_before_parse)
+        else {
+            return;
+        };
+        if !snapshot_matches {
+            return;
+        }
+    } else {
+        let Ok(fingerprint_after_parse) = parse_cache::fingerprint_input(kind, input_path) else {
+            return;
+        };
+        if fingerprint_before_parse != fingerprint_after_parse {
+            return;
+        }
     }
 
     let _ = parse_cache::store(kind, input_path, fingerprint_before_parse, &data);
@@ -1046,16 +1146,32 @@ fn compute_generation_fingerprint(
     config_dir: &Path,
     defaults: &DefaultsConfig,
     job: &JobConfig,
-) -> Option<String> {
+) -> Option<GenerationFingerprintPlan> {
+    let mut cache_input_fingerprints = BTreeMap::new();
     let inputs = job
         .inputs
         .iter()
         .map(|input| {
             let resolved_path = config_dir.join(&input.path);
+            let fingerprint = if let Some(kind) = cache_kind_for_input(&input.kind) {
+                let fingerprinted =
+                    parse_cache::fingerprint_input_with_snapshot(kind, &resolved_path).ok()?;
+                let fingerprint = fingerprinted.fingerprint;
+                cache_input_fingerprints.insert(
+                    resolved_path.clone(),
+                    ParseCacheInputPlan {
+                        fingerprint: fingerprint.clone(),
+                        snapshot: fingerprinted.snapshot,
+                    },
+                );
+                fingerprint
+            } else {
+                fingerprint_path_contents(&resolved_path).ok()?
+            };
             Some(GenerationInputFingerprintRecord {
                 kind: input.kind.clone(),
                 path: input.path.clone(),
-                fingerprint: fingerprint_path_contents(&resolved_path).ok()?,
+                fingerprint,
             })
         })
         .collect::<Option<Vec<_>>>()?;
@@ -1103,7 +1219,20 @@ fn compute_generation_fingerprint(
         template,
     };
     let payload = serde_json::to_vec(&record).ok()?;
-    Some(generation_cache::blake3_hex([payload.as_slice()]))
+    Some(GenerationFingerprintPlan {
+        fingerprint: generation_cache::blake3_hex([payload.as_slice()]),
+        cache_input_fingerprints,
+    })
+}
+
+fn cache_kind_for_input(input_kind: &str) -> Option<CacheKind> {
+    match input_kind {
+        "xcassets" => Some(CacheKind::Xcassets),
+        "strings" => Some(CacheKind::Strings),
+        "xcstrings" => Some(CacheKind::Xcstrings),
+        "files" => Some(CacheKind::Files),
+        _ => None,
+    }
 }
 
 fn fingerprint_path_contents(path: &Path) -> std::io::Result<String> {
@@ -1229,10 +1358,10 @@ mod tests {
         parse_l10n::LocalizationTable,
         parse_xcassets::XcassetsReport,
     };
+    use blake3::Hasher;
     use camino::Utf8PathBuf;
     use numi_ir::{EntryKind, Metadata, ModuleKind, RawEntry, ResourceEntry, swift_identifier};
     use serde_json::json;
-    use sha2::{Digest, Sha256};
     use std::{
         fs,
         path::Path,
@@ -1511,7 +1640,7 @@ swift = "files"
 
     fn cache_record_path(kind: CacheKind, input_path: &Path) -> PathBuf {
         let canonical = fs::canonicalize(input_path).expect("input path should canonicalize");
-        let mut hasher = Sha256::new();
+        let mut hasher = Hasher::new();
         hasher.update(
             match kind {
                 CacheKind::Xcassets => "xcassets",
@@ -1527,7 +1656,7 @@ swift = "files"
         std::env::temp_dir()
             .join("numi-cache")
             .join("parsed-v1")
-            .join(format!("{:x}.json", hasher.finalize()))
+            .join(format!("{}.json", hasher.finalize().to_hex()))
     }
 
     #[test]
@@ -2208,6 +2337,8 @@ swift = "swiftui-assets"
             let first = load_or_parse_cached(
                 CacheKind::Files,
                 &files_root,
+                None,
+                None,
                 || {
                     fs::write(&input_file, "after")
                         .expect("fixture file should mutate during parse");
@@ -2225,6 +2356,8 @@ swift = "swiftui-assets"
             let second = load_or_parse_cached(
                 CacheKind::Files,
                 &files_root,
+                None,
+                None,
                 || Ok::<_, GenerateError>(fresh_entries.clone()),
                 CachedParseData::Files,
                 |cached| match cached {

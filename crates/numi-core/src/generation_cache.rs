@@ -112,6 +112,10 @@ impl std::fmt::Display for CacheError {
 
 impl std::error::Error for CacheError {}
 
+pub fn cache_record_exists(config_path: &Path, job_name: &str) -> Result<bool, CacheError> {
+    Ok(cache_file_path(config_path, job_name)?.is_file())
+}
+
 pub fn is_fresh(
     config_path: &Path,
     job_name: &str,
@@ -241,4 +245,51 @@ where
         hasher.update(part);
     }
     hasher.finalize().to_hex().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    fn make_temp_dir(test_name: &str) -> PathBuf {
+        let unique = format!(
+            "numi-{test_name}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock should be after epoch")
+                .as_nanos()
+        );
+        let path = std::env::temp_dir().join(unique);
+        fs::create_dir_all(&path).expect("temp dir should be created");
+        path
+    }
+
+    #[test]
+    fn cache_record_exists_only_after_store() {
+        let temp_dir = make_temp_dir("generation-cache-exists");
+        let config_path = temp_dir.join("numi.toml");
+        let output_path = temp_dir.join("Generated.swift");
+        fs::write(&config_path, "version = 1\n").expect("config file should exist");
+        fs::write(&output_path, "// generated\n").expect("output should exist");
+
+        assert!(
+            !cache_record_exists(&config_path, "assets")
+                .expect("missing cache record check should succeed")
+        );
+
+        store(&config_path, "assets", "fingerprint", &output_path)
+            .expect("generation cache store should succeed");
+
+        assert!(
+            cache_record_exists(&config_path, "assets")
+                .expect("stored cache record check should succeed")
+        );
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
 }

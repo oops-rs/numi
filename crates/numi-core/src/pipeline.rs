@@ -1428,7 +1428,6 @@ mod tests {
         fs,
         path::Path,
         path::PathBuf,
-        sync::{Mutex, OnceLock},
         time::{SystemTime, UNIX_EPOCH},
     };
 
@@ -1753,48 +1752,28 @@ name = "files"
         parse_cache::store(kind, input_path, &fingerprint, &data)
     }
 
-    fn cache_env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
-
-    fn lock_cache_env() -> std::sync::MutexGuard<'static, ()> {
-        cache_env_lock()
-            .lock()
-            .expect("cache env lock should not be poisoned")
-    }
-
-    fn with_locked_cache_env<T>(f: impl FnOnce() -> T) -> T {
-        let _lock = lock_cache_env();
-        f()
-    }
-
     fn with_temp_dir_override<T>(temp_dir: &Path, f: impl FnOnce() -> T) -> T {
-        with_locked_cache_env(|| {
-            generation_cache::with_test_cache_root_override(temp_dir, || {
-                parse_cache::with_test_cache_root_override(temp_dir, f)
-            })
+        generation_cache::with_test_cache_root_override(temp_dir, || {
+            parse_cache::with_test_cache_root_override(temp_dir, f)
         })
     }
 
     #[test]
     fn make_temp_dir_ignores_cache_root_override() {
-        with_locked_cache_env(|| {
-            let temp_dir = make_temp_dir("pipeline-temp-dir-recover");
-            let bad_tmp = temp_dir.join("not-a-directory");
-            fs::write(&bad_tmp, "cache root blocker").expect("bad tmp file should exist");
-            let recovered =
-                with_temp_dir_override(&bad_tmp, || make_temp_dir("pipeline-temp-dir-recovered"));
+        let temp_dir = make_temp_dir("pipeline-temp-dir-recover");
+        let bad_tmp = temp_dir.join("not-a-directory");
+        fs::write(&bad_tmp, "cache root blocker").expect("bad tmp file should exist");
+        let recovered =
+            with_temp_dir_override(&bad_tmp, || make_temp_dir("pipeline-temp-dir-recovered"));
 
-            assert!(recovered.is_dir());
-            assert!(!recovered.starts_with(&bad_tmp));
-            if cfg!(unix) {
-                assert_eq!(recovered.parent(), Some(Path::new("/tmp")));
-            }
+        assert!(recovered.is_dir());
+        assert!(!recovered.starts_with(&bad_tmp));
+        if cfg!(unix) {
+            assert_eq!(recovered.parent(), Some(Path::new("/tmp")));
+        }
 
-            fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
-            fs::remove_dir_all(recovered).expect("recovered temp dir should be removed");
-        });
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+        fs::remove_dir_all(recovered).expect("recovered temp dir should be removed");
     }
 
     fn cache_record_path(kind: CacheKind, input_path: &Path) -> PathBuf {
@@ -2469,27 +2448,26 @@ name = "files"
 
     #[test]
     fn generate_uses_cached_xcassets_parse_payload_on_cache_hit() {
-        with_locked_cache_env(|| {
-            let temp_dir = make_temp_dir("pipeline-assets-cache-hit");
-            let config_path = temp_dir.join("numi.toml");
-            let catalog_root = temp_dir.join("Resources/Assets.xcassets");
-            let color_root = catalog_root.join("Brand.colorset");
+        let temp_dir = make_temp_dir("pipeline-assets-cache-hit");
+        let config_path = temp_dir.join("numi.toml");
+        let catalog_root = temp_dir.join("Resources/Assets.xcassets");
+        let color_root = catalog_root.join("Brand.colorset");
 
-            fs::create_dir_all(&color_root).expect("catalog should exist");
-            fs::write(
-                catalog_root.join("Contents.json"),
-                r#"{"info":{"author":"xcode","version":1}}"#,
-            )
-            .expect("catalog contents should exist");
-            fs::write(
+        fs::create_dir_all(&color_root).expect("catalog should exist");
+        fs::write(
+            catalog_root.join("Contents.json"),
+            r#"{"info":{"author":"xcode","version":1}}"#,
+        )
+        .expect("catalog contents should exist");
+        fs::write(
                 color_root.join("Contents.json"),
                 r#"{"colors":[{"idiom":"universal","color":{"color-space":"srgb","components":{"red":"1.000","green":"0.000","blue":"0.000","alpha":"1.000"}}}],"info":{"author":"xcode","version":1}}"#,
             )
             .expect("color contents should exist");
-            fs::create_dir_all(temp_dir.join("Generated")).expect("generated dir should exist");
-            fs::write(
-                &config_path,
-                r#"
+        fs::create_dir_all(temp_dir.join("Generated")).expect("generated dir should exist");
+        fs::write(
+            &config_path,
+            r#"
 version = 1
 
 [jobs.assets]
@@ -2504,160 +2482,59 @@ path = "Resources/Assets.xcassets"
 language = "swift"
 name = "swiftui-assets"
 "#,
-            )
-            .expect("config should be written");
+        )
+        .expect("config should be written");
 
-            let cached_source = Utf8PathBuf::from_path_buf(color_root.join("Contents.json"))
-                .expect("cached source path should be utf8");
-            seed_cached_parse(
-                CacheKind::Xcassets,
-                &catalog_root,
-                CachedParseData::Xcassets(XcassetsReport {
-                    entries: vec![RawEntry {
-                        path: "CachedPalette".to_string(),
-                        source_path: cached_source,
-                        kind: EntryKind::Color,
-                        properties: Metadata::from([(
-                            "assetName".to_string(),
-                            json!("CachedPalette"),
-                        )]),
-                    }],
-                    warnings: Vec::new(),
-                }),
-            )
-            .expect("xcassets cache should be seeded");
+        let cached_source = Utf8PathBuf::from_path_buf(color_root.join("Contents.json"))
+            .expect("cached source path should be utf8");
+        seed_cached_parse(
+            CacheKind::Xcassets,
+            &catalog_root,
+            CachedParseData::Xcassets(XcassetsReport {
+                entries: vec![RawEntry {
+                    path: "CachedPalette".to_string(),
+                    source_path: cached_source,
+                    kind: EntryKind::Color,
+                    properties: Metadata::from([("assetName".to_string(), json!("CachedPalette"))]),
+                }],
+                warnings: Vec::new(),
+            }),
+        )
+        .expect("xcassets cache should be seeded");
 
-            let report = generate(&config_path, None).expect("generation should succeed");
-            let generated = fs::read_to_string(temp_dir.join("Generated/Assets.swift"))
-                .expect("generated assets should exist");
+        let report = generate(&config_path, None).expect("generation should succeed");
+        let generated = fs::read_to_string(temp_dir.join("Generated/Assets.swift"))
+            .expect("generated assets should exist");
 
-            assert_eq!(report.jobs[0].outcome, WriteOutcome::Created);
-            assert!(generated.contains("ColorAsset(name: \"CachedPalette\")"));
-            assert!(!generated.contains("ColorAsset(name: \"Brand\")"));
+        assert_eq!(report.jobs[0].outcome, WriteOutcome::Created);
+        assert!(generated.contains("ColorAsset(name: \"CachedPalette\")"));
+        assert!(!generated.contains("ColorAsset(name: \"Brand\")"));
 
-            fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
-        });
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
     }
 
     #[test]
     fn generate_uses_cached_strings_parse_payload_on_cache_hit() {
-        with_locked_cache_env(|| {
-            let temp_dir = make_temp_dir("pipeline-strings-cache-hit");
-            let config_path = temp_dir.join("numi.toml");
-            let localization_root = temp_dir.join("Resources/Localization/en.lproj");
-            let strings_path = localization_root.join("Localizable.strings");
+        let temp_dir = make_temp_dir("pipeline-strings-cache-hit");
+        let config_path = temp_dir.join("numi.toml");
+        let localization_root = temp_dir.join("Resources/Localization/en.lproj");
+        let strings_path = localization_root.join("Localizable.strings");
 
-            fs::create_dir_all(&localization_root).expect("localization directory should exist");
-            fs::write(&strings_path, "\"profile.title\" = \"Profile\";\n")
-                .expect("strings file should be written");
-            fs::create_dir_all(temp_dir.join("Generated")).expect("generated dir should exist");
-            write_strings_job_config(&config_path);
+        fs::create_dir_all(&localization_root).expect("localization directory should exist");
+        fs::write(&strings_path, "\"profile.title\" = \"Profile\";\n")
+            .expect("strings file should be written");
+        fs::create_dir_all(temp_dir.join("Generated")).expect("generated dir should exist");
+        write_strings_job_config(&config_path);
 
-            let cached_source = Utf8PathBuf::from_path_buf(strings_path.clone())
-                .expect("cached source path should be utf8");
-            seed_cached_parse(
-                CacheKind::Strings,
-                &temp_dir.join("Resources/Localization"),
-                CachedParseData::Strings(vec![LocalizationTable {
-                    table_name: "Localizable".to_string(),
-                    source_path: cached_source.clone(),
-                    module_kind: ModuleKind::Strings,
-                    entries: vec![RawEntry {
-                        path: "cached.banner".to_string(),
-                        source_path: cached_source,
-                        kind: EntryKind::StringKey,
-                        properties: Metadata::from([
-                            ("key".to_string(), json!("cached.banner")),
-                            ("translation".to_string(), json!("Cached banner")),
-                        ]),
-                    }],
-                    warnings: Vec::new(),
-                }]),
-            )
-            .expect("strings cache should be seeded");
-
-            let report = generate(&config_path, None).expect("generation should succeed");
-            let generated = fs::read_to_string(temp_dir.join("Generated/L10n.swift"))
-                .expect("generated l10n should exist");
-
-            assert_eq!(report.jobs[0].outcome, WriteOutcome::Created);
-            assert!(generated.contains("cachedBanner = tr(\"Localizable\", \"cached.banner\")"));
-            assert!(!generated.contains("profileTitle = tr(\"Localizable\", \"profile.title\")"));
-
-            fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
-        });
-    }
-
-    #[test]
-    fn check_uses_cached_files_parse_and_still_reports_stale_outputs() {
-        with_locked_cache_env(|| {
-            let temp_dir = make_temp_dir("pipeline-files-check-cache-hit");
-            let config_path = temp_dir.join("numi.toml");
-            let files_root = temp_dir.join("Resources/Fixtures");
-
-            fs::create_dir_all(files_root.join("Onboarding"))
-                .expect("files directory should exist");
-            fs::write(files_root.join("faq.pdf"), "faq").expect("faq file should be written");
-            fs::write(files_root.join("Onboarding/welcome-video.mp4"), "video")
-                .expect("video file should be written");
-            fs::create_dir_all(temp_dir.join("Generated")).expect("generated dir should exist");
-            write_files_job_config(&config_path);
-
-            generate(&config_path, None).expect("initial generation should succeed");
-            let generated_path = temp_dir.join("Generated/Files.swift");
-            let baseline =
-                fs::read_to_string(&generated_path).expect("generated output should exist");
-            assert!(baseline.contains("welcomeVideoMp4"));
-
-            seed_cached_parse(
-                CacheKind::Files,
-                &files_root,
-                CachedParseData::Files(vec![RawEntry {
-                    path: "cached-guide.pdf".to_string(),
-                    source_path: Utf8PathBuf::from_path_buf(files_root.join("cached-guide.pdf"))
-                        .expect("cached source path should be utf8"),
-                    kind: EntryKind::Data,
-                    properties: Metadata::from([
-                        ("relativePath".to_string(), json!("cached-guide.pdf")),
-                        ("fileName".to_string(), json!("cached-guide.pdf")),
-                    ]),
-                }]),
-            )
-            .expect("files cache should be seeded");
-
-            let report = check(&config_path, None).expect("check should succeed");
-
-            assert_eq!(
-                report.stale_paths,
-                vec![Utf8PathBuf::from_path_buf(generated_path).expect("utf8 output path")]
-            );
-
-            fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
-        });
-    }
-
-    #[test]
-    fn dump_context_uses_cached_xcstrings_parse_and_keeps_json_stable() {
-        with_locked_cache_env(|| {
-            let temp_dir = make_temp_dir("pipeline-xcstrings-context-cache-hit");
-            let config_path = temp_dir.join("numi.toml");
-            let localization_root = temp_dir.join("Resources/Localization");
-            let xcstrings_path = localization_root.join("Localizable.xcstrings");
-
-            fs::create_dir_all(&localization_root).expect("localization directory should exist");
-            fs::write(
-                &xcstrings_path,
-                r#"{"version":"1.0","sourceLanguage":"en","strings":{"profile.title":{"localizations":{"en":{"stringUnit":{"state":"translated","value":"Profile"}}}}}}"#,
-            )
-            .expect("xcstrings file should be written");
-            write_xcstrings_job_config(&config_path);
-
-            let cached_source = Utf8PathBuf::from_path_buf(xcstrings_path.clone())
-                .expect("cached source path should be utf8");
-            let cached_tables = vec![LocalizationTable {
+        let cached_source = Utf8PathBuf::from_path_buf(strings_path.clone())
+            .expect("cached source path should be utf8");
+        seed_cached_parse(
+            CacheKind::Strings,
+            &temp_dir.join("Resources/Localization"),
+            CachedParseData::Strings(vec![LocalizationTable {
                 table_name: "Localizable".to_string(),
                 source_path: cached_source.clone(),
-                module_kind: ModuleKind::Xcstrings,
+                module_kind: ModuleKind::Strings,
                 entries: vec![RawEntry {
                     path: "cached.banner".to_string(),
                     source_path: cached_source,
@@ -2668,96 +2545,182 @@ name = "swiftui-assets"
                     ]),
                 }],
                 warnings: Vec::new(),
-            }];
-            seed_cached_parse(
-                CacheKind::Xcstrings,
-                &localization_root,
-                CachedParseData::Xcstrings(cached_tables),
+            }]),
+        )
+        .expect("strings cache should be seeded");
+
+        let report = generate(&config_path, None).expect("generation should succeed");
+        let generated = fs::read_to_string(temp_dir.join("Generated/L10n.swift"))
+            .expect("generated l10n should exist");
+
+        assert_eq!(report.jobs[0].outcome, WriteOutcome::Created);
+        assert!(generated.contains("cachedBanner = tr(\"Localizable\", \"cached.banner\")"));
+        assert!(!generated.contains("profileTitle = tr(\"Localizable\", \"profile.title\")"));
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn check_uses_cached_files_parse_and_still_reports_stale_outputs() {
+        let temp_dir = make_temp_dir("pipeline-files-check-cache-hit");
+        let config_path = temp_dir.join("numi.toml");
+        let files_root = temp_dir.join("Resources/Fixtures");
+
+        fs::create_dir_all(files_root.join("Onboarding")).expect("files directory should exist");
+        fs::write(files_root.join("faq.pdf"), "faq").expect("faq file should be written");
+        fs::write(files_root.join("Onboarding/welcome-video.mp4"), "video")
+            .expect("video file should be written");
+        fs::create_dir_all(temp_dir.join("Generated")).expect("generated dir should exist");
+        write_files_job_config(&config_path);
+
+        generate(&config_path, None).expect("initial generation should succeed");
+        let generated_path = temp_dir.join("Generated/Files.swift");
+        let baseline = fs::read_to_string(&generated_path).expect("generated output should exist");
+        assert!(baseline.contains("welcomeVideoMp4"));
+
+        seed_cached_parse(
+            CacheKind::Files,
+            &files_root,
+            CachedParseData::Files(vec![RawEntry {
+                path: "cached-guide.pdf".to_string(),
+                source_path: Utf8PathBuf::from_path_buf(files_root.join("cached-guide.pdf"))
+                    .expect("cached source path should be utf8"),
+                kind: EntryKind::Data,
+                properties: Metadata::from([
+                    ("relativePath".to_string(), json!("cached-guide.pdf")),
+                    ("fileName".to_string(), json!("cached-guide.pdf")),
+                ]),
+            }]),
+        )
+        .expect("files cache should be seeded");
+
+        let report = check(&config_path, None).expect("check should succeed");
+
+        assert_eq!(
+            report.stale_paths,
+            vec![Utf8PathBuf::from_path_buf(generated_path).expect("utf8 output path")]
+        );
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn dump_context_uses_cached_xcstrings_parse_and_keeps_json_stable() {
+        let temp_dir = make_temp_dir("pipeline-xcstrings-context-cache-hit");
+        let config_path = temp_dir.join("numi.toml");
+        let localization_root = temp_dir.join("Resources/Localization");
+        let xcstrings_path = localization_root.join("Localizable.xcstrings");
+
+        fs::create_dir_all(&localization_root).expect("localization directory should exist");
+        fs::write(
+                &xcstrings_path,
+                r#"{"version":"1.0","sourceLanguage":"en","strings":{"profile.title":{"localizations":{"en":{"stringUnit":{"state":"translated","value":"Profile"}}}}}}"#,
             )
-            .expect("xcstrings cache should be seeded");
+            .expect("xcstrings file should be written");
+        write_xcstrings_job_config(&config_path);
 
-            let first = dump_context(&config_path, "l10n").expect("first dump should succeed");
-            let second = dump_context(&config_path, "l10n").expect("second dump should succeed");
-            let json: Value = serde_json::from_str(&first.json).expect("json should parse");
+        let cached_source = Utf8PathBuf::from_path_buf(xcstrings_path.clone())
+            .expect("cached source path should be utf8");
+        let cached_tables = vec![LocalizationTable {
+            table_name: "Localizable".to_string(),
+            source_path: cached_source.clone(),
+            module_kind: ModuleKind::Xcstrings,
+            entries: vec![RawEntry {
+                path: "cached.banner".to_string(),
+                source_path: cached_source,
+                kind: EntryKind::StringKey,
+                properties: Metadata::from([
+                    ("key".to_string(), json!("cached.banner")),
+                    ("translation".to_string(), json!("Cached banner")),
+                ]),
+            }],
+            warnings: Vec::new(),
+        }];
+        seed_cached_parse(
+            CacheKind::Xcstrings,
+            &localization_root,
+            CachedParseData::Xcstrings(cached_tables),
+        )
+        .expect("xcstrings cache should be seeded");
 
-            assert_eq!(first.json, second.json);
-            assert_eq!(json["modules"][0]["kind"], "xcstrings");
-            assert_eq!(
-                json["modules"][0]["entries"][0]["properties"]["key"],
-                "cached.banner"
-            );
+        let first = dump_context(&config_path, "l10n").expect("first dump should succeed");
+        let second = dump_context(&config_path, "l10n").expect("second dump should succeed");
+        let json: Value = serde_json::from_str(&first.json).expect("json should parse");
 
-            fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
-        });
+        assert_eq!(first.json, second.json);
+        assert_eq!(json["modules"][0]["kind"], "xcstrings");
+        assert_eq!(
+            json["modules"][0]["entries"][0]["properties"]["key"],
+            "cached.banner"
+        );
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
     }
 
     #[test]
     fn cache_store_skips_entries_when_inputs_change_during_parse() {
-        with_locked_cache_env(|| {
-            let temp_dir = make_temp_dir("pipeline-cache-skip-unstable-input");
-            let files_root = temp_dir.join("Resources/Fixtures");
-            let input_file = files_root.join("faq.pdf");
+        let temp_dir = make_temp_dir("pipeline-cache-skip-unstable-input");
+        let files_root = temp_dir.join("Resources/Fixtures");
+        let input_file = files_root.join("faq.pdf");
 
-            fs::create_dir_all(&files_root).expect("files directory should exist");
-            fs::write(&input_file, "before").expect("fixture file should be written");
+        fs::create_dir_all(&files_root).expect("files directory should exist");
+        fs::write(&input_file, "before").expect("fixture file should be written");
 
-            let stale_entries = vec![RawEntry {
-                path: "stale.pdf".to_string(),
-                source_path: Utf8PathBuf::from_path_buf(input_file.clone())
-                    .expect("stale source path should be utf8"),
-                kind: EntryKind::Data,
-                properties: Metadata::from([
-                    ("relativePath".to_string(), json!("stale.pdf")),
-                    ("fileName".to_string(), json!("stale.pdf")),
-                ]),
-            }];
-            let fresh_entries = vec![RawEntry {
-                path: "fresh.pdf".to_string(),
-                source_path: Utf8PathBuf::from_path_buf(input_file.clone())
-                    .expect("fresh source path should be utf8"),
-                kind: EntryKind::Data,
-                properties: Metadata::from([
-                    ("relativePath".to_string(), json!("fresh.pdf")),
-                    ("fileName".to_string(), json!("fresh.pdf")),
-                ]),
-            }];
+        let stale_entries = vec![RawEntry {
+            path: "stale.pdf".to_string(),
+            source_path: Utf8PathBuf::from_path_buf(input_file.clone())
+                .expect("stale source path should be utf8"),
+            kind: EntryKind::Data,
+            properties: Metadata::from([
+                ("relativePath".to_string(), json!("stale.pdf")),
+                ("fileName".to_string(), json!("stale.pdf")),
+            ]),
+        }];
+        let fresh_entries = vec![RawEntry {
+            path: "fresh.pdf".to_string(),
+            source_path: Utf8PathBuf::from_path_buf(input_file.clone())
+                .expect("fresh source path should be utf8"),
+            kind: EntryKind::Data,
+            properties: Metadata::from([
+                ("relativePath".to_string(), json!("fresh.pdf")),
+                ("fileName".to_string(), json!("fresh.pdf")),
+            ]),
+        }];
 
-            let first = load_or_parse_cached(
-                CacheKind::Files,
-                &files_root,
-                None,
-                None,
-                || {
-                    fs::write(&input_file, "after")
-                        .expect("fixture file should mutate during parse");
-                    Ok::<_, GenerateError>(stale_entries.clone())
-                },
-                CachedParseData::Files,
-                |cached| match cached {
-                    CachedParseData::Files(entries) => Some(entries),
-                    _ => None,
-                },
-            )
-            .expect("first parse should succeed");
-            assert_eq!(first, stale_entries);
+        let first = load_or_parse_cached(
+            CacheKind::Files,
+            &files_root,
+            None,
+            None,
+            || {
+                fs::write(&input_file, "after").expect("fixture file should mutate during parse");
+                Ok::<_, GenerateError>(stale_entries.clone())
+            },
+            CachedParseData::Files,
+            |cached| match cached {
+                CachedParseData::Files(entries) => Some(entries),
+                _ => None,
+            },
+        )
+        .expect("first parse should succeed");
+        assert_eq!(first, stale_entries);
 
-            let second = load_or_parse_cached(
-                CacheKind::Files,
-                &files_root,
-                None,
-                None,
-                || Ok::<_, GenerateError>(fresh_entries.clone()),
-                CachedParseData::Files,
-                |cached| match cached {
-                    CachedParseData::Files(entries) => Some(entries),
-                    _ => None,
-                },
-            )
-            .expect("second parse should succeed");
-            assert_eq!(second, fresh_entries);
+        let second = load_or_parse_cached(
+            CacheKind::Files,
+            &files_root,
+            None,
+            None,
+            || Ok::<_, GenerateError>(fresh_entries.clone()),
+            CachedParseData::Files,
+            |cached| match cached {
+                CachedParseData::Files(entries) => Some(entries),
+                _ => None,
+            },
+        )
+        .expect("second parse should succeed");
+        assert_eq!(second, fresh_entries);
 
-            fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
-        });
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
     }
 
     #[test]
@@ -2820,40 +2783,38 @@ name = "swiftui-assets"
 
     #[test]
     fn dump_context_degrades_when_cached_record_is_invalid() {
-        with_locked_cache_env(|| {
-            let temp_dir = make_temp_dir("pipeline-cache-degrade-dump-context");
-            let config_path = temp_dir.join("numi.toml");
-            let localization_root = temp_dir.join("Resources/Localization");
-            let xcstrings_path = localization_root.join("Localizable.xcstrings");
+        let temp_dir = make_temp_dir("pipeline-cache-degrade-dump-context");
+        let config_path = temp_dir.join("numi.toml");
+        let localization_root = temp_dir.join("Resources/Localization");
+        let xcstrings_path = localization_root.join("Localizable.xcstrings");
 
-            fs::create_dir_all(&localization_root).expect("localization directory should exist");
-            fs::write(
+        fs::create_dir_all(&localization_root).expect("localization directory should exist");
+        fs::write(
                 &xcstrings_path,
                 r#"{"version":"1.0","sourceLanguage":"en","strings":{"profile.title":{"localizations":{"en":{"stringUnit":{"state":"translated","value":"Profile"}}}}}}"#,
             )
             .expect("xcstrings file should be written");
-            write_xcstrings_job_config(&config_path);
+        write_xcstrings_job_config(&config_path);
 
-            let cache_path = cache_record_path(CacheKind::Xcstrings, &localization_root);
-            fs::create_dir_all(
-                cache_path
-                    .parent()
-                    .expect("cache path should have a parent directory"),
-            )
-            .expect("cache directory should exist");
-            fs::write(&cache_path, "not-json").expect("invalid cache record should be written");
+        let cache_path = cache_record_path(CacheKind::Xcstrings, &localization_root);
+        fs::create_dir_all(
+            cache_path
+                .parent()
+                .expect("cache path should have a parent directory"),
+        )
+        .expect("cache directory should exist");
+        fs::write(&cache_path, "not-json").expect("invalid cache record should be written");
 
-            let report = dump_context(&config_path, "l10n")
-                .expect("dump context should succeed with invalid cache record");
-            let json: Value = serde_json::from_str(&report.json).expect("json should parse");
+        let report = dump_context(&config_path, "l10n")
+            .expect("dump context should succeed with invalid cache record");
+        let json: Value = serde_json::from_str(&report.json).expect("json should parse");
 
-            assert_eq!(json["modules"][0]["kind"], "xcstrings");
-            assert_eq!(
-                json["modules"][0]["entries"][0]["properties"]["key"],
-                "profile.title"
-            );
+        assert_eq!(json["modules"][0]["kind"], "xcstrings");
+        assert_eq!(
+            json["modules"][0]["entries"][0]["properties"]["key"],
+            "profile.title"
+        );
 
-            fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
-        });
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
     }
 }

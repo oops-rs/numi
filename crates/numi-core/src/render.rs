@@ -494,6 +494,57 @@ mod tests {
         .expect("context should build")
     }
 
+    fn objc_assets_context() -> AssetTemplateContext {
+        AssetTemplateContext::new(
+            "palette",
+            "Generated/Palette.h",
+            "internal",
+            "module",
+            None,
+            &[ResourceModule {
+                id: "Theme".to_string(),
+                kind: ModuleKind::Xcassets,
+                name: "Theme".to_string(),
+                entries: vec![
+                    ResourceEntry {
+                        id: "Brand".to_string(),
+                        name: "Brand".to_string(),
+                        source_path: Utf8PathBuf::from("fixture"),
+                        swift_identifier: "Brand".to_string(),
+                        kind: EntryKind::Color,
+                        children: Vec::new(),
+                        properties: Metadata::from([("assetName".to_string(), json!("Brand"))]),
+                        metadata: Metadata::new(),
+                    },
+                    ResourceEntry {
+                        id: "Icons".to_string(),
+                        name: "Icons".to_string(),
+                        source_path: Utf8PathBuf::from("virtual"),
+                        swift_identifier: "Icons".to_string(),
+                        kind: EntryKind::Namespace,
+                        children: vec![ResourceEntry {
+                            id: "Icons/add".to_string(),
+                            name: "add".to_string(),
+                            source_path: Utf8PathBuf::from("fixture"),
+                            swift_identifier: "Add".to_string(),
+                            kind: EntryKind::Image,
+                            children: Vec::new(),
+                            properties: Metadata::from([(
+                                "assetName".to_string(),
+                                json!("Icons/add"),
+                            )]),
+                            metadata: Metadata::new(),
+                        }],
+                        properties: Metadata::new(),
+                        metadata: Metadata::new(),
+                    },
+                ],
+                metadata: Metadata::new(),
+            }],
+        )
+        .expect("context should build")
+    }
+
     fn make_temp_dir(test_name: &str) -> PathBuf {
         let unique = format!(
             "numi-{test_name}-{}-{}",
@@ -537,6 +588,17 @@ private func tr(_ table: String, _ key: String) -> String {
 
         assert!(rendered.contains("@interface"));
         assert!(rendered.contains("NSLocalizedString"));
+    }
+
+    #[test]
+    fn renders_builtin_objc_assets_template_with_job_namespace() {
+        let rendered = render_builtin(("objc", "assets"), &objc_assets_context())
+            .expect("template should render");
+
+        assert!(rendered.contains("@interface PaletteTheme : NSObject"));
+        assert!(rendered.contains("+ (UIColor *)brand;"));
+        assert!(rendered.contains("+ (UIImage *)iconsAdd;"));
+        assert!(rendered.contains("+ (NSBundle *)resourceBundle;"));
     }
 
     #[test]
@@ -631,6 +693,68 @@ private func file(_ path: String) -> URL {
 }
 "#
         );
+    }
+
+    #[test]
+    fn renders_builtin_objc_files_template_with_job_namespace() {
+        let context = AssetTemplateContext::new(
+            "files",
+            "Generated/Files.h",
+            "internal",
+            "module",
+            None,
+            &[ResourceModule {
+                id: "Fixtures".to_string(),
+                kind: ModuleKind::Files,
+                name: "Fixtures".to_string(),
+                entries: vec![
+                    ResourceEntry {
+                        id: "Onboarding".to_string(),
+                        name: "Onboarding".to_string(),
+                        source_path: Utf8PathBuf::from("virtual"),
+                        swift_identifier: "Onboarding".to_string(),
+                        kind: EntryKind::Namespace,
+                        children: vec![ResourceEntry {
+                            id: "Onboarding/welcome-video.mp4".to_string(),
+                            name: "welcome-video.mp4".to_string(),
+                            source_path: Utf8PathBuf::from("fixture"),
+                            swift_identifier: "WelcomeVideoMp4".to_string(),
+                            kind: EntryKind::Data,
+                            children: Vec::new(),
+                            properties: Metadata::from([(
+                                "relativePath".to_string(),
+                                json!("Onboarding/welcome-video.mp4"),
+                            )]),
+                            metadata: Metadata::new(),
+                        }],
+                        properties: Metadata::new(),
+                        metadata: Metadata::new(),
+                    },
+                    ResourceEntry {
+                        id: "faq.pdf".to_string(),
+                        name: "faq.pdf".to_string(),
+                        source_path: Utf8PathBuf::from("fixture"),
+                        swift_identifier: "FaqPdf".to_string(),
+                        kind: EntryKind::Data,
+                        children: Vec::new(),
+                        properties: Metadata::from([(
+                            "relativePath".to_string(),
+                            json!("faq.pdf"),
+                        )]),
+                        metadata: Metadata::new(),
+                    },
+                ],
+                metadata: Metadata::new(),
+            }],
+        )
+        .expect("context should build");
+
+        let rendered = render_builtin(("objc", "files"), &context).expect("template should render");
+
+        assert!(rendered.contains("@interface FilesFixtures : NSObject"));
+        assert!(rendered.contains("+ (NSURL *)onboardingWelcomeVideoMp4;"));
+        assert!(rendered.contains("+ (NSURL *)faqPdf;"));
+        assert!(rendered.contains("+ (NSURL *)fileURLForPath:(NSString *)path;"));
     }
 
     #[test]

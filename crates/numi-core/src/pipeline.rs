@@ -463,6 +463,7 @@ struct GenerationInputFingerprintRecord {
 #[serde(tag = "kind")]
 enum GenerationTemplateFingerprintRecord {
     Builtin {
+        language: String,
         name: String,
         fingerprint: String,
     },
@@ -1097,13 +1098,12 @@ fn render_job(
     job: &JobConfig,
     context: &AssetTemplateContext,
 ) -> Result<String, GenerateError> {
-    if let Some(builtin_name) = job
-        .template
-        .builtin
-        .as_ref()
-        .and_then(|builtin| builtin.swift.as_deref())
-    {
-        return render_builtin(builtin_name, context).map_err(|source| GenerateError::Render {
+    let builtin = job.template.builtin.as_ref();
+    let builtin_language = builtin.and_then(|builtin| builtin.language.as_deref());
+    let builtin_name = builtin.and_then(|builtin| builtin.name.as_deref());
+
+    if let (Some(language), Some(name)) = (builtin_language, builtin_name) {
+        return render_builtin((language, name), context).map_err(|source| GenerateError::Render {
             job: job.name.clone(),
             source,
         });
@@ -1177,15 +1177,15 @@ fn compute_generation_fingerprint(
         })
         .collect::<Option<Vec<_>>>()?;
 
-    let template = if let Some(builtin_name) = job
-        .template
-        .builtin
-        .as_ref()
-        .and_then(|builtin| builtin.swift.as_deref())
-    {
-        let source = builtin_template_source(builtin_name).ok()?;
+    let builtin = job.template.builtin.as_ref();
+    let builtin_language = builtin.and_then(|builtin| builtin.language.as_deref());
+    let builtin_name = builtin.and_then(|builtin| builtin.name.as_deref());
+
+    let template = if let (Some(language), Some(name)) = (builtin_language, builtin_name) {
+        let source = builtin_template_source((language, name)).ok()?;
         GenerationTemplateFingerprintRecord::Builtin {
-            name: builtin_name.to_owned(),
+            language: language.to_owned(),
+            name: name.to_owned(),
             fingerprint: generation_cache::blake3_hex([source.as_bytes()]),
         }
     } else if let Some(template_path) = job.template.path.as_deref() {
@@ -1474,6 +1474,31 @@ mod tests {
         );
     }
 
+    #[test]
+    fn builtin_template_fingerprint_record_includes_language_and_name() {
+        let record = GenerationFingerprintRecord {
+            schema_version: GENERATION_FINGERPRINT_SCHEMA_VERSION,
+            job_name: "assets".to_string(),
+            output: "Generated/Assets.swift".to_string(),
+            access_level: "internal".to_string(),
+            bundle_mode: "module".to_string(),
+            bundle_identifier: None,
+            inputs: Vec::new(),
+            template: GenerationTemplateFingerprintRecord::Builtin {
+                language: "objc".to_string(),
+                name: "assets".to_string(),
+                fingerprint: "fingerprint".to_string(),
+            },
+        };
+
+        let serialized = serde_json::to_value(&record).expect("record should serialize");
+
+        assert_eq!(serialized["template"]["kind"], "Builtin");
+        assert_eq!(serialized["template"]["language"], "objc");
+        assert_eq!(serialized["template"]["name"], "assets");
+        assert_eq!(serialized["template"]["fingerprint"], "fingerprint");
+    }
+
     fn write_strings_job_config(config_path: &Path) {
         fs::write(
             config_path,
@@ -1489,7 +1514,8 @@ path = "Resources/Localization"
 
 [jobs.l10n.template]
 [jobs.l10n.template.builtin]
-swift = "l10n"
+language = "swift"
+name = "l10n"
 "#,
         )
         .expect("config should be written");
@@ -1555,7 +1581,8 @@ path = "Resources/Localization"
 
 [jobs.l10n.template]
 [jobs.l10n.template.builtin]
-swift = "l10n"
+language = "swift"
+name = "l10n"
 "#,
         )
         .expect("config should be written");
@@ -1576,7 +1603,8 @@ path = "Resources/Fixtures"
 
 [jobs.files.template]
 [jobs.files.template.builtin]
-swift = "files"
+language = "swift"
+name = "files"
 "#,
         )
         .expect("config should be written");
@@ -1693,7 +1721,8 @@ path = "Resources/Localization"
 
 [jobs.l10n.template]
 [jobs.l10n.template.builtin]
-swift = "l10n"
+language = "swift"
+name = "l10n"
 "#,
         )
         .expect("config should be written");
@@ -1733,7 +1762,8 @@ path = "Resources/Localization"
 
 [jobs.l10n.template]
 [jobs.l10n.template.builtin]
-swift = "l10n"
+language = "swift"
+name = "l10n"
 "#,
         )
         .expect("config should be written");
@@ -1877,7 +1907,8 @@ path = "Resources/Fixtures"
 
 [jobs.files.template]
 [jobs.files.template.builtin]
-swift = "files"
+language = "swift"
+name = "files"
 "#,
         )
         .expect("config should be written");
@@ -2057,7 +2088,8 @@ path = "Resources/Fixtures"
 
 [jobs.files.template]
 [jobs.files.template.builtin]
-swift = "files"
+language = "swift"
+name = "files"
 "#,
         )
         .expect("config should be written");
@@ -2115,7 +2147,8 @@ path = "Resources/Assets.xcassets"
 
 [jobs.assets.template]
 [jobs.assets.template.builtin]
-swift = "swiftui-assets"
+language = "swift"
+name = "swiftui-assets"
 "#,
             )
             .expect("config should be written");

@@ -10,6 +10,9 @@ use std::{
     time::SystemTime,
 };
 
+#[cfg(test)]
+use std::cell::RefCell;
+
 const CACHE_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -170,6 +173,21 @@ impl std::fmt::Display for CacheError {
 
 impl std::error::Error for CacheError {}
 
+#[cfg(test)]
+thread_local! {
+    static TEST_CACHE_ROOT_OVERRIDE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn with_test_cache_root_override<T>(temp_root: &Path, f: impl FnOnce() -> T) -> T {
+    TEST_CACHE_ROOT_OVERRIDE.with(|cell| {
+        let previous = cell.replace(Some(temp_root.to_path_buf()));
+        let result = f();
+        cell.replace(previous);
+        result
+    })
+}
+
 pub fn fingerprint_input(kind: CacheKind, path: &Path) -> Result<String, CacheError> {
     Ok(fingerprint_input_with_snapshot(kind, path)?.fingerprint)
 }
@@ -326,6 +344,13 @@ pub fn store(
 }
 
 fn cache_root() -> PathBuf {
+    #[cfg(test)]
+    if let Some(temp_root) = TEST_CACHE_ROOT_OVERRIDE.with(|cell| cell.borrow().clone()) {
+        return temp_root
+            .join("numi-cache")
+            .join(format!("parsed-v{}", CACHE_SCHEMA_VERSION));
+    }
+
     std::env::temp_dir()
         .join("numi-cache")
         .join(format!("parsed-v{}", CACHE_SCHEMA_VERSION))

@@ -1415,6 +1415,7 @@ fn to_utf8_path(path: &Path) -> Result<Utf8PathBuf, GenerateError> {
 mod tests {
     use super::*;
     use crate::{
+        generation_cache,
         parse_cache::{self, CacheKind, CachedParseData},
         parse_l10n::LocalizationTable,
         parse_xcassets::XcassetsReport,
@@ -1763,31 +1764,6 @@ name = "files"
             .expect("cache env lock should not be poisoned")
     }
 
-    struct TempDirOverrideGuard {
-        previous: Option<std::ffi::OsString>,
-    }
-
-    impl Drop for TempDirOverrideGuard {
-        fn drop(&mut self) {
-            match self.previous.take() {
-                Some(value) => unsafe {
-                    std::env::set_var("TMPDIR", value);
-                },
-                None => unsafe {
-                    std::env::remove_var("TMPDIR");
-                },
-            }
-        }
-    }
-
-    fn override_temp_dir(temp_dir: &Path) -> TempDirOverrideGuard {
-        let previous = std::env::var_os("TMPDIR");
-        unsafe {
-            std::env::set_var("TMPDIR", temp_dir);
-        }
-        TempDirOverrideGuard { previous }
-    }
-
     fn with_locked_cache_env<T>(f: impl FnOnce() -> T) -> T {
         let _lock = lock_cache_env();
         f()
@@ -1795,22 +1771,20 @@ name = "files"
 
     fn with_temp_dir_override<T>(temp_dir: &Path, f: impl FnOnce() -> T) -> T {
         with_locked_cache_env(|| {
-            let _guard = override_temp_dir(temp_dir);
-            f()
+            generation_cache::with_test_cache_root_override(temp_dir, || {
+                parse_cache::with_test_cache_root_override(temp_dir, f)
+            })
         })
     }
 
     #[test]
-    fn make_temp_dir_recovers_when_tmpdir_points_to_a_file() {
+    fn make_temp_dir_ignores_cache_root_override() {
         with_locked_cache_env(|| {
             let temp_dir = make_temp_dir("pipeline-temp-dir-recover");
             let bad_tmp = temp_dir.join("not-a-directory");
             fs::write(&bad_tmp, "cache root blocker").expect("bad tmp file should exist");
-
-            let recovered = {
-                let _guard = override_temp_dir(&bad_tmp);
-                make_temp_dir("pipeline-temp-dir-recovered")
-            };
+            let recovered =
+                with_temp_dir_override(&bad_tmp, || make_temp_dir("pipeline-temp-dir-recovered"));
 
             assert!(recovered.is_dir());
             assert!(!recovered.starts_with(&bad_tmp));

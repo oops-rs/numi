@@ -69,7 +69,8 @@ type = "xcassets"
 path = "Resources/Assets.xcassets"
 
 [jobs.assets.template.builtin]
-swift = "swiftui-assets"
+language = "swift"
+name = "swiftui-assets"
 
 [jobs.l10n]
 output = "Generated/L10n.swift"
@@ -79,7 +80,8 @@ type = "strings"
 path = "Resources/Localization"
 
 [jobs.l10n.template.builtin]
-swift = "l10n"
+language = "swift"
+name = "l10n"
 ```
 
 You can also point localization generation at `.xcstrings`:
@@ -93,10 +95,19 @@ type = "xcstrings"
 path = "Resources/Localization"
 
 [jobs.l10n.template.builtin]
-swift = "l10n"
+language = "swift"
+name = "l10n"
 ```
 
 The starter config shipped with `numi init` lives in [docs/examples/starter-numi.toml](docs/examples/starter-numi.toml).
+
+The same shape also works for Objective-C built-ins when you want an ObjC output:
+
+```toml
+[jobs.assets.template.builtin]
+language = "objc"
+name = "assets"
+```
 
 ## Commands
 

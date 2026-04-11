@@ -11,7 +11,8 @@ type = "xcassets"
 path = "Resources/Assets.xcassets"
 
 [jobs.assets.template.builtin]
-swift = "swiftui-assets"
+language = "swift"
+name = "swiftui-assets"
 
 [jobs.l10n]
 output = "Generated/L10n.swift"
@@ -21,4 +22,5 @@ type = "strings"
 path = "Resources/Localization"
 
 [jobs.l10n.template.builtin]
-swift = "l10n"
+language = "swift"
+name = "l10n"

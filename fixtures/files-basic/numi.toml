@@ -8,4 +8,5 @@ type = "files"
 path = "Resources/Fixtures"
 
 [jobs.files.template.builtin]
-swift = "files"
+language = "swift"
+name = "files"

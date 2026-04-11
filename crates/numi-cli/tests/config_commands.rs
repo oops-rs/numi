@@ -65,7 +65,8 @@ type = "xcassets"
 path = "Resources/Assets.xcassets"
 
 [jobs.assets.template.builtin]
-swift = "swiftui-assets"
+language = "swift"
+name = "swiftui-assets"
 "#,
     )
     .expect("config should be written");
@@ -114,7 +115,8 @@ type = "xcassets"
 path = "Resources/Ancestor.xcassets"
 
 [jobs.ancestor.template.builtin]
-swift = "swiftui-assets"
+language = "swift"
+name = "swiftui-assets"
 "#,
     )
     .expect("ancestor config should be written");
@@ -133,7 +135,8 @@ type = "strings"
 path = "Resources/Localization"
 
 [jobs.explicit.template.builtin]
-swift = "l10n"
+language = "swift"
+name = "l10n"
 "#,
     )
     .expect("explicit config should be written");
@@ -251,7 +254,8 @@ type = "xcstrings"
 path = "Resources/Localization"
 
 [jobs.l10n.template.builtin]
-swift = "l10n"
+language = "swift"
+name = "l10n"
 "#,
     )
     .expect("config should be written");
@@ -419,7 +423,11 @@ fn init_creates_starter_numi_toml() {
         "starter config was: {created}"
     );
     assert!(
-        created.contains("swift = \"l10n\""),
+        created.contains("language = \"swift\""),
+        "starter config was: {created}"
+    );
+    assert!(
+        created.contains("name = \"l10n\""),
         "starter config was: {created}"
     );
     assert!(
@@ -453,6 +461,53 @@ fn config_print_validation_hints_reference_numi_toml() {
         stderr.contains("add one `[jobs.<name>]` table to numi.toml"),
         "stderr was: {stderr}"
     );
+
+    fs::remove_dir_all(root).expect("temp dir should be removed");
+}
+
+#[test]
+fn config_print_emits_objc_builtin_language_and_name() {
+    let root = make_temp_dir("config-print-objc-builtin");
+    let config_path = root.join("numi.toml");
+    fs::write(
+        &config_path,
+        r#"
+version = 1
+
+[jobs.assets]
+output = "Generated/Assets.swift"
+
+[[jobs.assets.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.assets.template.builtin]
+language = "objc"
+name = "assets"
+"#,
+    )
+    .expect("config should be written");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_numi"))
+        .args(["config", "print", "--config", "numi.toml"])
+        .current_dir(&root)
+        .output()
+        .expect("numi config print should run");
+
+    assert!(
+        output.status.success(),
+        "command failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+    assert!(
+        stdout.contains("[jobs.assets.template.builtin]"),
+        "stdout was: {stdout}"
+    );
+    assert!(stdout.contains("language = \"objc\""), "stdout was: {stdout}");
+    assert!(stdout.contains("name = \"assets\""), "stdout was: {stdout}");
 
     fs::remove_dir_all(root).expect("temp dir should be removed");
 }
@@ -506,7 +561,8 @@ type = "xcassets"
 path = "Resources/Assets.xcassets"
 
 [jobs.assets.template.builtin]
-swift = "swiftui-assets"
+language = "swift"
+name = "swiftui-assets"
 "#,
     )
     .expect("config should be written");
@@ -545,7 +601,8 @@ type = "strings"
 path = "Resources/Localization"
 
 [jobs.l10n.template.builtin]
-swift = "l10n"
+language = "swift"
+name = "l10n"
 "#,
     )
     .expect("config should be written");
@@ -575,7 +632,11 @@ swift = "l10n"
         stdout.contains("[jobs.l10n.template.builtin]"),
         "stdout was: {stdout}"
     );
-    assert!(stdout.contains("swift = \"l10n\""), "stdout was: {stdout}");
+    assert!(
+        stdout.contains("language = \"swift\""),
+        "stdout was: {stdout}"
+    );
+    assert!(stdout.contains("name = \"l10n\""), "stdout was: {stdout}");
 
     fs::remove_dir_all(root).expect("temp dir should be removed");
 }
@@ -607,7 +668,11 @@ fn config_print_emits_files_builtin_and_input_kind() {
         stdout.contains("[jobs.files.template.builtin]"),
         "stdout was: {stdout}"
     );
-    assert!(stdout.contains("swift = \"files\""), "stdout was: {stdout}");
+    assert!(
+        stdout.contains("language = \"swift\""),
+        "stdout was: {stdout}"
+    );
+    assert!(stdout.contains("name = \"files\""), "stdout was: {stdout}");
     assert!(stdout.contains("mode = \"module\""), "stdout was: {stdout}");
 
     fs::remove_dir_all(temp_root).expect("temp dir should be removed");
@@ -1134,7 +1199,8 @@ type = "xcassets"
 path = "Resources/Assets.xcassets"
 
 [jobs.assets.template.builtin]
-swift = "swiftui-assets"
+language = "swift"
+name = "swiftui-assets"
 
 [jobs.l10n]
 output = "Generated/L10n.swift"
@@ -1144,7 +1210,8 @@ type = "strings"
 path = "Resources/Localization"
 
 [jobs.l10n.template.builtin]
-swift = "l10n"
+language = "swift"
+name = "l10n"
 "#,
     );
     write_manifest(
@@ -1219,7 +1286,8 @@ type = "xcassets"
 path = "Resources/Assets.xcassets"
 
 [jobs.assets.template.builtin]
-swift = "swiftui-assets"
+language = "swift"
+name = "swiftui-assets"
 
 [jobs.l10n]
 output = "Generated/L10n.swift"
@@ -1227,6 +1295,9 @@ output = "Generated/L10n.swift"
 [[jobs.l10n.inputs]]
 type = "strings"
 path = "Resources/Localization"
+
+[jobs.l10n.template.builtin]
+name = "l10n"
 "#,
     );
     write_manifest(
@@ -1238,10 +1309,10 @@ version = 1
 members = ["apps/mixed"]
 
 [workspace.defaults.jobs.l10n.template.builtin]
-swift = "l10n"
+language = "swift"
 
 [workspace.defaults.jobs.assets.template.builtin]
-swift = "files"
+language = "swift"
 
 [workspace.member_overrides."apps/mixed"]
 jobs = ["l10n"]

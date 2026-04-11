@@ -60,7 +60,8 @@ type = "xcstrings"
 path = "Resources/Localization"
 
 [jobs.l10n.template.builtin]
-swift = "l10n"
+language = "swift"
+name = "l10n"
 "#,
     )
     .expect("config should be written");
@@ -338,7 +339,8 @@ type = "xcstrings"
 path = "Resources/Localization"
 
 [jobs.l10n.template.builtin]
-swift = "l10n"
+language = "swift"
+name = "l10n"
 "#,
     )
     .expect("config should be written");

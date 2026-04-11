@@ -26,23 +26,29 @@ The SwiftGen MVP concepts map directly onto Numi's current config surface:
 
 - `[jobs.<name>]` describes one named generation unit
 - `[[jobs.<name>.inputs]]` declares each resource input for that named job
-- `[jobs.<name>.template]` contains either `[jobs.<name>.template.builtin]` for a shipped Swift template or a custom template path
-- `[jobs.<name>.template.builtin]` contains built-in template namespace keys; today `swift` is the supported namespace key, and its value selects the shipped template, for example `swift = "l10n"`
+- `[jobs.<name>.template]` contains either `[jobs.<name>.template.builtin]` for a shipped built-in template or a custom template path
+- `[jobs.<name>.template.builtin]` contains a `language` and `name` pair that identifies the built-in template, for example `language = "swift"` and `name = "l10n"`
 - `[defaults]` and `[defaults.bundle]` provide shared defaults across jobs
 
 ## Built-In Templates
 
-Current shipped Swift templates in `templates/swift` cover the MVP resource types:
+Current shipped built-in templates cover the MVP resource types:
 
-- `swiftui-assets` for SwiftUI-friendly asset accessors
-- `l10n` for `.strings` and `.xcstrings` localization accessors
-- `files` for file-oriented helpers
+- Swift:
+  - `swiftui-assets` for SwiftUI-friendly asset accessors
+  - `l10n` for `.strings` and `.xcstrings` localization accessors
+  - `files` for file-oriented helpers
+- Objective-C:
+  - `assets` for asset accessors
+  - `l10n` for localization accessors
+  - `files` for file-oriented helpers
 
 Example:
 
 ```toml
 [jobs.l10n.template.builtin]
-swift = "l10n"
+language = "swift"
+name = "l10n"
 ```
 
 If a SwiftGen setup relied on a custom Stencil template, the closest Numi migration path is to move that output shape into a custom Minijinja template and validate it with `numi dump-context`.

@@ -326,7 +326,8 @@ type = "xcassets"
 path = "Resources/Assets.xcassets"
 
 [jobs.assets.template.builtin]
-swift = "swiftui-assets"
+language = "swift"
+name = "swiftui-assets"
 
 [jobs.l10n]
 output = "Generated/L10n.swift"
@@ -336,7 +337,8 @@ type = "strings"
 path = "Resources/Localization"
 
 [jobs.l10n.template.builtin]
-swift = "l10n"
+language = "swift"
+name = "l10n"
 ```
 
 #### 7.3.2 Top-level Keys
@@ -376,7 +378,16 @@ Built-in template:
 
 ```toml
 [jobs.assets.template.builtin]
-swift = "swiftui-assets"
+language = "swift"
+name = "swiftui-assets"
+```
+
+Objective-C built-in:
+
+```toml
+[jobs.assets.template.builtin]
+language = "objc"
+name = "assets"
 ```
 
 Custom template:
@@ -997,7 +1008,8 @@ type = "xcassets"
 path = "Resources/Assets.xcassets"
 
 [jobs.assets.template.builtin]
-swift = "swiftui-assets"
+language = "swift"
+name = "swiftui-assets"
 
 [jobs.l10n]
 output = "Generated/L10n.swift"
@@ -1007,7 +1019,8 @@ type = "strings"
 path = "Resources/Localization"
 
 [jobs.l10n.template.builtin]
-swift = "l10n"
+language = "swift"
+name = "l10n"
 ```
 
 ## 27. Example Template Snippet

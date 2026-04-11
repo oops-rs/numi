@@ -1,6 +1,6 @@
 use std::{
-    fs::OpenOptions,
     fs,
+    fs::OpenOptions,
     path::{Path, PathBuf},
     process::Command,
     thread,
@@ -443,8 +443,8 @@ fn init_creates_starter_numi_toml() {
     let root = make_temp_dir("init-success");
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let docs_starter_path = manifest_dir.join("../../docs/examples/starter-numi.toml");
-    let original_docs = fs::read_to_string(&docs_starter_path)
-        .expect("docs starter config should be readable");
+    let original_docs =
+        fs::read_to_string(&docs_starter_path).expect("docs starter config should be readable");
     let _restore_docs = FileRestore {
         path: docs_starter_path.clone(),
         contents: original_docs,

@@ -1,10 +1,4 @@
-use std::{
-    fs,
-    fs::OpenOptions,
-    path::PathBuf,
-    thread,
-    time::Duration,
-};
+use std::{fs, fs::OpenOptions, path::PathBuf, thread, time::Duration};
 
 #[test]
 fn package_metadata_uses_numi_name_and_docs_url() {
@@ -73,5 +67,8 @@ fn starter_config_asset_and_docs_copy_stay_in_sync() {
     let docs = fs::read_to_string(manifest_dir.join("../../docs/examples/starter-numi.toml"))
         .expect("failed to read docs starter config");
 
-    assert_eq!(asset, docs, "starter config asset and docs copy should match");
+    assert_eq!(
+        asset, docs,
+        "starter config asset and docs copy should match"
+    );
 }

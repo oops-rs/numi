@@ -816,6 +816,18 @@ private func file(_ path: String) -> URL {
     }
 
     #[test]
+    fn renders_builtin_objc_l10n_template_with_unsupported_bundle_mode_failure() {
+        let rendered = render_builtin(
+            ("objc", "l10n"),
+            &objc_l10n_context_with_bundle("mystery", Some("com.example.bundle")),
+        )
+        .expect("template should render");
+
+        assert!(rendered.contains("Unsupported bundle mode: mystery"));
+        assert!(!rendered.contains("bundleWithIdentifier:@\"com.example.bundle\""));
+    }
+
+    #[test]
     fn renders_custom_template_from_disk() {
         let temp_dir = make_temp_dir("render-custom-template");
         let template_path = temp_dir.join("custom.jinja");

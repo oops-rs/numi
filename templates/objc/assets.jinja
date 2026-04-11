@@ -13,7 +13,7 @@ NS_INLINE NSBundle *{{ job.swiftIdentifier }}Bundle(void) {
                                    reason:@"SWIFTPM_MODULE_BUNDLE is unavailable for module-scoped ObjC resources."
                                  userInfo:nil];
 #endif
-{% else -%}
+{% elif bundle.mode == "custom" -%}
     NSBundle *bundle = [NSBundle bundleWithIdentifier:{{ bundle.identifier | objc_string_literal }}];
     if (bundle == nil) {
         @throw [NSException exceptionWithName:NSInternalInconsistencyException
@@ -21,6 +21,10 @@ NS_INLINE NSBundle *{{ job.swiftIdentifier }}Bundle(void) {
                                      userInfo:nil];
     }
     return bundle;
+{% else -%}
+    @throw [NSException exceptionWithName:NSInternalInconsistencyException
+                                   reason:{{ ("Unsupported bundle mode: " ~ bundle.mode) | objc_string_literal }}
+                                 userInfo:nil];
 {% endif -%}
 }
 

@@ -7,6 +7,7 @@ license = "MIT"
 repository = "https://github.com/oops-rs/numi"
 homepage = "https://github.com/oops-rs/numi"
 documentation = "https://docs.rs/numi-cli"
+readme = "../../README.md"
 
 [[bin]]
 name = "numi"

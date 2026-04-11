@@ -120,6 +120,7 @@ The starter config shipped with `numi init` lives in [docs/examples/starter-numi
 `numi dump-context`
 
 - prints the exact JSON context a job template receives
+- only supports single-config (`[jobs]`) manifests and rejects workspace manifests
 - is the fastest way to debug or author custom templates
 
 `numi config locate`
@@ -129,6 +130,7 @@ The starter config shipped with `numi init` lives in [docs/examples/starter-numi
 `numi config print`
 
 - prints the resolved config with defaults materialized
+- only supports single-config (`[jobs]`) manifests and rejects workspace manifests
 
 ## Built-In Templates
 

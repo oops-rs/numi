@@ -2,44 +2,30 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-{% macro render_entries(entries, prefix, indent) -%}
-{% for entry in entries -%}
-{% if entry.kind == "namespace" -%}
-{{ render_entries(entry.children, prefix ~ entry.swiftIdentifier, indent) }}{% elif entry.kind == "data" -%}
-{{ indent }}+ (NSURL *){{ (prefix ~ entry.swiftIdentifier) | lower_first }};
-{% endif -%}
-{% endfor -%}
-{%- endmacro %}
-{% macro render_entry_implementations(entries, prefix, indent) -%}
-{% for entry in entries -%}
-{% if entry.kind == "namespace" -%}
-{{ render_entry_implementations(entry.children, prefix ~ entry.swiftIdentifier, indent) }}{% elif entry.kind == "data" -%}
-{{ indent }}+ (NSURL *){{ (prefix ~ entry.swiftIdentifier) | lower_first }} {
-{{ indent }}    return [self fileURLForPath:{{ entry.properties.relativePath | string_literal }}];
-{{ indent }}}
-
-{% endif -%}
-{% endfor -%}
-{%- endmacro %}
-{% for module in modules %}
-@interface {{ job.swiftIdentifier }}{{ module.name }} : NSObject
-{{ render_entries(module.entries, "", "") }}+ (NSBundle *)resourceBundle;
-+ (NSURL *)fileURLForPath:(NSString *)path;
-@end
-
-@implementation {{ job.swiftIdentifier }}{{ module.name }}
-{{ render_entry_implementations(module.entries, "", "") }}+ (NSBundle *)resourceBundle {
+NS_INLINE NSBundle *{{ job.swiftIdentifier }}Bundle(void) {
 {% if bundle.mode == "main" -%}
     return NSBundle.mainBundle;
 {% elif bundle.mode == "module" -%}
-    return [NSBundle bundleForClass:self];
+#if defined(SWIFTPM_MODULE_BUNDLE)
+    return SWIFTPM_MODULE_BUNDLE;
+#else
+    @throw [NSException exceptionWithName:NSInternalInconsistencyException
+                                   reason:@"SWIFTPM_MODULE_BUNDLE is unavailable for module-scoped ObjC resources."
+                                 userInfo:nil];
+#endif
 {% else -%}
-    return [NSBundle bundleWithIdentifier:{{ bundle.identifier | string_literal }}] ?: NSBundle.mainBundle;
+    NSBundle *bundle = [NSBundle bundleWithIdentifier:{{ bundle.identifier | objc_string_literal }}];
+    if (bundle == nil) {
+        @throw [NSException exceptionWithName:NSInternalInconsistencyException
+                                       reason:{{ ("Missing configured bundle identifier: " ~ bundle.identifier) | objc_string_literal }}
+                                     userInfo:nil];
+    }
+    return bundle;
 {% endif -%}
 }
 
-+ (NSURL *)fileURLForPath:(NSString *)path {
-    NSURL *url = [[self resourceBundle] URLForResource:path withExtension:nil];
+NS_INLINE NSURL *{{ job.swiftIdentifier }}FileURL(NSString *path) {
+    NSURL *url = [{{ job.swiftIdentifier }}Bundle() URLForResource:path withExtension:nil];
     if (url == nil) {
         @throw [NSException exceptionWithName:NSInternalInconsistencyException
                                        reason:[NSString stringWithFormat:@"Missing file resource: %@", path]
@@ -47,7 +33,18 @@ NS_ASSUME_NONNULL_BEGIN
     }
     return url;
 }
-@end
 
+{% macro render_entries(entries, prefix) -%}
+{% for entry in entries -%}
+{% if entry.kind == "namespace" -%}
+{{ render_entries(entry.children, prefix ~ entry.swiftIdentifier) }}{% elif entry.kind == "data" -%}
+NS_INLINE NSURL *{{ job.swiftIdentifier }}{{ prefix }}{{ entry.swiftIdentifier }}(void) {
+    return {{ job.swiftIdentifier }}FileURL({{ entry.properties.relativePath | objc_string_literal }});
+}
+
+{% endif -%}
 {% endfor -%}
+{%- endmacro %}
+{% for module in modules %}
+{{ render_entries(module.entries, module.name) }}{% endfor -%}
 NS_ASSUME_NONNULL_END

@@ -189,6 +189,7 @@ fn build_environment() -> Environment<'static> {
     environment.set_keep_trailing_newline(true);
     environment.add_filter("lower_first", lower_first);
     environment.add_filter("string_literal", string_literal);
+    environment.add_filter("objc_string_literal", objc_string_literal);
     environment
 }
 
@@ -443,6 +444,13 @@ fn string_literal(value: String) -> String {
     serde_json::to_string(&value).expect("string literal should serialize")
 }
 
+fn objc_string_literal(value: String) -> String {
+    format!(
+        "@{}",
+        serde_json::to_string(&value).expect("objc string literal should serialize")
+    )
+}
+
 fn normalize_blank_lines(rendered: &str) -> String {
     let mut normalized = rendered.to_owned();
     while normalized.contains("\n\n\n") {
@@ -545,6 +553,39 @@ mod tests {
         .expect("context should build")
     }
 
+    fn objc_l10n_context_with_bundle(
+        bundle_mode: &str,
+        bundle_identifier: Option<&str>,
+    ) -> AssetTemplateContext {
+        AssetTemplateContext::new(
+            "l10n",
+            "Generated/L10n.h",
+            "internal",
+            bundle_mode,
+            bundle_identifier,
+            &[ResourceModule {
+                id: "Localizable".to_string(),
+                kind: ModuleKind::Strings,
+                name: "Localizable".to_string(),
+                entries: vec![ResourceEntry {
+                    id: "profile.title".to_string(),
+                    name: "profile.title".to_string(),
+                    source_path: Utf8PathBuf::from("fixture"),
+                    swift_identifier: "ProfileTitle".to_string(),
+                    kind: EntryKind::StringKey,
+                    children: Vec::new(),
+                    properties: Metadata::from([
+                        ("key".to_string(), json!("profile.title")),
+                        ("translation".to_string(), json!("Profile")),
+                    ]),
+                    metadata: Metadata::new(),
+                }],
+                metadata: Metadata::from([("tableName".to_string(), json!("Localizable"))]),
+            }],
+        )
+        .expect("context should build")
+    }
+
     fn make_temp_dir(test_name: &str) -> PathBuf {
         let unique = format!(
             "numi-{test_name}-{}-{}",
@@ -586,8 +627,10 @@ private func tr(_ table: String, _ key: String) -> String {
         let rendered =
             render_builtin(("objc", "l10n"), &l10n_context()).expect("template should render");
 
-        assert!(rendered.contains("@interface"));
+        assert!(!rendered.contains("@implementation"));
         assert!(rendered.contains("NSLocalizedString"));
+        assert!(rendered.contains("SWIFTPM_MODULE_BUNDLE"));
+        assert!(!rendered.contains("bundleForClass:"));
     }
 
     #[test]
@@ -595,10 +638,11 @@ private func tr(_ table: String, _ key: String) -> String {
         let rendered = render_builtin(("objc", "assets"), &objc_assets_context())
             .expect("template should render");
 
-        assert!(rendered.contains("@interface PaletteTheme : NSObject"));
-        assert!(rendered.contains("+ (UIColor *)brand;"));
-        assert!(rendered.contains("+ (UIImage *)iconsAdd;"));
-        assert!(rendered.contains("+ (NSBundle *)resourceBundle;"));
+        assert!(!rendered.contains("@implementation"));
+        assert!(rendered.contains("NS_INLINE UIColor *PaletteThemeBrand(void)"));
+        assert!(rendered.contains("NS_INLINE UIImage *PaletteThemeIconsAdd(void)"));
+        assert!(rendered.contains("SWIFTPM_MODULE_BUNDLE"));
+        assert!(!rendered.contains("bundleForClass:"));
     }
 
     #[test]
@@ -751,10 +795,24 @@ private func file(_ path: String) -> URL {
 
         let rendered = render_builtin(("objc", "files"), &context).expect("template should render");
 
-        assert!(rendered.contains("@interface FilesFixtures : NSObject"));
-        assert!(rendered.contains("+ (NSURL *)onboardingWelcomeVideoMp4;"));
-        assert!(rendered.contains("+ (NSURL *)faqPdf;"));
-        assert!(rendered.contains("+ (NSURL *)fileURLForPath:(NSString *)path;"));
+        assert!(!rendered.contains("@implementation"));
+        assert!(rendered.contains("NS_INLINE NSURL *FilesFixturesOnboardingWelcomeVideoMp4(void)"));
+        assert!(rendered.contains("NS_INLINE NSURL *FilesFixturesFaqPdf(void)"));
+        assert!(rendered.contains("SWIFTPM_MODULE_BUNDLE"));
+        assert!(!rendered.contains("bundleForClass:"));
+    }
+
+    #[test]
+    fn renders_builtin_objc_l10n_template_with_custom_bundle_failure() {
+        let rendered = render_builtin(
+            ("objc", "l10n"),
+            &objc_l10n_context_with_bundle("custom", Some("com.example.bundle")),
+        )
+        .expect("template should render");
+
+        assert!(rendered.contains("bundleWithIdentifier:@\"com.example.bundle\""));
+        assert!(rendered.contains("Missing configured bundle identifier: com.example.bundle"));
+        assert!(!rendered.contains("?: NSBundle.mainBundle"));
     }
 
     #[test]

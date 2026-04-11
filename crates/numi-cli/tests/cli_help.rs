@@ -75,7 +75,10 @@ fn cli_binary_help_shows_expected_top_level_help() {
     );
     assert_contains_line_all(
         &stdout,
-        &["dump-context", "Print the template context for a single job"],
+        &[
+            "dump-context",
+            "Print the template context for a single job",
+        ],
     );
 }
 

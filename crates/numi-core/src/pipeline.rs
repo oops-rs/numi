@@ -324,8 +324,13 @@ fn generate_job(
         generation_plan = compute_generation_fingerprint(config_dir, defaults, job);
     }
 
-    let (context, warnings) =
-        build_context(config_path, config_dir, defaults, job, generation_plan.as_ref())?;
+    let (context, warnings) = build_context(
+        config_path,
+        config_dir,
+        defaults,
+        job,
+        generation_plan.as_ref(),
+    )?;
     let rendered = render_job(config_dir, job, &context)?;
     let outcome = write_if_changed_atomic(&output_path, &rendered).map_err(|source| {
         GenerateError::WriteOutput {
@@ -379,8 +384,7 @@ fn build_context(
     job: &JobConfig,
     generation_plan: Option<&GenerationFingerprintPlan>,
 ) -> Result<(AssetTemplateContext, Vec<Diagnostic>), GenerateError> {
-    let BuildModulesResult { modules, warnings } =
-        build_modules(config_dir, job, generation_plan)?;
+    let BuildModulesResult { modules, warnings } = build_modules(config_dir, job, generation_plan)?;
     let _graph = ResourceGraph {
         modules: modules.clone(),
         diagnostics: warnings.clone(),
@@ -487,8 +491,8 @@ fn build_modules(
 
     for input in &job.inputs {
         let input_path = config_dir.join(&input.path);
-        let known_cache_input = generation_plan
-            .and_then(|plan| plan.cache_input_fingerprints.get(&input_path));
+        let known_cache_input =
+            generation_plan.and_then(|plan| plan.cache_input_fingerprints.get(&input_path));
         let known_cache_fingerprint = known_cache_input.map(|plan| plan.fingerprint.as_str());
         let known_cache_snapshot = known_cache_input.map(|plan| &plan.snapshot);
 
@@ -1054,10 +1058,7 @@ where
         Some(fingerprint) => parse_cache::load_with_fingerprint(kind, input_path, fingerprint),
         None => parse_cache::load(kind, input_path),
     };
-    loaded
-        .ok()
-        .flatten()
-        .and_then(extract)
+    loaded.ok().flatten().and_then(extract)
 }
 
 fn store_cached_parse(

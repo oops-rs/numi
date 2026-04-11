@@ -189,10 +189,11 @@ pub(crate) fn fingerprint_input_with_snapshot(
     hasher.update(b"\0");
 
     for entry in entries_to_track {
-        let metadata = fs::metadata(&entry.absolute_path).map_err(|source| CacheError::ReadFile {
-            path: entry.absolute_path.clone(),
-            source,
-        })?;
+        let metadata =
+            fs::metadata(&entry.absolute_path).map_err(|source| CacheError::ReadFile {
+                path: entry.absolute_path.clone(),
+                source,
+            })?;
 
         hasher.update(match entry.kind {
             InputSnapshotEntryKind::File => b"file".as_slice(),
@@ -258,7 +259,7 @@ fn cache_record_exists(kind: CacheKind, path: &Path) -> Result<bool, CacheError>
 #[cfg(test)]
 pub(crate) fn snapshot_input(kind: CacheKind, path: &Path) -> Result<InputSnapshot, CacheError> {
     let root = canonicalize(path)?;
-    Ok(build_input_snapshot(kind, &root)?)
+    build_input_snapshot(kind, &root)
 }
 
 pub(crate) fn input_matches_snapshot(
@@ -375,10 +376,11 @@ fn build_input_snapshot(kind: CacheKind, root: &Path) -> Result<InputSnapshot, C
     let mut entries = Vec::with_capacity(entries_to_track.len());
 
     for entry in entries_to_track {
-        let metadata = fs::metadata(&entry.absolute_path).map_err(|source| CacheError::ReadFile {
-            path: entry.absolute_path.clone(),
-            source,
-        })?;
+        let metadata =
+            fs::metadata(&entry.absolute_path).map_err(|source| CacheError::ReadFile {
+                path: entry.absolute_path.clone(),
+                source,
+            })?;
         entries.push(InputSnapshotEntry {
             relative_path: entry.relative_path,
             kind: entry.kind,
@@ -403,10 +405,7 @@ fn relevant_entries(kind: CacheKind, path: &Path) -> Result<Vec<RelevantInputEnt
         return Ok(if is_relevant_file(kind, path) {
             vec![RelevantInputEntry {
                 absolute_path: path.to_path_buf(),
-                relative_path: path
-                    .file_name()
-                    .map(PathBuf::from)
-                    .unwrap_or_else(PathBuf::new),
+                relative_path: path.file_name().map(PathBuf::from).unwrap_or_default(),
                 kind: InputSnapshotEntryKind::File,
             }]
         } else {
@@ -831,8 +830,8 @@ mod tests {
         .expect("imageset contents should exist");
         fs::write(imageset_path.join("logo.png"), "before").expect("image file should exist");
 
-        let snapshot = snapshot_input(CacheKind::Xcassets, &catalog_path)
-            .expect("snapshot should succeed");
+        let snapshot =
+            snapshot_input(CacheKind::Xcassets, &catalog_path).expect("snapshot should succeed");
 
         fs::write(imageset_path.join("logo.png"), "after").expect("image file should mutate");
 
@@ -870,7 +869,8 @@ mod tests {
         let temp_dir = make_temp_dir("parse-cache-xcassets-namespace-change");
         let catalog_path = temp_dir.join("Assets.xcassets");
         let group_path = catalog_path.join("Icons");
-        fs::create_dir_all(group_path.join("Logo.imageset")).expect("nested imageset dir should exist");
+        fs::create_dir_all(group_path.join("Logo.imageset"))
+            .expect("nested imageset dir should exist");
         fs::write(
             group_path.join("Contents.json"),
             "{\"properties\":{\"provides-namespace\":false}}",

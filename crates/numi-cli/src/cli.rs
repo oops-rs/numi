@@ -104,7 +104,10 @@ pub struct CheckArgs {
 
 #[derive(Debug, Args)]
 pub struct InitArgs {
-    #[arg(long, help = "Overwrite an existing numi.toml in the current directory")]
+    #[arg(
+        long,
+        help = "Overwrite an existing numi.toml in the current directory"
+    )]
     pub force: bool,
 }
 

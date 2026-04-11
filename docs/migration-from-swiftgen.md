@@ -1,7 +1,7 @@
 # Migration From SwiftGen
 
 Numi is intentionally close to SwiftGen for the MVP path, but it makes a few contracts more explicit.
-Numi is a general-purpose code generator that currently ships Swift templates for the Apple ecosystem.
+Numi is a general-purpose code generator that currently ships Swift and Objective-C templates for the Apple ecosystem.
 
 ## What Stays Familiar
 

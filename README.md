@@ -146,9 +146,14 @@ name = "assets"
 
 Numi currently ships these built-in templates:
 
-- `swiftui-assets`
-- `l10n`
-- `files`
+- Swift:
+  - `language = "swift"`, `name = "swiftui-assets"`
+  - `language = "swift"`, `name = "l10n"`
+  - `language = "swift"`, `name = "files"`
+- Objective-C:
+  - `language = "objc"`, `name = "assets"`
+  - `language = "objc"`, `name = "l10n"`
+  - `language = "objc"`, `name = "files"`
 
 Fonts are supported in the template context and in custom-template workflows, but the first public release does not ship a dedicated built-in Swift template for fonts.
 

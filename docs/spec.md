@@ -185,13 +185,16 @@ Architecture must allow future resource kinds without redesigning the system:
 ### 6.2 Output Generation
 
 #### 6.2.1 Built-in Templates
-Numi v1 must ship with built-in templates for common Swift output styles.
+Numi v1 must ship with built-in templates for common Swift and Objective-C output styles.
 
 Minimum built-ins:
 - SwiftUI-friendly assets template
 - UIKit/AppKit-compatible assets template, if low-cost
 - Localization template
 - File-helper template
+- Objective-C assets template
+- Objective-C localization template
+- Objective-C file-helper template
 
 #### 6.2.2 Custom Templates
 Users must be able to provide template files from disk.

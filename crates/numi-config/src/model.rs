@@ -4,7 +4,12 @@ use std::collections::BTreeMap;
 pub const ACCESS_LEVEL_VALUES: &[&str] = &["internal", "public"];
 pub const BUNDLE_MODE_VALUES: &[&str] = &["module", "main", "custom"];
 pub const INPUT_KIND_VALUES: &[&str] = &["xcassets", "strings", "xcstrings", "files", "fonts"];
-pub const SWIFT_BUILTIN_TEMPLATE_VALUES: &[&str] = &["swiftui-assets", "l10n", "files"];
+#[allow(dead_code)]
+pub const BUILTIN_TEMPLATE_LANGUAGES: &[&str] = &["swift", "objc"];
+pub const SWIFT_BUILTIN_TEMPLATE_NAMES: &[&str] = &["swiftui-assets", "l10n", "files"];
+#[allow(dead_code)]
+pub const OBJC_BUILTIN_TEMPLATE_NAMES: &[&str] = &["assets", "l10n", "files"];
+pub const SWIFT_BUILTIN_TEMPLATE_VALUES: &[&str] = SWIFT_BUILTIN_TEMPLATE_NAMES;
 pub const DEFAULT_ACCESS_LEVEL: &str = "internal";
 pub const DEFAULT_BUNDLE_MODE: &str = "module";
 pub const DEFAULT_INCREMENTAL: bool = true;
@@ -89,9 +94,22 @@ pub struct TemplateConfig {
     pub path: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct BuiltinTemplateConfig {
+    pub language: Option<String>,
+    pub name: Option<String>,
+    #[serde(skip)]
+    pub swift: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawBuiltinTemplateConfig {
+    #[serde(default)]
+    pub language: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
     pub swift: Option<String>,
 }
 
@@ -115,8 +133,44 @@ impl TemplateConfig {
 
 impl BuiltinTemplateConfig {
     pub fn is_empty(&self) -> bool {
-        self.swift.is_none()
+        self.language.is_none() && self.name.is_none() && self.swift.is_none()
     }
+}
+
+impl<'de> Deserialize<'de> for BuiltinTemplateConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = RawBuiltinTemplateConfig::deserialize(deserializer)?;
+        let swift = raw.swift.or_else(|| compat_swift_name(raw.language.as_deref(), raw.name.as_deref()));
+
+        Ok(Self {
+            language: raw.language,
+            name: raw.name,
+            swift,
+        })
+    }
+}
+
+fn compat_swift_name(language: Option<&str>, name: Option<&str>) -> Option<String> {
+    if let Some(name) = name {
+        match name {
+            "swiftui-assets" => return Some(name.to_string()),
+            "l10n" => return Some(name.to_string()),
+            "files" => return Some(name.to_string()),
+            "assets" if matches!(language, Some("objc")) => {
+                return Some("swiftui-assets".to_string())
+            }
+            _ => {}
+        }
+    }
+
+    if matches!(language, Some("swift")) {
+        return name.map(ToString::to_string);
+    }
+
+    None
 }
 
 impl DefaultsConfig {

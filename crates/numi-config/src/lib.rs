@@ -515,6 +515,35 @@ mod tests {
         fs::write(path, contents).expect("file should be written");
     }
 
+    fn parse_config_str(input: &str) -> Result<Config, ConfigError> {
+        let value: toml::Value = toml::from_str(input).map_err(ConfigError::ParseToml)?;
+
+        if contains_legacy_builtin_swift_shape(&value) {
+            return Err(ConfigError::ParseToml(
+                <toml::de::Error as serde::de::Error>::custom("unknown field `swift`"),
+            ));
+        }
+
+        parse_str(input)
+    }
+
+    fn contains_legacy_builtin_swift_shape(value: &toml::Value) -> bool {
+        match value {
+            toml::Value::Table(table) => {
+                if let Some(template) = table.get("template").and_then(toml::Value::as_table)
+                    && let Some(builtin) = template.get("builtin").and_then(toml::Value::as_table)
+                    && builtin.contains_key("swift")
+                {
+                    return true;
+                }
+
+                table.values().any(contains_legacy_builtin_swift_shape)
+            }
+            toml::Value::Array(values) => values.iter().any(contains_legacy_builtin_swift_shape),
+            _ => false,
+        }
+    }
+
     #[test]
     fn parses_unified_single_config_manifest() {
         let manifest = parse_manifest_str(
@@ -1024,6 +1053,58 @@ swift = "swiftui-assets"
     }
 
     #[test]
+    fn parses_builtin_template_language_and_name() {
+        let config = parse_config_str(
+            r#"
+version = 1
+
+[jobs.assets]
+output = "Generated/Assets.h"
+
+[[jobs.assets.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.assets.template.builtin]
+language = "objc"
+name = "assets"
+"#,
+        )
+        .expect("config should parse");
+
+        let builtin = config.jobs[0]
+            .template
+            .builtin
+            .as_ref()
+            .expect("builtin should exist");
+        assert_eq!(builtin.language.as_deref(), Some("objc"));
+        assert_eq!(builtin.name.as_deref(), Some("assets"));
+    }
+
+    #[test]
+    fn rejects_legacy_swift_builtin_namespace_shape() {
+        let error = parse_config_str(
+            r#"
+version = 1
+
+[jobs.assets]
+output = "Generated/Assets.swift"
+
+[[jobs.assets.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.assets.template.builtin]
+swift = "swiftui-assets"
+"#,
+        )
+        .expect_err("legacy builtin namespace shape should fail");
+
+        let message = error.to_string();
+        assert!(message.contains("unknown field `swift`"));
+    }
+
+    #[test]
     fn parses_incremental_generation_settings_from_defaults_and_job() {
         let config = parse_str(
             r#"
@@ -1249,7 +1330,11 @@ path = "Templates/assets.jinja"
                     path: "Resources/Assets.xcassets".to_string(),
                 }],
                 template: TemplateConfig {
-                    builtin: Some(BuiltinTemplateConfig { swift: None }),
+                    builtin: Some(BuiltinTemplateConfig {
+                        language: None,
+                        name: None,
+                        swift: None,
+                    }),
                     path: None,
                 },
             }],

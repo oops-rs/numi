@@ -75,6 +75,17 @@ Homebrew remains source-based here: it builds from the tagged GitHub source arch
 
 crates.io publication remains manual and follows the workspace publish order described below.
 
+## GitHub Release Asset Contract
+
+Homebrew consumes these GitHub release archives and their names are part of the external contract:
+
+- `numi-v<version>-x86_64-unknown-linux-gnu.tar.gz`
+- `numi-v<version>-x86_64-apple-darwin.tar.gz`
+- `numi-v<version>-aarch64-apple-darwin.tar.gz`
+
+Each archive contains a top-level directory named `numi-v<version>-<target>/` with the `numi` binary inside it.
+These names must stay stable unless the Homebrew tap is updated in the same change.
+
 ## First Release Sequence
 
 Publish one crate at a time and wait for the index to catch up between steps.

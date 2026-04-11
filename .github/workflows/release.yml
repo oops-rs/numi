@@ -66,11 +66,14 @@ jobs:
         run: |
           set -euo pipefail
           version="${RELEASE_TAG}"
-          archive="numi-${version}-${{ matrix.target }}.${{ matrix.archive_ext }}"
-          binary_dir="dist/numi-${version}-${{ matrix.target }}"
-          mkdir -p "${binary_dir}"
-          cp "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "${binary_dir}/numi"
-          tar -C dist -czf "${archive}" "numi-${version}-${{ matrix.target }}"
+          target="${{ matrix.target }}"
+          archive_ext="${{ matrix.archive_ext }}"
+          package_name="numi-${version}-${target}"
+          folder="dist/${package_name}"
+          archive="${package_name}.${archive_ext}"
+          mkdir -p "${folder}"
+          cp "target/${target}/release/${{ matrix.binary_name }}" "${folder}/numi"
+          tar -C dist -czf "${archive}" "${package_name}"
           shasum -a 256 "${archive}" > "${archive}.sha256"
 
       - name: Package artifact (Windows)
@@ -78,11 +81,13 @@ jobs:
         shell: pwsh
         run: |
           $version = $env:RELEASE_TAG
-          $folder = "numi-$version-${{ matrix.target }}"
-          $archive = "$folder.${{ matrix.archive_ext }}"
-          New-Item -ItemType Directory -Force -Path "dist/$folder" | Out-Null
-          Copy-Item "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "dist/$folder/numi.exe"
-          Compress-Archive -Path "dist/$folder" -DestinationPath $archive
+          $target = "${{ matrix.target }}"
+          $packageName = "numi-$version-$target"
+          $folder = "dist/$packageName"
+          $archive = "$packageName.${{ matrix.archive_ext }}"
+          New-Item -ItemType Directory -Force -Path $folder | Out-Null
+          Copy-Item "target/$target/release/${{ matrix.binary_name }}" "$folder/numi.exe"
+          Compress-Archive -Path $folder -DestinationPath $archive
           $hash = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLower()
           "$hash  $archive" | Out-File -Encoding ascii "$archive.sha256"
 

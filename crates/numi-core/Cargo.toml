@@ -2,16 +2,18 @@
 name = "numi-core"
 version = "0.1.0"
 edition = "2024"
-publish = false
+description = "Core parsing, normalization, rendering, and output orchestration for Numi."
+license = "MIT"
+repository = "https://github.com/oops-rs/numi"
 
 [dependencies]
 atomic-write-file = "0.3"
 blake3 = "1"
 camino = { version = "1", features = ["serde1"] }
 minijinja = "2"
-numi-config = { path = "../numi-config" }
-numi-diagnostics = { path = "../numi-diagnostics" }
-numi-ir = { path = "../numi-ir" }
+numi-config = { version = "0.1.0", path = "../numi-config" }
+numi-diagnostics = { version = "0.1.0", path = "../numi-diagnostics" }
+numi-ir = { version = "0.1.0", path = "../numi-ir" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 langcodec = "0.11.0"

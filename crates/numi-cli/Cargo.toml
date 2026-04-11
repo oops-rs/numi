@@ -2,7 +2,11 @@
 name = "numi-cli"
 version = "0.1.0"
 edition = "2024"
-publish = false
+description = "CLI for generating Swift code from Apple project resources."
+license = "MIT"
+repository = "https://github.com/oops-rs/numi"
+homepage = "https://github.com/oops-rs/numi"
+documentation = "https://docs.rs/numi-cli"
 
 [[bin]]
 name = "numi"
@@ -10,8 +14,8 @@ path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-numi-config = { path = "../numi-config" }
-numi-core = { path = "../numi-core" }
+numi-config = { version = "0.1.0", path = "../numi-config" }
+numi-core = { version = "0.1.0", path = "../numi-core" }
 toml = "0.8"
 
 [dev-dependencies]

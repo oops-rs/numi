@@ -2,9 +2,11 @@
 name = "numi-config"
 version = "0.1.0"
 edition = "2024"
-publish = false
+description = "Config parsing, validation, and discovery for the Numi resource code generation workspace."
+license = "MIT"
+repository = "https://github.com/oops-rs/numi"
 
 [dependencies]
-numi-diagnostics = { path = "../numi-diagnostics" }
+numi-diagnostics = { version = "0.1.0", path = "../numi-diagnostics" }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"

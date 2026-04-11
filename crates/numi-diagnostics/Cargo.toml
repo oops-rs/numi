@@ -2,7 +2,9 @@
 name = "numi-diagnostics"
 version = "0.1.0"
 edition = "2024"
-publish = false
+description = "Diagnostics types for the Numi resource code generation workspace."
+license = "MIT"
+repository = "https://github.com/oops-rs/numi"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

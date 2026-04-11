@@ -54,7 +54,7 @@ Numi v1 should support:
 - Stable template context
 - Built-in templates
 - Custom user templates
-- Swift code output
+- Swift and Objective-C code output
 - `generate`, `check`, `init`, and config inspection commands
 - Deterministic ordering and stable output
 - Clear diagnostics for collisions, invalid inputs, and template failures
@@ -72,7 +72,7 @@ Numi v1 should support:
 - Symbols and additional asset metadata
 - Plist-driven generation
 - Plugin parser system
-- Non-Swift outputs
+- Additional output languages beyond the current Swift and Objective-C built-ins
 
 ## 3. Target Users
 

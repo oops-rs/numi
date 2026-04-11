@@ -1,6 +1,6 @@
 # Numi
 
-Numi is a blazingly fast CLI for generating Swift code from Apple project resources.
+Numi is a blazingly fast CLI for generating code from Apple project resources.
 It turns asset catalogs, localization files, and file lists into generated accessors and helpers using built-in or custom templates.
 
 ## Install

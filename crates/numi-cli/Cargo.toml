@@ -20,7 +20,7 @@ path = "src/main.rs"
 clap = { version = "4", features = ["derive"] }
 numi-config = { version = "0.1.0", path = "../numi-config" }
 numi-core = { version = "0.1.0", path = "../numi-core" }
-toml = "0.8"
+toml = "1"
 
 [dev-dependencies]
 serde_json = "1"

@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/numi-logo.png" alt="Numi logo" width="320">
+</p>
+
 # Numi
 
 Numi is a blazingly fast CLI for generating code from Apple project resources.

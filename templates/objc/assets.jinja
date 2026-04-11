@@ -1,0 +1,61 @@
+#import <UIKit/UIKit.h>
+
+NS_ASSUME_NONNULL_BEGIN
+
+{% macro render_entries(entries, prefix, indent) -%}
+{% for entry in entries -%}
+{% if entry.kind == "namespace" -%}
+{{ render_entries(entry.children, prefix ~ entry.swiftIdentifier, indent) }}{% elif entry.kind == "color" -%}
+{{ indent }}+ (UIColor *){{ (prefix ~ entry.swiftIdentifier) | lower_first }};
+{% elif entry.kind == "image" -%}
+{{ indent }}+ (UIImage *){{ (prefix ~ entry.swiftIdentifier) | lower_first }};
+{% endif -%}
+{% endfor -%}
+{%- endmacro %}
+{% macro render_entry_implementations(entries, prefix, indent) -%}
+{% for entry in entries -%}
+{% if entry.kind == "namespace" -%}
+{{ render_entry_implementations(entry.children, prefix ~ entry.swiftIdentifier, indent) }}{% elif entry.kind == "color" -%}
+{{ indent }}+ (UIColor *){{ (prefix ~ entry.swiftIdentifier) | lower_first }} {
+{{ indent }}    UIColor *color = [UIColor colorNamed:{{ entry.properties.assetName | string_literal }} inBundle:[self resourceBundle] compatibleWithTraitCollection:nil];
+{{ indent }}    if (color == nil) {
+{{ indent }}        @throw [NSException exceptionWithName:NSInternalInconsistencyException
+{{ indent }}                                       reason:[NSString stringWithFormat:@"Missing color asset: %@", {{ entry.properties.assetName | string_literal }}]
+{{ indent }}                                     userInfo:nil];
+{{ indent }}    }
+{{ indent }}    return color;
+{{ indent }}}
+
+{% elif entry.kind == "image" -%}
+{{ indent }}+ (UIImage *){{ (prefix ~ entry.swiftIdentifier) | lower_first }} {
+{{ indent }}    UIImage *image = [UIImage imageNamed:{{ entry.properties.assetName | string_literal }} inBundle:[self resourceBundle] compatibleWithTraitCollection:nil];
+{{ indent }}    if (image == nil) {
+{{ indent }}        @throw [NSException exceptionWithName:NSInternalInconsistencyException
+{{ indent }}                                       reason:[NSString stringWithFormat:@"Missing image asset: %@", {{ entry.properties.assetName | string_literal }}]
+{{ indent }}                                     userInfo:nil];
+{{ indent }}    }
+{{ indent }}    return image;
+{{ indent }}}
+
+{% endif -%}
+{% endfor -%}
+{%- endmacro %}
+{% for module in modules %}
+@interface {{ module.name }} : NSObject
+{{ render_entries(module.entries, "", "") }}+ (NSBundle *)resourceBundle;
+@end
+
+@implementation {{ module.name }}
+{{ render_entry_implementations(module.entries, "", "") }}+ (NSBundle *)resourceBundle {
+{% if bundle.mode == "main" -%}
+    return NSBundle.mainBundle;
+{% elif bundle.mode == "module" -%}
+    return [NSBundle bundleForClass:self];
+{% else -%}
+    return [NSBundle bundleWithIdentifier:{{ bundle.identifier | string_literal }}] ?: NSBundle.mainBundle;
+{% endif -%}
+}
+@end
+
+{% endfor -%}
+NS_ASSUME_NONNULL_END

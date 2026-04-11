@@ -11,13 +11,19 @@ use crate::context::AssetTemplateContext;
 const SWIFTUI_ASSETS_TEMPLATE: &str = include_str!("../../../templates/swift/swiftui-assets.jinja");
 const L10N_TEMPLATE: &str = include_str!("../../../templates/swift/l10n.jinja");
 const FILES_TEMPLATE: &str = include_str!("../../../templates/swift/files.jinja");
+const OBJC_ASSETS_TEMPLATE: &str = include_str!("../../../templates/objc/assets.jinja");
+const OBJC_L10N_TEMPLATE: &str = include_str!("../../../templates/objc/l10n.jinja");
+const OBJC_FILES_TEMPLATE: &str = include_str!("../../../templates/objc/files.jinja");
 const ENTRY_TEMPLATE_NAME: &str = "__numi_entry__";
 const FILE_TEMPLATE_PREFIX: &str = "file:";
 const INCLUDE_REQUEST_PREFIX: &str = "include:";
 
 #[derive(Debug)]
 pub enum RenderError {
-    UnknownBuiltin(String),
+    UnknownBuiltin {
+        language: String,
+        name: String,
+    },
     ReadTemplate {
         path: std::path::PathBuf,
         source: std::io::Error,
@@ -29,7 +35,9 @@ pub enum RenderError {
 impl std::fmt::Display for RenderError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::UnknownBuiltin(name) => write!(f, "unknown built-in template `{name}`"),
+            Self::UnknownBuiltin { language, name } => {
+                write!(f, "unknown built-in template `{language}/{name}`")
+            }
             Self::ReadTemplate { path, source } => {
                 write!(f, "failed to read template {}: {source}", path.display())
             }
@@ -42,20 +50,27 @@ impl std::fmt::Display for RenderError {
 impl std::error::Error for RenderError {}
 
 pub fn render_builtin(
-    builtin_name: &str,
+    builtin: (&str, &str),
     context: &AssetTemplateContext,
 ) -> Result<String, RenderError> {
-    let template_source = builtin_template_source(builtin_name)?;
+    let template_source = builtin_template_source(builtin)?;
+    let template_id = format!("{}/{}", builtin.0, builtin.1);
 
-    render_template_source(builtin_name, template_source, context)
+    render_template_source(&template_id, template_source, context)
 }
 
-pub fn builtin_template_source(builtin_name: &str) -> Result<&'static str, RenderError> {
-    match builtin_name {
-        "swiftui-assets" => Ok(SWIFTUI_ASSETS_TEMPLATE),
-        "l10n" => Ok(L10N_TEMPLATE),
-        "files" => Ok(FILES_TEMPLATE),
-        other => Err(RenderError::UnknownBuiltin(other.to_owned())),
+pub fn builtin_template_source(builtin: (&str, &str)) -> Result<&'static str, RenderError> {
+    match builtin {
+        ("swift", "swiftui-assets") => Ok(SWIFTUI_ASSETS_TEMPLATE),
+        ("swift", "l10n") => Ok(L10N_TEMPLATE),
+        ("swift", "files") => Ok(FILES_TEMPLATE),
+        ("objc", "assets") => Ok(OBJC_ASSETS_TEMPLATE),
+        ("objc", "l10n") => Ok(OBJC_L10N_TEMPLATE),
+        ("objc", "files") => Ok(OBJC_FILES_TEMPLATE),
+        (language, name) => Err(RenderError::UnknownBuiltin {
+            language: language.to_owned(),
+            name: name.to_owned(),
+        }),
     }
 }
 
@@ -495,7 +510,8 @@ mod tests {
 
     #[test]
     fn renders_builtin_l10n_template() {
-        let rendered = render_builtin("l10n", &l10n_context()).expect("template should render");
+        let rendered =
+            render_builtin(("swift", "l10n"), &l10n_context()).expect("template should render");
 
         assert_eq!(
             rendered,
@@ -515,13 +531,24 @@ private func tr(_ table: String, _ key: String) -> String {
     }
 
     #[test]
-    fn rejects_unknown_builtin_template_name() {
-        let error = render_builtin("not-a-real-template", &l10n_context())
+    fn renders_builtin_objc_l10n_template() {
+        let rendered =
+            render_builtin(("objc", "l10n"), &l10n_context()).expect("template should render");
+
+        assert!(rendered.contains("@interface"));
+        assert!(rendered.contains("NSLocalizedString"));
+    }
+
+    #[test]
+    fn rejects_unknown_builtin_language_and_name_pair() {
+        let error = render_builtin(("objc", "swiftui-assets"), &l10n_context())
             .expect_err("unknown built-ins should be rejected");
 
-        assert!(
-            matches!(error, RenderError::UnknownBuiltin(name) if name == "not-a-real-template")
-        );
+        assert!(matches!(
+            error,
+            RenderError::UnknownBuiltin { language, name }
+                if language == "objc" && name == "swiftui-assets"
+        ));
     }
 
     #[test]
@@ -578,7 +605,8 @@ private func tr(_ table: String, _ key: String) -> String {
         )
         .expect("context should build");
 
-        let rendered = render_builtin("files", &context).expect("template should render");
+        let rendered =
+            render_builtin(("swift", "files"), &context).expect("template should render");
 
         assert_eq!(
             rendered,

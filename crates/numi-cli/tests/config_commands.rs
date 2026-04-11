@@ -1,8 +1,10 @@
 use std::{
+    fs::OpenOptions,
     fs,
     path::{Path, PathBuf},
     process::Command,
-    time::{SystemTime, UNIX_EPOCH},
+    thread,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 fn make_temp_dir(test_name: &str) -> PathBuf {
@@ -44,6 +46,45 @@ fn copy_dir_all(source: &Path, destination: &Path) {
 
 fn write_manifest(root: &Path, contents: &str) {
     fs::write(root.join("numi.toml"), contents).expect("manifest should exist");
+}
+
+fn starter_config_lock_path() -> PathBuf {
+    std::env::temp_dir().join("numi-cli-starter-config.lock")
+}
+
+struct StarterConfigLock {
+    path: PathBuf,
+}
+
+impl Drop for StarterConfigLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+fn acquire_starter_config_lock() -> StarterConfigLock {
+    let path = starter_config_lock_path();
+
+    loop {
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(_) => return StarterConfigLock { path },
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => panic!("failed to acquire starter config lock: {error}"),
+        }
+    }
+}
+
+struct FileRestore {
+    path: PathBuf,
+    contents: String,
+}
+
+impl Drop for FileRestore {
+    fn drop(&mut self) {
+        fs::write(&self.path, &self.contents).expect("starter config docs file should be restored");
+    }
 }
 
 #[test]
@@ -398,7 +439,18 @@ fn init_refuses_to_overwrite_existing_config_without_force() {
 
 #[test]
 fn init_creates_starter_numi_toml() {
+    let _lock = acquire_starter_config_lock();
     let root = make_temp_dir("init-success");
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let docs_starter_path = manifest_dir.join("../../docs/examples/starter-numi.toml");
+    let original_docs = fs::read_to_string(&docs_starter_path)
+        .expect("docs starter config should be readable");
+    let _restore_docs = FileRestore {
+        path: docs_starter_path.clone(),
+        contents: original_docs,
+    };
+    let sentinel = "# sentinel content used to prove numi init reads the crate-local asset\n";
+    fs::write(&docs_starter_path, sentinel).expect("docs starter config should be overridden");
 
     let output = Command::new(env!("CARGO_BIN_EXE_numi"))
         .arg("init")
@@ -414,9 +466,11 @@ fn init_creates_starter_numi_toml() {
     );
 
     let created = fs::read_to_string(root.join("numi.toml")).expect("starter config should exist");
+    let expected = fs::read_to_string(manifest_dir.join("assets/starter-numi.toml"))
+        .expect("crate-local starter config should be readable");
     assert_eq!(
-        created,
-        include_str!("../../../docs/examples/starter-numi.toml")
+        created, expected,
+        "starter config should be sourced from the crate-local asset"
     );
     assert!(
         created.contains("[jobs.l10n.template.builtin]"),
@@ -433,6 +487,10 @@ fn init_creates_starter_numi_toml() {
     assert!(
         !created.contains("path = \"Templates/l10n.stencil\""),
         "starter config was: {created}"
+    );
+    assert!(
+        !created.contains("sentinel content used to prove numi init reads the crate-local asset"),
+        "starter config unexpectedly came from the docs copy: {created}"
     );
 
     fs::remove_dir_all(root).expect("temp dir should be removed");

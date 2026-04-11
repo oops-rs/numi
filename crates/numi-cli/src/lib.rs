@@ -375,19 +375,7 @@ fn current_dir() -> Result<PathBuf, CliError> {
 }
 
 fn load_starter_config() -> Result<Cow<'static, str>, CliError> {
-    let preferred_path =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/examples/starter-numi.toml");
-
-    match fs::read_to_string(&preferred_path) {
-        Ok(contents) => Ok(Cow::Owned(contents)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            Ok(Cow::Borrowed(STARTER_CONFIG_FALLBACK))
-        }
-        Err(error) => Err(CliError::new(format!(
-            "failed to read starter config {}: {error}",
-            preferred_path.display()
-        ))),
-    }
+    Ok(Cow::Borrowed(STARTER_CONFIG_FALLBACK))
 }
 
 fn manifest_dir(manifest_path: &Path) -> Result<&Path, CliError> {

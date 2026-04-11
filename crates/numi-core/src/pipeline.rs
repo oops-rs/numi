@@ -1440,7 +1440,14 @@ mod tests {
                 .expect("clock should be after epoch")
                 .as_nanos()
         );
-        let path = std::env::temp_dir().join(unique);
+        let mut temp_root = std::env::temp_dir();
+        while !temp_root.is_dir() {
+            assert!(
+                temp_root.pop(),
+                "temp dir root should have a directory ancestor"
+            );
+        }
+        let path = temp_root.join(unique);
         fs::create_dir_all(&path).expect("temp dir should be created");
         path
     }
@@ -1790,6 +1797,25 @@ name = "files"
             let _guard = override_temp_dir(temp_dir);
             f()
         })
+    }
+
+    #[test]
+    fn make_temp_dir_recovers_when_tmpdir_points_to_a_file() {
+        with_locked_cache_env(|| {
+            let temp_dir = make_temp_dir("pipeline-temp-dir-recover");
+            let bad_tmp = temp_dir.join("not-a-directory");
+            fs::write(&bad_tmp, "cache root blocker").expect("bad tmp file should exist");
+
+            let recovered = {
+                let _guard = override_temp_dir(&bad_tmp);
+                make_temp_dir("pipeline-temp-dir-recovered")
+            };
+
+            assert!(recovered.is_dir());
+            assert!(recovered.starts_with(&temp_dir));
+
+            fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+        });
     }
 
     fn cache_record_path(kind: CacheKind, input_path: &Path) -> PathBuf {

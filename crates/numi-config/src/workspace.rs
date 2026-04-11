@@ -190,7 +190,7 @@ fn detect_legacy_flat_builtin_template_syntax(value: &toml::Value) -> Vec<Diagno
                 "legacy flat built-in template syntax is no longer supported",
             )
             .with_hint(format!(
-                "use `[workspace.defaults.jobs.{job_name}.template.builtin] language = \"...\" name = \"...\"` instead; for example, replace `[workspace.defaults.jobs.{job_name}.template] builtin = \"{builtin_name}\"` with `[workspace.defaults.jobs.{job_name}.template.builtin] language = \"swift\" name = \"{builtin_name}\"`"
+                "use `[workspace.defaults.jobs.{job_name}.template.builtin] language = \"...\"` instead; for example, replace `[workspace.defaults.jobs.{job_name}.template] builtin = \"{builtin_name}\"` with `[workspace.defaults.jobs.{job_name}.template.builtin] language = \"swift\"`"
             ))
             .with_job(job_name.to_owned());
 
@@ -330,6 +330,20 @@ fn validate_workspace_default_template(
     field_path: &str,
     job: Option<&str>,
 ) {
+    if template.path.is_some() {
+        let diagnostic = Diagnostic::error(
+            "workspace default job template must not set `path`",
+        )
+        .with_hint(
+            "workspace defaults only support `[workspace.defaults.jobs.<job>.template.builtin] language = \"...\"`",
+        );
+        diagnostics.push(match job {
+            Some(job) => diagnostic.with_job(job.to_owned()),
+            None => diagnostic,
+        });
+        return;
+    }
+
     let Some(builtin) = template.builtin.as_ref() else {
         validate_template(
             diagnostics,
@@ -341,30 +355,22 @@ fn validate_workspace_default_template(
         return;
     };
 
-    if template.path.is_none() && builtin.language.is_some() && builtin.name.is_none() {
-        let language = builtin.language.as_deref().expect("language is present");
-        if !BUILTIN_TEMPLATE_LANGUAGES.contains(&language) {
-            let diagnostic = Diagnostic::error(format!(
-                "{field_path}.builtin.language must be one of {} (got `{language}`)",
-                BUILTIN_TEMPLATE_LANGUAGES
-                    .iter()
-                    .map(|value| format!("`{value}`"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ))
-            .with_hint(format!(
-                "use one of: {}",
-                BUILTIN_TEMPLATE_LANGUAGES
-                    .iter()
-                    .map(|value| format!("`{value}`"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
-            diagnostics.push(match job {
-                Some(job) => diagnostic.with_job(job.to_owned()),
-                None => diagnostic,
-            });
-        }
+    if builtin.name.is_some() {
+        let diagnostic = Diagnostic::error(
+            "workspace default job template builtin must not set `name`",
+        )
+        .with_hint(
+            "workspace defaults only inherit builtin language; set the job-level builtin name instead",
+        );
+        diagnostics.push(match job {
+            Some(job) => diagnostic.with_job(job.to_owned()),
+            None => diagnostic,
+        });
+        return;
+    }
+
+    if let Some(language) = builtin.language.as_deref() {
+        validate_workspace_default_builtin_language(diagnostics, language, field_path, job);
         return;
     }
 
@@ -375,6 +381,36 @@ fn validate_workspace_default_template(
         field_path,
         job,
     );
+}
+
+fn validate_workspace_default_builtin_language(
+    diagnostics: &mut Vec<Diagnostic>,
+    language: &str,
+    field_path: &str,
+    job: Option<&str>,
+) {
+    if !BUILTIN_TEMPLATE_LANGUAGES.contains(&language) {
+        let diagnostic = Diagnostic::error(format!(
+            "{field_path}.builtin.language must be one of {} (got `{language}`)",
+            BUILTIN_TEMPLATE_LANGUAGES
+                .iter()
+                .map(|value| format!("`{value}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
+        .with_hint(format!(
+            "use one of: {}",
+            BUILTIN_TEMPLATE_LANGUAGES
+                .iter()
+                .map(|value| format!("`{value}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+        diagnostics.push(match job {
+            Some(job) => diagnostic.with_job(job.to_owned()),
+            None => diagnostic,
+        });
+    }
 }
 
 fn is_config_path(member: &str) -> bool {

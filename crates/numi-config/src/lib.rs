@@ -562,7 +562,6 @@ members = ["AppUI", "Core"]
 [workspace.defaults.jobs.l10n.template]
 [workspace.defaults.jobs.l10n.template.builtin]
 language = "swift"
-name = "l10n"
 
 [workspace.member_overrides.AppUI]
 jobs = ["assets", "l10n"]
@@ -587,8 +586,16 @@ jobs = ["assets", "l10n"]
                         .template
                         .builtin
                         .as_ref()
-                        .and_then(|builtin| builtin.name.as_deref()),
-                    Some("l10n")
+                        .and_then(|builtin| builtin.language.as_deref()),
+                    Some("swift")
+                );
+                assert!(
+                    workspace.workspace.defaults.jobs["l10n"]
+                        .template
+                        .builtin
+                        .as_ref()
+                        .and_then(|builtin| builtin.name.as_deref())
+                        .is_none()
                 );
                 assert_eq!(
                     workspace.workspace.member_overrides["AppUI"].jobs,
@@ -616,7 +623,7 @@ builtin = "l10n"
 
         let message = error.to_string();
         assert!(message.contains("legacy flat built-in template syntax is no longer supported"));
-        assert!(message.contains("[workspace.defaults.jobs.l10n.template.builtin] language = \"...\" name = \"...\""));
+        assert!(message.contains("[workspace.defaults.jobs.l10n.template.builtin] language = \"...\""));
     }
 
     #[test]
@@ -800,7 +807,6 @@ members = ["AppUI"]
 [workspace.defaults.jobs.l10n.template]
 [workspace.defaults.jobs.l10n.template.builtin]
 language = "swift"
-name = "l10n"
 "#,
         )
         .expect("workspace defaults template should parse");
@@ -814,8 +820,16 @@ name = "l10n"
                 .template
                 .builtin
                 .as_ref()
-                .and_then(|builtin| builtin.name.as_deref()),
-            Some("l10n")
+                .and_then(|builtin| builtin.language.as_deref()),
+            Some("swift")
+        );
+        assert!(
+            workspace.workspace.defaults.jobs["l10n"]
+                .template
+                .builtin
+                .as_ref()
+                .and_then(|builtin| builtin.name.as_deref())
+                .is_none()
         );
     }
 
@@ -887,7 +901,7 @@ name = "l10n"
         assert!(
             error
                 .to_string()
-                .contains("workspace default job template must set exactly one source")
+                .contains("workspace default job template must not set `path`")
         );
     }
 
@@ -943,7 +957,30 @@ name = "assets"
     }
 
     #[test]
-    fn workspace_defaults_do_not_invent_builtin_name() {
+    fn rejects_workspace_default_builtin_name() {
+        let error = parse_manifest_str(
+            r#"
+version = 1
+
+[workspace]
+members = ["AppUI"]
+
+[workspace.defaults.jobs.assets.template.builtin]
+language = "objc"
+name = "assets"
+"#,
+        )
+        .expect_err("workspace default builtin name should fail validation");
+
+        assert!(
+            error
+                .to_string()
+                .contains("workspace default job template builtin must not set `name`")
+        );
+    }
+
+    #[test]
+    fn workspace_defaults_missing_member_builtin_name_remains_invalid() {
         let manifest = parse_manifest_str(
             r#"
 version = 1
@@ -971,20 +1008,21 @@ output = "Generated/Assets.h"
 type = "xcassets"
 path = "Resources/Assets.xcassets"
 
-[jobs.assets.template]
-path = "Templates/assets.stencil"
+[jobs.assets.template.builtin]
 "#,
         )
         .expect("member config should deserialize");
 
-        let resolved = resolve_workspace_member_config(&workspace, "AppUI", &member_config)
-            .expect("workspace defaults should resolve");
+        let error = resolve_workspace_member_config(&workspace, "AppUI", &member_config)
+            .expect_err("missing builtin name should remain invalid after resolution");
 
-        assert!(resolved.jobs[0].template.builtin.is_none());
-        assert_eq!(
-            resolved.jobs[0].template.path.as_deref(),
-            Some("Templates/assets.stencil")
-        );
+        let message = error
+            .into_iter()
+            .map(|diagnostic| diagnostic.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(message.contains("job template builtin must set both language and name"));
+        assert!(message.contains("job template must set exactly one source"));
     }
 
     #[test]

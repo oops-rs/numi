@@ -358,7 +358,7 @@ fn detect_legacy_flat_builtin_template_syntax(value: &toml::Value) -> Vec<Diagno
             let mut diagnostic =
                 Diagnostic::error("legacy flat built-in template syntax is no longer supported")
                     .with_hint(format!(
-                        "use `[jobs.{job_name}.template.builtin] swift = \"...\"` instead; for example, replace `[jobs.{job_name}.template] builtin = \"{builtin_name}\"` with `[jobs.{job_name}.template.builtin] swift = \"{builtin_name}\"`"
+                        "use `[jobs.{job_name}.template.builtin] language = \"...\" name = \"...\"` instead; for example, replace `[jobs.{job_name}.template] builtin = \"{builtin_name}\"` with `[jobs.{job_name}.template.builtin] language = \"swift\" name = \"{builtin_name}\"`"
                     ));
 
             diagnostic = diagnostic.with_job(job_name.to_owned());
@@ -515,35 +515,6 @@ mod tests {
         fs::write(path, contents).expect("file should be written");
     }
 
-    fn parse_config_str(input: &str) -> Result<Config, ConfigError> {
-        let value: toml::Value = toml::from_str(input).map_err(ConfigError::ParseToml)?;
-
-        if contains_legacy_builtin_swift_shape(&value) {
-            return Err(ConfigError::ParseToml(
-                <toml::de::Error as serde::de::Error>::custom("unknown field `swift`"),
-            ));
-        }
-
-        parse_str(input)
-    }
-
-    fn contains_legacy_builtin_swift_shape(value: &toml::Value) -> bool {
-        match value {
-            toml::Value::Table(table) => {
-                if let Some(template) = table.get("template").and_then(toml::Value::as_table)
-                    && let Some(builtin) = template.get("builtin").and_then(toml::Value::as_table)
-                    && builtin.contains_key("swift")
-                {
-                    return true;
-                }
-
-                table.values().any(contains_legacy_builtin_swift_shape)
-            }
-            toml::Value::Array(values) => values.iter().any(contains_legacy_builtin_swift_shape),
-            _ => false,
-        }
-    }
-
     #[test]
     fn parses_unified_single_config_manifest() {
         let manifest = parse_manifest_str(
@@ -559,7 +530,8 @@ path = "Resources/Assets.xcassets"
 
 [jobs.assets.template]
 [jobs.assets.template.builtin]
-swift = "swiftui-assets"
+language = "swift"
+name = "swiftui-assets"
 "#,
         )
         .expect("single-config manifest should parse");
@@ -585,7 +557,8 @@ members = ["AppUI", "Core"]
 
 [workspace.defaults.jobs.l10n.template]
 [workspace.defaults.jobs.l10n.template.builtin]
-swift = "l10n"
+language = "swift"
+name = "l10n"
 
 [workspace.member_overrides.AppUI]
 jobs = ["assets", "l10n"]
@@ -610,7 +583,7 @@ jobs = ["assets", "l10n"]
                         .template
                         .builtin
                         .as_ref()
-                        .and_then(|builtin| builtin.swift.as_deref()),
+                        .and_then(|builtin| builtin.name.as_deref()),
                     Some("l10n")
                 );
                 assert_eq!(
@@ -718,7 +691,8 @@ path = "Resources/Assets.xcassets"
 
 [jobs.assets.template]
 [jobs.assets.template.builtin]
-swift = "swiftui-assets"
+language = "swift"
+name = "swiftui-assets"
 
 [workspace]
 members = ["AppUI"]
@@ -801,7 +775,8 @@ members = ["AppUI"]
 
 [workspace.defaults.jobs.l10n.template]
 [workspace.defaults.jobs.l10n.template.builtin]
-swift = "l10n"
+language = "swift"
+name = "l10n"
 "#,
         )
         .expect("workspace defaults template should parse");
@@ -815,7 +790,7 @@ swift = "l10n"
                 .template
                 .builtin
                 .as_ref()
-                .and_then(|builtin| builtin.swift.as_deref()),
+                .and_then(|builtin| builtin.name.as_deref()),
             Some("l10n")
         );
     }
@@ -879,7 +854,8 @@ members = ["AppUI"]
 [workspace.defaults.jobs.l10n.template]
 path = "Templates/l10n.stencil"
 [workspace.defaults.jobs.l10n.template.builtin]
-swift = "l10n"
+language = "swift"
+name = "l10n"
 "#,
         )
         .expect_err("invalid workspace default template should fail validation");
@@ -909,10 +885,12 @@ version = 1
 members = ["AppUI"]
 
 [workspace.defaults.jobs.l10n.template.builtin]
-swift = "l10n"
+language = "swift"
+name = "l10n"
 
 [workspace.defaults.jobs.assets.template.builtin]
-swift = "files"
+language = "swift"
+name = "files"
 "#,
         )
         .expect("workspace manifest should parse");
@@ -932,7 +910,8 @@ type = "xcassets"
 path = "Resources/Assets.xcassets"
 
 [jobs.assets.template.builtin]
-swift = "swiftui-assets"
+language = "swift"
+name = "swiftui-assets"
 
 [jobs.l10n]
 output = "Generated/L10n.swift"
@@ -953,7 +932,7 @@ path = "Resources/Localization"
                 .iter()
                 .find(|job| job.name == "l10n")
                 .and_then(|job| job.template.builtin.as_ref())
-                .and_then(|builtin| builtin.swift.as_deref()),
+                .and_then(|builtin| builtin.name.as_deref()),
             Some("l10n")
         );
         assert_eq!(
@@ -962,7 +941,7 @@ path = "Resources/Localization"
                 .iter()
                 .find(|job| job.name == "assets")
                 .and_then(|job| job.template.builtin.as_ref())
-                .and_then(|builtin| builtin.swift.as_deref()),
+                .and_then(|builtin| builtin.name.as_deref()),
             Some("swiftui-assets")
         );
     }
@@ -988,7 +967,8 @@ path = "Resources/Assets.xcassets"
 
 [jobs.assets.template]
 [jobs.assets.template.builtin]
-swift = "swiftui-assets"
+language = "swift"
+name = "swiftui-assets"
 
 [jobs.l10n]
 output = "Generated/L10n.swift"
@@ -1014,7 +994,7 @@ path = "Templates/l10n.stencil"
                 .template
                 .builtin
                 .as_ref()
-                .and_then(|builtin| builtin.swift.as_deref()),
+                .and_then(|builtin| builtin.name.as_deref()),
             Some("swiftui-assets")
         );
         assert_eq!(
@@ -1037,7 +1017,8 @@ type = "xcassets"
 path = "Resources/Assets.xcassets"
 
 [jobs.assets.template.builtin]
-swift = "swiftui-assets"
+language = "swift"
+name = "swiftui-assets"
 "#,
         )
         .expect("config should parse");
@@ -1047,14 +1028,14 @@ swift = "swiftui-assets"
                 .template
                 .builtin
                 .as_ref()
-                .and_then(|builtin| builtin.swift.as_deref()),
+                .and_then(|builtin| builtin.name.as_deref()),
             Some("swiftui-assets")
         );
     }
 
     #[test]
     fn parses_builtin_template_language_and_name() {
-        let config = parse_config_str(
+        let config = parse_str(
             r#"
 version = 1
 
@@ -1083,7 +1064,7 @@ name = "assets"
 
     #[test]
     fn rejects_legacy_swift_builtin_namespace_shape() {
-        let error = parse_config_str(
+        let error = parse_str(
             r#"
 version = 1
 
@@ -1122,7 +1103,8 @@ type = "xcassets"
 path = "Resources/Assets.xcassets"
 
 [jobs.assets.template.builtin]
-swift = "swiftui-assets"
+language = "swift"
+name = "swiftui-assets"
 "#,
         )
         .expect("config should parse");
@@ -1148,14 +1130,15 @@ path = "Resources/Assets.xcassets"
 path = "Templates/assets.stencil"
 
 [jobs.assets.template.builtin]
-swift = "swiftui-assets"
+language = "swift"
+name = "swiftui-assets"
 "#,
         )
         .expect_err("config with both template sources should fail validation");
 
         let message = error.to_string();
         assert!(message.contains("job template must set exactly one source"));
-        assert!(message.contains("set either `[jobs.assets.template.builtin] swift = \"...\"` or `[jobs.assets.template] path = \"...\"`"));
+        assert!(message.contains("set either `[jobs.assets.template.builtin] language = \"...\" name = \"...\"` or `[jobs.assets.template] path = \"...\"`"));
     }
 
     #[test]
@@ -1177,8 +1160,8 @@ path = "Resources/Assets.xcassets"
         .expect_err("empty built-in namespace should fail validation");
 
         let message = error.to_string();
-        assert!(message.contains("job template builtin must set exactly one namespace"));
-        assert!(message.contains("set `[jobs.assets.template.builtin] swift = \"...\"`"));
+        assert!(message.contains("job template must set exactly one source"));
+        assert!(message.contains("set either `[jobs.assets.template.builtin] language = \"...\" name = \"...\"` or `[jobs.assets.template] path = \"...\"`"));
     }
 
     #[test]
@@ -1196,7 +1179,8 @@ type = "xcassets"
 path = "Resources/Assets.xcassets"
 
 [jobs.template.builtin]
-swift = "swiftui-assets"
+language = "swift"
+name = "swiftui-assets"
 "#,
         )
         .expect_err("legacy jobs array syntax should fail with a migration diagnostic");
@@ -1228,12 +1212,12 @@ builtin = "swiftui-assets"
 
         let message = error.to_string();
         assert!(message.contains("legacy flat built-in template syntax is no longer supported"));
-        assert!(message.contains("[jobs.assets.template.builtin] swift = \"...\""));
+        assert!(message.contains("[jobs.assets.template.builtin] language = \"...\" name = \"...\""));
         assert!(!message.contains("invalid type: string"));
     }
 
     #[test]
-    fn rejects_empty_swift_builtin_template_name() {
+    fn rejects_empty_builtin_template_name() {
         let error = parse_str(
             r#"
 version = 1
@@ -1246,18 +1230,19 @@ type = "xcassets"
 path = "Resources/Assets.xcassets"
 
 [jobs.assets.template.builtin]
-swift = ""
+language = "swift"
+name = ""
 "#,
         )
-        .expect_err("empty swift builtin name should fail validation");
+        .expect_err("empty builtin name should fail validation");
 
         let message = error.to_string();
-        assert!(message.contains("jobs.assets.template.builtin.swift must be one of"));
+        assert!(message.contains("jobs.assets.template.builtin.name must be one of"));
         assert!(message.contains("got ``"));
     }
 
     #[test]
-    fn rejects_unknown_swift_builtin_template_name() {
+    fn rejects_unknown_builtin_template_name() {
         let error = parse_str(
             r#"
 version = 1
@@ -1270,13 +1255,14 @@ type = "xcassets"
 path = "Resources/Assets.xcassets"
 
 [jobs.assets.template.builtin]
-swift = "not-a-real-template"
+language = "swift"
+name = "not-a-real-template"
 "#,
         )
-        .expect_err("unknown swift builtin name should fail validation");
+        .expect_err("unknown builtin name should fail validation");
 
         let message = error.to_string();
-        assert!(message.contains("jobs.assets.template.builtin.swift must be one of"));
+        assert!(message.contains("jobs.assets.template.builtin.name must be one of"));
         assert!(message.contains("not-a-real-template"));
     }
 
@@ -1310,7 +1296,7 @@ path = "Templates/assets.jinja"
                 .template
                 .builtin
                 .as_ref()
-                .is_some_and(|builtin| builtin.swift.is_none())
+                .is_some_and(|builtin| builtin.is_empty())
         );
     }
 
@@ -1333,7 +1319,6 @@ path = "Templates/assets.jinja"
                     builtin: Some(BuiltinTemplateConfig {
                         language: None,
                         name: None,
-                        swift: None,
                     }),
                     path: None,
                 },
@@ -1399,7 +1384,8 @@ path = "Resources/Assets.xcassets"
 
 [jobs.assets.template]
 [jobs.assets.template.builtin]
-swift = "swiftui-assets"
+language = "swift"
+name = "swiftui-assets"
 "#,
         )
         .expect_err("invalid v1 enum values should fail validation");
@@ -1478,7 +1464,8 @@ pth = "Resources/Typo.xcassets"
 
 [jobs.assets.template]
 [jobs.assets.template.builtin]
-swift = "swiftui-assets"
+language = "swift"
+name = "swiftui-assets"
 "#,
         )
         .expect_err("unknown keys should fail during parsing");
@@ -1510,7 +1497,8 @@ path = "Resources/Assets.xcassets"
 
 [jobs.assets.template]
 [jobs.assets.template.builtin]
-swift = "swiftui-assets"
+language = "swift"
+name = "swiftui-assets"
 "#,
         )
         .expect("config should parse");

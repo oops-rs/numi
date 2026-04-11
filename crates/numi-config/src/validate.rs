@@ -3,8 +3,8 @@ use std::collections::HashSet;
 use numi_diagnostics::Diagnostic;
 
 use crate::model::{
-    ACCESS_LEVEL_VALUES, BUNDLE_MODE_VALUES, Config, INPUT_KIND_VALUES,
-    SWIFT_BUILTIN_TEMPLATE_VALUES, TemplateConfig,
+    ACCESS_LEVEL_VALUES, BUNDLE_MODE_VALUES, BUILTIN_TEMPLATE_LANGUAGES, Config, INPUT_KIND_VALUES,
+    OBJC_BUILTIN_TEMPLATE_NAMES, SWIFT_BUILTIN_TEMPLATE_NAMES, TemplateConfig,
 };
 
 pub fn validate_config(config: &Config) -> Vec<Diagnostic> {
@@ -114,16 +114,22 @@ pub(crate) fn validate_template(
     field_path: &str,
     job: Option<&str>,
 ) {
-    let template_sources = usize::from(
-        template
-            .builtin
-            .as_ref()
-            .is_some_and(|builtin| !builtin.is_empty()),
-    ) + usize::from(template.path.is_some());
+    let builtin = template.builtin.as_ref();
+    let builtin_state = builtin.map_or(BuiltinState::Empty, |builtin| match (
+        builtin.language.as_deref(),
+        builtin.name.as_deref(),
+    ) {
+        (Some(language), Some(name)) => BuiltinState::Complete { language, name },
+        (Some(_), None) | (None, Some(_)) => BuiltinState::Partial,
+        (None, None) => BuiltinState::Empty,
+    });
+
+    let template_sources = usize::from(matches!(builtin_state, BuiltinState::Complete { .. }))
+        + usize::from(template.path.is_some());
     if template_sources != 1 {
         let diagnostic = Diagnostic::error(format!("{label} must set exactly one source"))
             .with_hint(format!(
-                "set either `[{field_path}.builtin] swift = \"...\"` or `[{field_path}] path = \"...\"`"
+                "set either `[{field_path}.builtin] language = \"...\" name = \"...\"` or `[{field_path}] path = \"...\"`"
             ));
         diagnostics.push(match job {
             Some(job) => diagnostic.with_job(job.to_owned()),
@@ -131,25 +137,48 @@ pub(crate) fn validate_template(
         });
     }
 
-    if let Some(builtin) = &template.builtin {
-        if builtin.swift.is_none() && template.path.is_none() {
-            let diagnostic =
-                Diagnostic::error(format!("{label} builtin must set exactly one namespace"))
-                    .with_hint(format!("set `[{field_path}.builtin] swift = \"...\"`"));
-            diagnostics.push(match job {
-                Some(job) => diagnostic.with_job(job.to_owned()),
-                None => diagnostic,
-            });
-        } else if let Some(swift_builtin) = builtin.swift.as_deref() {
-            validate_allowed_value(
+    if let BuiltinState::Partial = builtin_state {
+        let diagnostic = Diagnostic::error(format!("{label} builtin must set both language and name"))
+            .with_hint(format!(
+                "set `[{field_path}.builtin] language = \"...\" name = \"...\"`"
+            ));
+        diagnostics.push(match job {
+            Some(job) => diagnostic.with_job(job.to_owned()),
+            None => diagnostic,
+        });
+    } else if let BuiltinState::Complete { language, name } = builtin_state {
+        validate_allowed_value(
+            diagnostics,
+            &format!("{field_path}.builtin.language"),
+            language,
+            BUILTIN_TEMPLATE_LANGUAGES,
+            job,
+        );
+
+        match language {
+            "swift" => validate_allowed_value(
                 diagnostics,
-                &format!("{field_path}.builtin.swift"),
-                swift_builtin,
-                SWIFT_BUILTIN_TEMPLATE_VALUES,
+                &format!("{field_path}.builtin.name"),
+                name,
+                SWIFT_BUILTIN_TEMPLATE_NAMES,
                 job,
-            );
+            ),
+            "objc" => validate_allowed_value(
+                diagnostics,
+                &format!("{field_path}.builtin.name"),
+                name,
+                OBJC_BUILTIN_TEMPLATE_NAMES,
+                job,
+            ),
+            _ => {}
         }
     }
+}
+
+enum BuiltinState<'a> {
+    Empty,
+    Partial,
+    Complete { language: &'a str, name: &'a str },
 }
 
 fn validate_allowed_value(

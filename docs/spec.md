@@ -8,7 +8,7 @@
 - Initial purpose: Modern replacement for SwiftGen with stronger performance, better extensibility, and template-driven output
 
 Primary use cases:
-- Generate strongly typed Swift accessors for asset catalogs
+- Generate strongly typed resource accessors for Apple project assets and strings
 - Generate localization accessors from string resources
 - Support configurable, template-driven output instead of hardcoded generators only
 - Work well in multi-module Swift Package and Xcode-based repositories
@@ -20,7 +20,7 @@ The system should:
 - Parse multiple Apple resource formats
 - Normalize them into a unified intermediate representation (IR)
 - Expose a stable template context
-- Render Swift source or other future outputs
+- Render Swift, Objective-C, or other future outputs
 - Integrate cleanly with CI, Xcode, and Swift Package Manager workflows
 
 ### 1.3 Goals
@@ -423,11 +423,11 @@ version = 1
 [workspace]
 members = ["AppUI", "Core"]
 
-[workspace.defaults.jobs.l10n.template]
-path = "Templates/l10n"
+[workspace.defaults.jobs.assets.template.builtin]
+language = "objc"
 
 [workspace.member_overrides.Core]
-jobs = ["l10n"]
+jobs = ["assets"]
 ```
 
 Workspace manifest fields:
@@ -435,6 +435,8 @@ Workspace manifest fields:
 - `workspace.members`: required list of relative member roots
 - `workspace.defaults`: optional job defaults applied before member execution
 - `workspace.member_overrides`: optional per-member overrides keyed by member root
+
+Workspace defaults may provide `template.builtin.language`, but not a built-in `name`; each member job still selects its own built-in template name.
 
 Each workspace member contains:
 - one directory root that resolves to `<member>/numi.toml`
@@ -836,7 +838,8 @@ numi/
 │   ├── numi-render-minijinja/
 │   └── numi-builtin-templates/
 ├── templates/
-│   └── swift/
+│   ├── swift/
+│   └── objc/
 ├── fixtures/
 │   ├── xcassets-basic/
 │   ├── l10n-basic/
@@ -876,7 +879,7 @@ Use real fixture directories for:
 ### 20.3 Snapshot Tests
 Use snapshot tests for:
 - Generated context JSON
-- Built-in generated Swift output
+- Built-in generated Swift and Objective-C output
 - Diagnostics text
 
 ### 20.4 Integration Tests
@@ -908,13 +911,13 @@ Benchmark:
 - Build IR
 - Add normalization
 - Add Minijinja rendering
-- Ship one built-in asset template
+- Ship built-in asset templates
 - Implement `generate` and `check`
 
 ### Phase 2: Localization
 - Add `.strings`
 - Add `.xcstrings`
-- Add localization built-in template
+- Add localization built-in templates
 - Add placeholder/argument support where available
 - Add `dump-context`
 

@@ -172,14 +172,21 @@ version = 1
 [workspace]
 members = ["AppUI", "Core"]
 
-[workspace.defaults.jobs.l10n.template]
-path = "Templates/l10n"
+[workspace.defaults.jobs.assets.template.builtin]
+language = "objc"
 
 [workspace.member_overrides.Core]
-jobs = ["l10n"]
+jobs = ["assets"]
 ```
 
-Workspace members are directory roots, not config-file paths. From the repo root, plain `numi generate` and `numi check` use that nearest workspace `numi.toml` automatically. From inside a member directory, add `--workspace` when you want the ancestor workspace instead of the local member manifest.
+Then each member job can keep only the built-in name:
+
+```toml
+[jobs.assets.template.builtin]
+name = "assets"
+```
+
+Workspace members are directory roots, not config-file paths. From the repo root, plain `numi generate` and `numi check` use that nearest workspace `numi.toml` automatically. From inside a member directory, add `--workspace` when you want the ancestor workspace instead of the local member manifest. Workspace defaults can provide `template.builtin.language`, but each job still needs to pick its own built-in `name`.
 
 ## Custom Templates
 

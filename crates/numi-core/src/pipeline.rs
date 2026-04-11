@@ -726,9 +726,10 @@ fn duplicate_input_module_diagnostic(
     module_name: &str,
     input_path: &Path,
 ) -> Option<Diagnostic> {
-    if let Some((first_module_id, first_source)) =
-        seen_modules.insert(module_name.to_string(), (module_id.to_string(), input_path.to_path_buf()))
-    {
+    if let Some((first_module_id, first_source)) = seen_modules.insert(
+        module_name.to_string(),
+        (module_id.to_string(), input_path.to_path_buf()),
+    ) {
         let detail = if first_module_id == module_id {
             format!("both inputs normalize to module `{module_name}`")
         } else {
@@ -1945,8 +1946,11 @@ path = "Templates/fonts.jinja"
         )
         .expect("config should be written");
         fs::create_dir_all(temp_dir.join("Templates")).expect("templates dir should exist");
-        fs::write(temp_dir.join("Templates/fonts.jinja"), "{{ modules | length }}\n")
-            .expect("template should be written");
+        fs::write(
+            temp_dir.join("Templates/fonts.jinja"),
+            "{{ modules | length }}\n",
+        )
+        .expect("template should be written");
 
         let error = generate(&config_path, None).expect_err("duplicate modules should fail");
         let message = error.to_string();

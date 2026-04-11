@@ -9,7 +9,7 @@ Numi is a general-purpose code generator that currently ships Swift and Objectiv
 - Jobs still describe inputs, templates, and one output file
 - Asset catalogs and `.strings` localization inputs remain config-driven
 - `.xcstrings` localization inputs are supported config-driven inputs too
-- Generated Swift can still be checked into the repository or validated in CI with `numi check`
+- Generated code can still be checked into the repository or validated in CI with `numi check`
 
 ## What Changes
 
@@ -60,6 +60,7 @@ If a SwiftGen setup relied on a custom Stencil template, the closest Numi migrat
 - Bundle handling is explicit in the template context through `bundle.mode` and `bundle.identifier`
 - The stable context contract is documented in [context-schema.md](context-schema.md)
 - In monorepos, you can keep per-module `numi.toml` files and add a repo-level `numi.toml` with `[workspace]` to orchestrate them
+- Workspace defaults may provide `template.builtin.language`, while each job still declares its built-in `name`
 - CI can keep using `numi check` either once per config or once from the repo root, or force ancestor workspace orchestration from a member directory with `numi check --workspace`
 
 ## Suggested Migration Flow
@@ -67,5 +68,5 @@ If a SwiftGen setup relied on a custom Stencil template, the closest Numi migrat
 1. Copy the existing SwiftGen config into `numi.toml`.
 2. Replace the generator-specific template reference with either a Numi built-in or a custom Minijinja template.
 3. Run `numi dump-context --job <name>` to inspect the exact context your template receives.
-4. Run `numi generate` and compare the generated Swift against the previous SwiftGen output.
+4. Run `numi generate` and compare the generated code against the previous SwiftGen output.
 5. Add `numi check` to CI once the generated output is accepted.

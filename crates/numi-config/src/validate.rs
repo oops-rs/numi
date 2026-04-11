@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use numi_diagnostics::Diagnostic;
 
 use crate::model::{
-    ACCESS_LEVEL_VALUES, BUNDLE_MODE_VALUES, BUILTIN_TEMPLATE_LANGUAGES, Config, INPUT_KIND_VALUES,
+    ACCESS_LEVEL_VALUES, BUILTIN_TEMPLATE_LANGUAGES, BUNDLE_MODE_VALUES, Config, INPUT_KIND_VALUES,
     TemplateConfig, builtin_template_names_for_language,
 };
 
@@ -115,13 +115,12 @@ pub(crate) fn validate_template(
     job: Option<&str>,
 ) {
     let builtin = template.builtin.as_ref();
-    let builtin_state = builtin.map_or(BuiltinState::Empty, |builtin| match (
-        builtin.language.as_deref(),
-        builtin.name.as_deref(),
-    ) {
-        (Some(language), Some(name)) => BuiltinState::Complete { language, name },
-        (Some(_), None) | (None, Some(_)) => BuiltinState::Partial,
-        (None, None) => BuiltinState::Empty,
+    let builtin_state = builtin.map_or(BuiltinState::Empty, |builtin| {
+        match (builtin.language.as_deref(), builtin.name.as_deref()) {
+            (Some(language), Some(name)) => BuiltinState::Complete { language, name },
+            (Some(_), None) | (None, Some(_)) => BuiltinState::Partial,
+            (None, None) => BuiltinState::Empty,
+        }
     });
 
     let template_sources = usize::from(matches!(builtin_state, BuiltinState::Complete { .. }))
@@ -138,10 +137,11 @@ pub(crate) fn validate_template(
     }
 
     if let BuiltinState::Partial = builtin_state {
-        let diagnostic = Diagnostic::error(format!("{label} builtin must set both language and name"))
-            .with_hint(format!(
-                "set `[{field_path}.builtin] language = \"...\" name = \"...\"`"
-            ));
+        let diagnostic =
+            Diagnostic::error(format!("{label} builtin must set both language and name"))
+                .with_hint(format!(
+                    "set `[{field_path}.builtin] language = \"...\" name = \"...\"`"
+                ));
         diagnostics.push(match job {
             Some(job) => diagnostic.with_job(job.to_owned()),
             None => diagnostic,

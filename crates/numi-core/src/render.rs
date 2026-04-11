@@ -982,9 +982,11 @@ private func file(_ path: String) -> URL {
         let rendered = render_builtin(("objc", "assets"), &objc_symbol_safety_context())
             .expect("template should render");
 
-        assert!(rendered.contains(
-            "NS_INLINE UIColor *Palette__Theme__class__SwiftKeyword__ObjcKeyword(void)"
-        ));
+        assert!(
+            rendered.contains(
+                "NS_INLINE UIColor *Palette__Theme__class__SwiftKeyword__ObjcKeyword(void)"
+            )
+        );
         assert!(!rendered.contains("`class`"));
     }
 
@@ -993,9 +995,11 @@ private func file(_ path: String) -> URL {
         let rendered = render_builtin(("objc", "assets"), &objc_symbol_safety_context())
             .expect("template should render");
 
-        assert!(rendered.contains(
-            "NS_INLINE UIColor *Palette__Theme__class__SwiftKeyword__ObjcKeyword(void)"
-        ));
+        assert!(
+            rendered.contains(
+                "NS_INLINE UIColor *Palette__Theme__class__SwiftKeyword__ObjcKeyword(void)"
+            )
+        );
         assert!(rendered.contains("NS_INLINE UIColor *Palette__Theme__class_(void)"));
     }
 

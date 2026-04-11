@@ -630,7 +630,9 @@ builtin = "l10n"
 
         let message = error.to_string();
         assert!(message.contains("legacy flat built-in template syntax is no longer supported"));
-        assert!(message.contains("[workspace.defaults.jobs.l10n.template.builtin] language = \"...\""));
+        assert!(
+            message.contains("[workspace.defaults.jobs.l10n.template.builtin] language = \"...\"")
+        );
     }
 
     #[test]
@@ -980,7 +982,11 @@ name = "assets"
         let resolved = resolve_workspace_member_config(&workspace, "AppUI", &member_config)
             .expect("workspace defaults should resolve");
 
-        let builtin = resolved.jobs[0].template.builtin.as_ref().expect("builtin should exist");
+        let builtin = resolved.jobs[0]
+            .template
+            .builtin
+            .as_ref()
+            .expect("builtin should exist");
         assert_eq!(builtin.language.as_deref(), Some("objc"));
         assert_eq!(builtin.name.as_deref(), Some("assets"));
     }
@@ -1135,7 +1141,11 @@ name = "swiftui-assets"
         let resolved = resolve_workspace_member_config(&workspace, "AppUI", &member_config)
             .expect("workspace defaults should resolve");
 
-        let builtin = resolved.jobs[0].template.builtin.as_ref().expect("builtin should exist");
+        let builtin = resolved.jobs[0]
+            .template
+            .builtin
+            .as_ref()
+            .expect("builtin should exist");
         assert_eq!(builtin.language.as_deref(), Some("swift"));
         assert_eq!(builtin.name.as_deref(), Some("swiftui-assets"));
     }
@@ -1277,7 +1287,10 @@ language = "swift"
 
         let message = error.to_string();
         assert!(message.contains("job template builtin must set both language and name"));
-        assert!(message.contains("set `[jobs.assets.template.builtin] language = \"...\" name = \"...\"`"));
+        assert!(
+            message
+                .contains("set `[jobs.assets.template.builtin] language = \"...\" name = \"...\"`")
+        );
     }
 
     #[test]
@@ -1301,7 +1314,10 @@ name = "swiftui-assets"
 
         let message = error.to_string();
         assert!(message.contains("job template builtin must set both language and name"));
-        assert!(message.contains("set `[jobs.assets.template.builtin] language = \"...\" name = \"...\"`"));
+        assert!(
+            message
+                .contains("set `[jobs.assets.template.builtin] language = \"...\" name = \"...\"`")
+        );
     }
 
     #[test]
@@ -1478,7 +1494,9 @@ builtin = "swiftui-assets"
 
         let message = error.to_string();
         assert!(message.contains("legacy flat built-in template syntax is no longer supported"));
-        assert!(message.contains("[jobs.assets.template.builtin] language = \"...\" name = \"...\""));
+        assert!(
+            message.contains("[jobs.assets.template.builtin] language = \"...\" name = \"...\"")
+        );
         assert!(!message.contains("invalid type: string"));
     }
 

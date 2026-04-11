@@ -506,7 +506,10 @@ name = "assets"
         stdout.contains("[jobs.assets.template.builtin]"),
         "stdout was: {stdout}"
     );
-    assert!(stdout.contains("language = \"objc\""), "stdout was: {stdout}");
+    assert!(
+        stdout.contains("language = \"objc\""),
+        "stdout was: {stdout}"
+    );
     assert!(stdout.contains("name = \"assets\""), "stdout was: {stdout}");
 
     fs::remove_dir_all(root).expect("temp dir should be removed");

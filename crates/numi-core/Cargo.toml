@@ -17,7 +17,6 @@ numi-ir = { version = "0.1.0", path = "../numi-ir" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 langcodec = "0.11.0"
-sha2 = "0.10"
 xcassets = "0.2.0"
 
 [dev-dependencies]

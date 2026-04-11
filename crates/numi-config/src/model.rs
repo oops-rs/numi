@@ -11,6 +11,14 @@ pub const DEFAULT_ACCESS_LEVEL: &str = "internal";
 pub const DEFAULT_BUNDLE_MODE: &str = "module";
 pub const DEFAULT_INCREMENTAL: bool = true;
 
+pub fn builtin_template_names_for_language(language: &str) -> &'static [&'static str] {
+    match language {
+        "swift" => SWIFT_BUILTIN_TEMPLATE_NAMES,
+        "objc" => OBJC_BUILTIN_TEMPLATE_NAMES,
+        _ => &[],
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     pub version: u32,

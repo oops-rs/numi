@@ -1131,6 +1131,30 @@ name = "swiftui-assets"
     }
 
     #[test]
+    fn rejects_unknown_builtin_language() {
+        let error = parse_str(
+            r#"
+version = 1
+
+[jobs.assets]
+output = "Generated/Assets.swift"
+
+[[jobs.assets.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.assets.template.builtin]
+language = "kotlin"
+name = "assets"
+"#,
+        )
+        .expect_err("unknown builtin language should fail");
+
+        let message = error.to_string();
+        assert!(message.contains("jobs.assets.template.builtin.language must be one of"));
+    }
+
+    #[test]
     fn rejects_legacy_swift_builtin_namespace_shape() {
         let error = parse_str(
             r#"

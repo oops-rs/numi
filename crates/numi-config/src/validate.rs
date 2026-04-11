@@ -4,7 +4,7 @@ use numi_diagnostics::Diagnostic;
 
 use crate::model::{
     ACCESS_LEVEL_VALUES, BUNDLE_MODE_VALUES, BUILTIN_TEMPLATE_LANGUAGES, Config, INPUT_KIND_VALUES,
-    OBJC_BUILTIN_TEMPLATE_NAMES, SWIFT_BUILTIN_TEMPLATE_NAMES, TemplateConfig,
+    TemplateConfig, builtin_template_names_for_language,
 };
 
 pub fn validate_config(config: &Config) -> Vec<Diagnostic> {
@@ -155,22 +155,15 @@ pub(crate) fn validate_template(
             job,
         );
 
-        match language {
-            "swift" => validate_allowed_value(
+        let allowed_names = builtin_template_names_for_language(language);
+        if !allowed_names.is_empty() {
+            validate_allowed_value(
                 diagnostics,
                 &format!("{field_path}.builtin.name"),
                 name,
-                SWIFT_BUILTIN_TEMPLATE_NAMES,
+                allowed_names,
                 job,
-            ),
-            "objc" => validate_allowed_value(
-                diagnostics,
-                &format!("{field_path}.builtin.name"),
-                name,
-                OBJC_BUILTIN_TEMPLATE_NAMES,
-                job,
-            ),
-            _ => {}
+            );
         }
     }
 }

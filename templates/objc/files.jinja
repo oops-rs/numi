@@ -2,7 +2,7 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-NS_INLINE NSBundle *{{ job.swiftIdentifier }}Bundle(void) {
+NS_INLINE NSBundle *{{ job.swiftIdentifier | objc_symbol_part }}__Bundle(void) {
 {% if bundle.mode == "main" -%}
     return NSBundle.mainBundle;
 {% elif bundle.mode == "module" -%}
@@ -28,8 +28,8 @@ NS_INLINE NSBundle *{{ job.swiftIdentifier }}Bundle(void) {
 {% endif -%}
 }
 
-NS_INLINE NSURL *{{ job.swiftIdentifier }}FileURL(NSString *path) {
-    NSURL *url = [{{ job.swiftIdentifier }}Bundle() URLForResource:path withExtension:nil];
+NS_INLINE NSURL *{{ job.swiftIdentifier | objc_symbol_part }}__FileURL(NSString *path) {
+    NSURL *url = [{{ job.swiftIdentifier | objc_symbol_part }}__Bundle() URLForResource:path withExtension:nil];
     if (url == nil) {
         @throw [NSException exceptionWithName:NSInternalInconsistencyException
                                        reason:[NSString stringWithFormat:@"Missing file resource: %@", path]
@@ -41,14 +41,14 @@ NS_INLINE NSURL *{{ job.swiftIdentifier }}FileURL(NSString *path) {
 {% macro render_entries(entries, prefix) -%}
 {% for entry in entries -%}
 {% if entry.kind == "namespace" -%}
-{{ render_entries(entry.children, prefix ~ entry.swiftIdentifier) }}{% elif entry.kind == "data" -%}
-NS_INLINE NSURL *{{ job.swiftIdentifier }}{{ prefix }}{{ entry.swiftIdentifier }}(void) {
-    return {{ job.swiftIdentifier }}FileURL({{ entry.properties.relativePath | objc_string_literal }});
+{{ render_entries(entry.children, prefix ~ (entry.swiftIdentifier | objc_symbol_part) ~ "__") }}{% elif entry.kind == "data" -%}
+NS_INLINE NSURL *{{ job.swiftIdentifier | objc_symbol_part }}__{{ prefix }}{{ entry.swiftIdentifier | objc_symbol_part }}(void) {
+    return {{ job.swiftIdentifier | objc_symbol_part }}__FileURL({{ entry.properties.relativePath | objc_string_literal }});
 }
 
 {% endif -%}
 {% endfor -%}
 {%- endmacro %}
 {% for module in modules %}
-{{ render_entries(module.entries, module.name) }}{% endfor -%}
+{{ render_entries(module.entries, (module.name | objc_symbol_part) ~ "__") }}{% endfor -%}
 NS_ASSUME_NONNULL_END

@@ -1982,7 +1982,10 @@ name = "files"
         assert_eq!(report.jobs.len(), 1);
         assert_eq!(report.jobs[0].outcome, WriteOutcome::Created);
         assert!(!rendered.contains("@implementation"));
-        assert!(rendered.contains("NS_INLINE NSURL *FilesFixturesOnboardingWelcomeVideoMp4(void)"));
+        assert!(
+            rendered
+                .contains("NS_INLINE NSURL *Files__Fixtures__Onboarding__WelcomeVideoMp4(void)")
+        );
         assert!(rendered.contains("SWIFTPM_MODULE_BUNDLE"));
         assert!(!rendered.contains("bundleForClass:"));
 

@@ -2,7 +2,7 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-NS_INLINE NSBundle *{{ job.swiftIdentifier }}Bundle(void) {
+NS_INLINE NSBundle *{{ job.swiftIdentifier | objc_symbol_part }}__Bundle(void) {
 {% if bundle.mode == "main" -%}
     return NSBundle.mainBundle;
 {% elif bundle.mode == "module" -%}
@@ -31,14 +31,14 @@ NS_INLINE NSBundle *{{ job.swiftIdentifier }}Bundle(void) {
 {% macro render_entries(entries, prefix, table_name) -%}
 {% for entry in entries -%}
 {% if entry.kind == "namespace" -%}
-{{ render_entries(entry.children, prefix ~ entry.swiftIdentifier, table_name) }}{% elif entry.kind == "string" -%}
-NS_INLINE NSString *{{ job.swiftIdentifier }}{{ prefix }}{{ entry.swiftIdentifier }}(void) {
-    return NSLocalizedStringWithDefaultValue({{ entry.properties.key | objc_string_literal }}, {{ table_name | objc_string_literal }}, {{ job.swiftIdentifier }}Bundle(), @"", @"");
+{{ render_entries(entry.children, prefix ~ (entry.swiftIdentifier | objc_symbol_part) ~ "__", table_name) }}{% elif entry.kind == "string" -%}
+NS_INLINE NSString *{{ job.swiftIdentifier | objc_symbol_part }}__{{ prefix }}{{ entry.swiftIdentifier | objc_symbol_part }}(void) {
+    return NSLocalizedStringWithDefaultValue({{ entry.properties.key | objc_string_literal }}, {{ table_name | objc_string_literal }}, {{ job.swiftIdentifier | objc_symbol_part }}__Bundle(), @"", @"");
 }
 
 {% endif -%}
 {% endfor -%}
 {%- endmacro %}
 {% for module in modules %}
-{{ render_entries(module.entries, module.name, module.properties.tableName) }}{% endfor -%}
+{{ render_entries(module.entries, (module.name | objc_symbol_part) ~ "__", module.properties.tableName) }}{% endfor -%}
 NS_ASSUME_NONNULL_END

@@ -2,7 +2,7 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-NS_INLINE NSBundle *{{ job.swiftIdentifier }}Bundle(void) {
+NS_INLINE NSBundle *{{ job.swiftIdentifier | objc_symbol_part }}__Bundle(void) {
 {% if bundle.mode == "main" -%}
     return NSBundle.mainBundle;
 {% elif bundle.mode == "module" -%}
@@ -31,9 +31,9 @@ NS_INLINE NSBundle *{{ job.swiftIdentifier }}Bundle(void) {
 {% macro render_entries(entries, prefix) -%}
 {% for entry in entries -%}
 {% if entry.kind == "namespace" -%}
-{{ render_entries(entry.children, prefix ~ entry.swiftIdentifier) }}{% elif entry.kind == "color" -%}
-NS_INLINE UIColor *{{ job.swiftIdentifier }}{{ prefix }}{{ entry.swiftIdentifier }}(void) {
-    UIColor *color = [UIColor colorNamed:{{ entry.properties.assetName | objc_string_literal }} inBundle:{{ job.swiftIdentifier }}Bundle() compatibleWithTraitCollection:nil];
+{{ render_entries(entry.children, prefix ~ (entry.swiftIdentifier | objc_symbol_part) ~ "__") }}{% elif entry.kind == "color" -%}
+NS_INLINE UIColor *{{ job.swiftIdentifier | objc_symbol_part }}__{{ prefix }}{{ entry.swiftIdentifier | objc_symbol_part }}(void) {
+    UIColor *color = [UIColor colorNamed:{{ entry.properties.assetName | objc_string_literal }} inBundle:{{ job.swiftIdentifier | objc_symbol_part }}__Bundle() compatibleWithTraitCollection:nil];
     if (color == nil) {
         @throw [NSException exceptionWithName:NSInternalInconsistencyException
                                        reason:[NSString stringWithFormat:@"Missing color asset: %@", {{ entry.properties.assetName | objc_string_literal }}]
@@ -43,8 +43,8 @@ NS_INLINE UIColor *{{ job.swiftIdentifier }}{{ prefix }}{{ entry.swiftIdentifier
 }
 
 {% elif entry.kind == "image" -%}
-NS_INLINE UIImage *{{ job.swiftIdentifier }}{{ prefix }}{{ entry.swiftIdentifier }}(void) {
-    UIImage *image = [UIImage imageNamed:{{ entry.properties.assetName | objc_string_literal }} inBundle:{{ job.swiftIdentifier }}Bundle() compatibleWithTraitCollection:nil];
+NS_INLINE UIImage *{{ job.swiftIdentifier | objc_symbol_part }}__{{ prefix }}{{ entry.swiftIdentifier | objc_symbol_part }}(void) {
+    UIImage *image = [UIImage imageNamed:{{ entry.properties.assetName | objc_string_literal }} inBundle:{{ job.swiftIdentifier | objc_symbol_part }}__Bundle() compatibleWithTraitCollection:nil];
     if (image == nil) {
         @throw [NSException exceptionWithName:NSInternalInconsistencyException
                                        reason:[NSString stringWithFormat:@"Missing image asset: %@", {{ entry.properties.assetName | objc_string_literal }}]
@@ -57,5 +57,5 @@ NS_INLINE UIImage *{{ job.swiftIdentifier }}{{ prefix }}{{ entry.swiftIdentifier
 {% endfor -%}
 {%- endmacro %}
 {% for module in modules %}
-{{ render_entries(module.entries, module.name) }}{% endfor -%}
+{{ render_entries(module.entries, (module.name | objc_symbol_part) ~ "__") }}{% endfor -%}
 NS_ASSUME_NONNULL_END

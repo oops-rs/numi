@@ -188,6 +188,7 @@ fn build_environment() -> Environment<'static> {
     let mut environment = Environment::new();
     environment.set_keep_trailing_newline(true);
     environment.add_filter("lower_first", lower_first);
+    environment.add_filter("objc_symbol_part", objc_symbol_part);
     environment.add_filter("string_literal", string_literal);
     environment.add_filter("objc_string_literal", objc_string_literal);
     environment
@@ -451,6 +452,96 @@ fn objc_string_literal(value: String) -> String {
     )
 }
 
+fn objc_symbol_part(value: String) -> String {
+    let stripped = value.replace('`', "");
+    let mut sanitized = String::with_capacity(stripped.len());
+
+    for ch in stripped.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '_' {
+            sanitized.push(ch);
+        } else {
+            sanitized.push('_');
+        }
+    }
+
+    while sanitized.contains("__") {
+        sanitized = sanitized.replace("__", "_");
+    }
+
+    if sanitized.is_empty() {
+        sanitized.push('_');
+    }
+
+    if sanitized
+        .chars()
+        .next()
+        .is_some_and(|first| first.is_ascii_digit())
+    {
+        sanitized.insert(0, '_');
+    }
+
+    if is_objc_reserved_word(&sanitized) {
+        sanitized.push('_');
+    }
+
+    sanitized
+}
+
+fn is_objc_reserved_word(value: &str) -> bool {
+    matches!(
+        value,
+        "auto"
+            | "break"
+            | "case"
+            | "char"
+            | "const"
+            | "continue"
+            | "default"
+            | "do"
+            | "double"
+            | "else"
+            | "enum"
+            | "extern"
+            | "float"
+            | "for"
+            | "goto"
+            | "if"
+            | "inline"
+            | "int"
+            | "long"
+            | "register"
+            | "restrict"
+            | "return"
+            | "short"
+            | "signed"
+            | "sizeof"
+            | "static"
+            | "struct"
+            | "switch"
+            | "typedef"
+            | "union"
+            | "unsigned"
+            | "void"
+            | "volatile"
+            | "while"
+            | "_Bool"
+            | "_Complex"
+            | "_Imaginary"
+            | "id"
+            | "Class"
+            | "self"
+            | "super"
+            | "nil"
+            | "Nil"
+            | "YES"
+            | "NO"
+            | "BOOL"
+            | "class"
+            | "protocol"
+            | "selector"
+    )
+}
+
 fn normalize_blank_lines(rendered: &str) -> String {
     let mut normalized = rendered.to_owned();
     while normalized.contains("\n\n\n") {
@@ -553,6 +644,67 @@ mod tests {
         .expect("context should build")
     }
 
+    fn objc_symbol_safety_context() -> AssetTemplateContext {
+        AssetTemplateContext::new(
+            "palette",
+            "Generated/Palette.h",
+            "internal",
+            "module",
+            None,
+            &[ResourceModule {
+                id: "Theme".to_string(),
+                kind: ModuleKind::Xcassets,
+                name: "Theme".to_string(),
+                entries: vec![
+                    ResourceEntry {
+                        id: "class".to_string(),
+                        name: "class".to_string(),
+                        source_path: Utf8PathBuf::from("fixture"),
+                        swift_identifier: "`class`".to_string(),
+                        kind: EntryKind::Color,
+                        children: Vec::new(),
+                        properties: Metadata::from([("assetName".to_string(), json!("class"))]),
+                        metadata: Metadata::new(),
+                    },
+                    ResourceEntry {
+                        id: "Icons".to_string(),
+                        name: "Icons".to_string(),
+                        source_path: Utf8PathBuf::from("virtual"),
+                        swift_identifier: "Icons".to_string(),
+                        kind: EntryKind::Namespace,
+                        children: vec![ResourceEntry {
+                            id: "Icons/Add".to_string(),
+                            name: "Add".to_string(),
+                            source_path: Utf8PathBuf::from("fixture"),
+                            swift_identifier: "Add".to_string(),
+                            kind: EntryKind::Image,
+                            children: Vec::new(),
+                            properties: Metadata::from([(
+                                "assetName".to_string(),
+                                json!("Icons/Add"),
+                            )]),
+                            metadata: Metadata::new(),
+                        }],
+                        properties: Metadata::new(),
+                        metadata: Metadata::new(),
+                    },
+                    ResourceEntry {
+                        id: "IconsAdd".to_string(),
+                        name: "IconsAdd".to_string(),
+                        source_path: Utf8PathBuf::from("fixture"),
+                        swift_identifier: "IconsAdd".to_string(),
+                        kind: EntryKind::Image,
+                        children: Vec::new(),
+                        properties: Metadata::from([("assetName".to_string(), json!("IconsAdd"))]),
+                        metadata: Metadata::new(),
+                    },
+                ],
+                metadata: Metadata::new(),
+            }],
+        )
+        .expect("context should build")
+    }
+
     fn objc_l10n_context_with_bundle(
         bundle_mode: &str,
         bundle_identifier: Option<&str>,
@@ -639,8 +791,8 @@ private func tr(_ table: String, _ key: String) -> String {
             .expect("template should render");
 
         assert!(!rendered.contains("@implementation"));
-        assert!(rendered.contains("NS_INLINE UIColor *PaletteThemeBrand(void)"));
-        assert!(rendered.contains("NS_INLINE UIImage *PaletteThemeIconsAdd(void)"));
+        assert!(rendered.contains("NS_INLINE UIColor *Palette__Theme__Brand(void)"));
+        assert!(rendered.contains("NS_INLINE UIImage *Palette__Theme__Icons__Add(void)"));
         assert!(rendered.contains("SWIFTPM_MODULE_BUNDLE"));
         assert!(!rendered.contains("bundleForClass:"));
     }
@@ -796,10 +948,31 @@ private func file(_ path: String) -> URL {
         let rendered = render_builtin(("objc", "files"), &context).expect("template should render");
 
         assert!(!rendered.contains("@implementation"));
-        assert!(rendered.contains("NS_INLINE NSURL *FilesFixturesOnboardingWelcomeVideoMp4(void)"));
-        assert!(rendered.contains("NS_INLINE NSURL *FilesFixturesFaqPdf(void)"));
+        assert!(
+            rendered
+                .contains("NS_INLINE NSURL *Files__Fixtures__Onboarding__WelcomeVideoMp4(void)")
+        );
+        assert!(rendered.contains("NS_INLINE NSURL *Files__Fixtures__FaqPdf(void)"));
         assert!(rendered.contains("SWIFTPM_MODULE_BUNDLE"));
         assert!(!rendered.contains("bundleForClass:"));
+    }
+
+    #[test]
+    fn renders_builtin_objc_assets_template_with_sanitized_symbol_parts() {
+        let rendered = render_builtin(("objc", "assets"), &objc_symbol_safety_context())
+            .expect("template should render");
+
+        assert!(rendered.contains("NS_INLINE UIColor *Palette__Theme__class_(void)"));
+        assert!(!rendered.contains("`class`"));
+    }
+
+    #[test]
+    fn renders_builtin_objc_assets_template_with_distinct_nested_symbols() {
+        let rendered = render_builtin(("objc", "assets"), &objc_symbol_safety_context())
+            .expect("template should render");
+
+        assert!(rendered.contains("NS_INLINE UIImage *Palette__Theme__Icons__Add(void)"));
+        assert!(rendered.contains("NS_INLINE UIImage *Palette__Theme__IconsAdd(void)"));
     }
 
     #[test]

@@ -189,13 +189,21 @@ cargo package -p numi-config --allow-dirty
 cargo package -p numi-core --allow-dirty
 ```
 
-Expected: PASS for all four crates.
+Expected:
+
+- `cargo package -p numi-diagnostics --allow-dirty` passes.
+- The downstream package commands for `numi-ir`, `numi-config`, and `numi-core` may fail because Cargo resolves versioned internal dependencies through the crates.io index while preparing the upload package.
+- Those downstream failures are acceptable only if they now fail on missing unpublished internal crates such as `numi-diagnostics` or `numi-config`, rather than on missing manifest metadata or missing version requirements.
 
 - [ ] **Step 9: Run the end-user crate packaging check again**
 
 Run: `cargo package -p numi-cli --allow-dirty --no-verify`
 
-Expected: PASS, with no manifest-level packaging errors about metadata or internal dependency versions.
+Expected:
+
+- If Cargo can package the crate locally, PASS.
+- If it fails, the failure must be limited to the next publish-ordering problem, such as `numi-config` not existing in the crates.io index yet.
+- It must no longer fail for manifest-level metadata problems or missing internal dependency version requirements.
 
 - [ ] **Step 10: Run the publish dry-run again**
 
@@ -531,7 +539,11 @@ cargo package -p numi-core --allow-dirty
 cargo package -p numi-cli --allow-dirty
 ```
 
-Expected: PASS for all five crates.
+Expected:
+
+- `cargo package -p numi-diagnostics --allow-dirty` passes.
+- The downstream crates may fail during packaging if Cargo reaches the expected crates.io-index dependency-ordering boundary for unpublished internal crates.
+- No crate should fail for missing package metadata, `publish = false`, or missing internal dependency version declarations.
 
 - [ ] **Step 5: Run dry-run publishing for the crates in dependency order**
 
@@ -545,7 +557,12 @@ cargo publish --dry-run -p numi-core
 cargo publish --dry-run -p numi-cli
 ```
 
-Expected: PASS for each crate. If the dry-run reveals new metadata or packaging issues, fix those exact manifest problems before rerunning the full set.
+Expected:
+
+- `cargo publish --dry-run -p numi-diagnostics` passes.
+- The downstream dry-runs may fail because dry-run does not actually publish earlier crates into the index for later commands in the same sequence.
+- Those downstream failures are acceptable only if they are the expected publish-ordering failures for unpublished internal crates.
+- If any command reveals a new manifest, metadata, or package-shape problem instead, fix that exact problem before rerunning the full set.
 
 - [ ] **Step 6: Commit any final metadata or docs corrections from verification**
 

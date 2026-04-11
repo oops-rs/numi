@@ -453,7 +453,13 @@ fn objc_string_literal(value: String) -> String {
 }
 
 fn objc_symbol_part(value: String) -> String {
-    let stripped = value.replace('`', "");
+    let was_swift_keyword_escaped =
+        value.starts_with('`') && value.ends_with('`') && value.len() >= 2;
+    let stripped = if was_swift_keyword_escaped {
+        value[1..value.len() - 1].to_owned()
+    } else {
+        value
+    };
     let mut sanitized = String::with_capacity(stripped.len());
 
     for ch in stripped.chars() {
@@ -480,8 +486,12 @@ fn objc_symbol_part(value: String) -> String {
         sanitized.insert(0, '_');
     }
 
-    if is_objc_reserved_word(&sanitized) {
-        sanitized.push('_');
+    if was_swift_keyword_escaped {
+        sanitized.push_str("__SwiftKeyword");
+    }
+
+    if is_objc_reserved_word(&sanitized) || is_objc_reserved_word(&stripped) {
+        sanitized.push_str("__ObjcKeyword");
     }
 
     sanitized
@@ -664,6 +674,16 @@ mod tests {
                         kind: EntryKind::Color,
                         children: Vec::new(),
                         properties: Metadata::from([("assetName".to_string(), json!("class"))]),
+                        metadata: Metadata::new(),
+                    },
+                    ResourceEntry {
+                        id: "class_".to_string(),
+                        name: "class_".to_string(),
+                        source_path: Utf8PathBuf::from("fixture"),
+                        swift_identifier: "class_".to_string(),
+                        kind: EntryKind::Color,
+                        children: Vec::new(),
+                        properties: Metadata::from([("assetName".to_string(), json!("class_"))]),
                         metadata: Metadata::new(),
                     },
                     ResourceEntry {
@@ -962,8 +982,21 @@ private func file(_ path: String) -> URL {
         let rendered = render_builtin(("objc", "assets"), &objc_symbol_safety_context())
             .expect("template should render");
 
-        assert!(rendered.contains("NS_INLINE UIColor *Palette__Theme__class_(void)"));
+        assert!(rendered.contains(
+            "NS_INLINE UIColor *Palette__Theme__class__SwiftKeyword__ObjcKeyword(void)"
+        ));
         assert!(!rendered.contains("`class`"));
+    }
+
+    #[test]
+    fn renders_builtin_objc_assets_template_with_distinct_keyword_collision_symbols() {
+        let rendered = render_builtin(("objc", "assets"), &objc_symbol_safety_context())
+            .expect("template should render");
+
+        assert!(rendered.contains(
+            "NS_INLINE UIColor *Palette__Theme__class__SwiftKeyword__ObjcKeyword(void)"
+        ));
+        assert!(rendered.contains("NS_INLINE UIColor *Palette__Theme__class_(void)"));
     }
 
     #[test]

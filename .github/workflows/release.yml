@@ -1,0 +1,167 @@
+name: Release
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: Existing release tag to build and upload assets for
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref_name }}
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            archive_ext: tar.gz
+            binary_name: numi
+            binary_asset_ext: ""
+          - os: macos-15
+            target: x86_64-apple-darwin
+            archive_ext: tar.gz
+            binary_name: numi
+            binary_asset_ext: ""
+          - os: macos-15
+            target: aarch64-apple-darwin
+            archive_ext: tar.gz
+            binary_name: numi
+            binary_asset_ext: ""
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+            archive_ext: zip
+            binary_name: numi.exe
+            binary_asset_ext: ".exe"
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --release -p numi --target ${{ matrix.target }}
+
+      - name: Package artifact (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG}"
+          archive="numi-${version}-${{ matrix.target }}.${{ matrix.archive_ext }}"
+          binary_dir="dist/numi-${version}-${{ matrix.target }}"
+          binary_asset="numi-${version}-${{ matrix.target }}"
+          mkdir -p "${binary_dir}"
+          cp "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "${binary_dir}/numi"
+          cp "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "${binary_asset}"
+          chmod 755 "${binary_asset}"
+          tar -C dist -czf "${archive}" "numi-${version}-${{ matrix.target }}"
+          shasum -a 256 "${archive}" > "${archive}.sha256"
+          shasum -a 256 "${binary_asset}" > "${binary_asset}.sha256"
+
+      - name: Package artifact (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = $env:RELEASE_TAG
+          $folder = "numi-$version-${{ matrix.target }}"
+          $archive = "$folder.${{ matrix.archive_ext }}"
+          $binaryAsset = "$folder.exe"
+          New-Item -ItemType Directory -Force -Path "dist/$folder" | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "dist/$folder/numi.exe"
+          Copy-Item "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" $binaryAsset
+          Compress-Archive -Path "dist/$folder" -DestinationPath $archive
+          $hash = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLower()
+          "$hash  $archive" | Out-File -Encoding ascii "$archive.sha256"
+          $binaryHash = (Get-FileHash -Algorithm SHA256 $binaryAsset).Hash.ToLower()
+          "$binaryHash  $binaryAsset" | Out-File -Encoding ascii "$binaryAsset.sha256"
+
+      - name: Upload packaged artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: |
+            numi-${{ env.RELEASE_TAG }}-${{ matrix.target }}.${{ matrix.archive_ext }}
+            numi-${{ env.RELEASE_TAG }}-${{ matrix.target }}.${{ matrix.archive_ext }}.sha256
+            numi-${{ env.RELEASE_TAG }}-${{ matrix.target }}${{ matrix.binary_asset_ext }}
+            numi-${{ env.RELEASE_TAG }}-${{ matrix.target }}${{ matrix.binary_asset_ext }}.sha256
+
+  release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-24.04
+    needs: build
+
+    steps:
+      - name: Download packaged artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish release and upload binaries
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          tag_name: ${{ env.RELEASE_TAG }}
+          files: dist/*
+
+  update-homebrew-tap:
+    name: Update Homebrew tap
+    runs-on: ubuntu-24.04
+    needs: release
+    env:
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+    steps:
+      - name: Skip when tap token is unavailable
+        if: ${{ env.HOMEBREW_TAP_TOKEN == '' }}
+        run: echo "HOMEBREW_TAP_TOKEN is not configured; skipping tap update."
+
+      - name: Check out tap repository
+        if: ${{ env.HOMEBREW_TAP_TOKEN != '' }}
+        uses: actions/checkout@v4
+        with:
+          repository: oops-rs/homebrew-tap
+          ref: main
+          token: ${{ env.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Update numi formula
+        if: ${{ env.HOMEBREW_TAP_TOKEN != '' }}
+        run: bash tap/scripts/update-formula.sh numi "${RELEASE_TAG}"
+
+      - name: Commit updated formula
+        if: ${{ env.HOMEBREW_TAP_TOKEN != '' }}
+        run: |
+          if git -C tap diff --quiet -- Formula; then
+            echo "numi formula already up to date"
+            exit 0
+          fi
+
+          git -C tap config user.name "github-actions[bot]"
+          git -C tap config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C tap add Formula
+          git -C tap commit -m "numi ${RELEASE_TAG}"
+          git -C tap push origin HEAD:main

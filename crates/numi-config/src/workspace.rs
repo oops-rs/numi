@@ -330,20 +330,6 @@ fn validate_workspace_default_template(
     field_path: &str,
     job: Option<&str>,
 ) {
-    if template.path.is_some() {
-        let diagnostic = Diagnostic::error(
-            "workspace default job template must not set `path`",
-        )
-        .with_hint(
-            "workspace defaults only support `[workspace.defaults.jobs.<job>.template.builtin] language = \"...\"`",
-        );
-        diagnostics.push(match job {
-            Some(job) => diagnostic.with_job(job.to_owned()),
-            None => diagnostic,
-        });
-        return;
-    }
-
     let Some(builtin) = template.builtin.as_ref() else {
         validate_template(
             diagnostics,

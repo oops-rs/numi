@@ -466,6 +466,13 @@ pub fn resolve_workspace_member_config(
 
     for job in &mut resolved.jobs {
         if let Some(defaults) = workspace.workspace.defaults.jobs.get(&job.name)
+            && job.template.is_empty()
+            && defaults.template.path.is_some()
+        {
+            job.template.path = defaults.template.path.clone();
+        }
+
+        if let Some(defaults) = workspace.workspace.defaults.jobs.get(&job.name)
             && let (Some(job_builtin), Some(default_builtin)) = (
                 job.template.builtin.as_mut(),
                 defaults.template.builtin.as_ref(),
@@ -901,7 +908,7 @@ name = "l10n"
         assert!(
             error
                 .to_string()
-                .contains("workspace default job template must not set `path`")
+                .contains("workspace default job template builtin must not set `name`")
         );
     }
 
@@ -977,6 +984,48 @@ name = "assets"
                 .to_string()
                 .contains("workspace default job template builtin must not set `name`")
         );
+    }
+
+    #[test]
+    fn workspace_defaults_path_inherit_for_empty_member_template() {
+        let manifest = parse_manifest_str(
+            r#"
+version = 1
+
+[workspace]
+members = ["AppUI"]
+
+[workspace.defaults.jobs.assets.template]
+path = "Templates/assets.stencil"
+"#,
+        )
+        .expect("workspace should parse");
+        let Manifest::Workspace(workspace) = manifest else {
+            panic!("expected workspace manifest");
+        };
+
+        let member_config = toml::from_str::<Config>(
+            r#"
+version = 1
+
+[jobs.assets]
+output = "Generated/Assets.h"
+
+[[jobs.assets.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+"#,
+        )
+        .expect("member config should deserialize");
+
+        let resolved = resolve_workspace_member_config(&workspace, "AppUI", &member_config)
+            .expect("workspace defaults should resolve");
+
+        assert_eq!(
+            resolved.jobs[0].template.path.as_deref(),
+            Some("Templates/assets.stencil")
+        );
+        assert!(resolved.jobs[0].template.builtin.is_none());
     }
 
     #[test]

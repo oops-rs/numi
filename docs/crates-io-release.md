@@ -47,6 +47,8 @@ numi
 
 ## Preflight
 
+For crates that embed compile-time assets with `include_str!`, keep those assets under the owning crate directory so `cargo package` includes them automatically. Do not point embedded asset paths at repository-level files outside the crate root.
+
 Run the normal local verification first:
 
 ```bash

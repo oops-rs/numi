@@ -1,4 +1,5 @@
 mod parse;
+mod discovery;
 mod resolve;
 mod sniff;
 mod workspace_merge;

@@ -148,6 +148,46 @@ name = "swiftui-assets"
 }
 
 #[test]
+fn parses_job_hooks_shape() {
+    let config = parse_str(
+        r#"
+version = 1
+
+[jobs.assets]
+output = "Generated/Assets.swift"
+
+[[jobs.assets.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.assets.template.builtin]
+language = "swift"
+name = "swiftui-assets"
+
+[jobs.assets.hooks.pre_generate]
+command = ["swiftformat", "--lint"]
+
+[jobs.assets.hooks.post_generate]
+command = ["swiftformat"]
+"#,
+    )
+    .expect("config with hooks should parse");
+
+    let hooks = config.jobs[0].hooks.clone();
+    assert_eq!(
+        hooks.pre_generate.as_ref().map(|hook| hook.command.clone()),
+        Some(vec!["swiftformat".to_string(), "--lint".to_string()])
+    );
+    assert_eq!(
+        hooks
+            .post_generate
+            .as_ref()
+            .map(|hook| hook.command.clone()),
+        Some(vec!["swiftformat".to_string()])
+    );
+}
+
+#[test]
 fn rejects_empty_job_hook_command() {
     let error = parse_str(
         r#"
@@ -327,6 +367,56 @@ path = "Resources/Assets.xcassets"
     let message = error.to_string();
     assert!(message.contains("job template must set exactly one source"));
     assert!(message.contains("set either `[jobs.assets.template.builtin] language = \"...\" name = \"...\"` or `[jobs.assets.template] path = \"...\"`"));
+}
+
+#[test]
+fn rejects_empty_builtin_template_name() {
+    let error = parse_str(
+        r#"
+version = 1
+
+[jobs.assets]
+output = "Generated/Assets.swift"
+
+[[jobs.assets.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.assets.template.builtin]
+language = "swift"
+name = ""
+"#,
+    )
+    .expect_err("empty builtin name should fail validation");
+
+    let message = error.to_string();
+    assert!(message.contains("jobs.assets.template.builtin.name must be one of"));
+    assert!(message.contains("got ``"));
+}
+
+#[test]
+fn rejects_unknown_builtin_template_name() {
+    let error = parse_str(
+        r#"
+version = 1
+
+[jobs.assets]
+output = "Generated/Assets.swift"
+
+[[jobs.assets.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.assets.template.builtin]
+language = "swift"
+name = "not-a-real-template"
+"#,
+    )
+    .expect_err("unknown builtin name should fail validation");
+
+    let message = error.to_string();
+    assert!(message.contains("jobs.assets.template.builtin.name must be one of"));
+    assert!(message.contains("not-a-real-template"));
 }
 
 #[test]

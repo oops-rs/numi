@@ -274,7 +274,10 @@ fn parse_xcstrings_file(path: &Path) -> Result<LocalizationTable, ParseL10nError
 
         let mut properties = Metadata::from([
             ("key".to_string(), Value::String(key.clone())),
-            ("translation".to_string(), Value::String(translation.clone())),
+            (
+                "translation".to_string(),
+                Value::String(translation.clone()),
+            ),
         ]);
 
         if let Some(placeholders) = adapter_metadata

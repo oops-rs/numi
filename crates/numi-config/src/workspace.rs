@@ -67,6 +67,8 @@ pub struct WorkspaceSettings {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceDefaults {
+    #[serde(default, skip_serializing_if = "HooksConfig::is_empty")]
+    pub hooks: HooksConfig,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub jobs: BTreeMap<String, WorkspaceJobDefaults>,
 }
@@ -330,6 +332,14 @@ fn validate_workspace(config: &WorkspaceConfig) -> Vec<Diagnostic> {
         );
     }
 
+    validate_hooks(
+        &mut diagnostics,
+        &config.workspace.defaults.hooks,
+        "workspace default hook",
+        "workspace.defaults.hooks",
+        None,
+    );
+
     diagnostics
 }
 
@@ -487,6 +497,8 @@ struct RawWorkspaceSettings {
 #[serde(deny_unknown_fields)]
 struct RawWorkspaceDefaults {
     #[serde(default)]
+    hooks: HooksConfig,
+    #[serde(default)]
     jobs: BTreeMap<String, RawWorkspaceJobDefaults>,
 }
 
@@ -598,6 +610,7 @@ impl RawWorkspaceSettings {
 impl RawWorkspaceDefaults {
     fn into_workspace(self) -> WorkspaceDefaults {
         WorkspaceDefaults {
+            hooks: self.hooks,
             jobs: self
                 .jobs
                 .into_iter()
@@ -624,7 +637,7 @@ impl RawWorkspaceMemberOverride {
 
 impl WorkspaceDefaults {
     pub fn is_empty(&self) -> bool {
-        self.jobs.is_empty()
+        self.hooks.is_empty() && self.jobs.is_empty()
     }
 }
 

@@ -41,8 +41,11 @@ name = "l10n"
 # [workspace]
 # members = ["AppUI", "Core"]
 #
+# [workspace.defaults.hooks.post_generate]
+# command = ["Scripts/format-generated.sh"]
+#
 # [workspace.defaults.jobs.l10n.template]
 # path = "Templates/l10n"
 #
 # [workspace.defaults.jobs.l10n.hooks.post_generate]
-# command = ["Scripts/format-generated.sh"]
+# command = ["Scripts/format-generated-localization.sh"]

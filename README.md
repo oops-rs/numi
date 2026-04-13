@@ -210,8 +210,11 @@ command = ["swiftformat"]
 Workspace defaults can provide the same phases:
 
 ```toml
-[workspace.defaults.jobs.l10n.hooks.post_generate]
+[workspace.defaults.hooks.post_generate]
 command = ["Scripts/format-generated.sh"]
+
+[workspace.defaults.jobs.l10n.hooks.post_generate]
+command = ["Scripts/format-generated-localization.sh"]
 ```
 
 Hook rules:
@@ -219,6 +222,8 @@ Hook rules:
 - hooks run only during `numi generate`
 - `pre_generate` runs before rendering and writing
 - `post_generate` runs only after a job creates or updates its output
+- `workspace.defaults.hooks` applies to every workspace job
+- `workspace.defaults.jobs.<job>.hooks` overrides `workspace.defaults.hooks` for that job and phase
 - job-level hooks replace workspace defaults for the same phase
 - hook failures fail the command
 

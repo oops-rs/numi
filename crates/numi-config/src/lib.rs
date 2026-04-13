@@ -487,22 +487,24 @@ pub fn resolve_workspace_member_config(
             job_builtin.language = default_builtin.language.clone();
         }
 
-        if let Some(defaults) = workspace.workspace.defaults.jobs.get(&job.name) {
-            if job.hooks.pre_generate.is_none() {
-                job.hooks.pre_generate = defaults
-                    .hooks
-                    .pre_generate
-                    .as_ref()
-                    .map(|hook| rebase_workspace_hook(workspace_root, member_root, hook));
-            }
+        if job.hooks.pre_generate.is_none() {
+            job.hooks.pre_generate = workspace_hook_for_phase(
+                workspace_root,
+                workspace,
+                member_root,
+                &job.name,
+                HookPhaseSelector::PreGenerate,
+            );
+        }
 
-            if job.hooks.post_generate.is_none() {
-                job.hooks.post_generate = defaults
-                    .hooks
-                    .post_generate
-                    .as_ref()
-                    .map(|hook| rebase_workspace_hook(workspace_root, member_root, hook));
-            }
+        if job.hooks.post_generate.is_none() {
+            job.hooks.post_generate = workspace_hook_for_phase(
+                workspace_root,
+                workspace,
+                member_root,
+                &job.name,
+                HookPhaseSelector::PostGenerate,
+            );
         }
     }
 
@@ -551,6 +553,40 @@ fn rebase_workspace_hook(
         .into_owned();
 
     rebased
+}
+
+#[derive(Clone, Copy)]
+enum HookPhaseSelector {
+    PreGenerate,
+    PostGenerate,
+}
+
+fn workspace_hook_for_phase(
+    workspace_root: &Path,
+    workspace: &WorkspaceConfig,
+    member_root: &str,
+    job_name: &str,
+    phase: HookPhaseSelector,
+) -> Option<HookConfig> {
+    let hook = workspace
+        .workspace
+        .defaults
+        .jobs
+        .get(job_name)
+        .and_then(|defaults| match phase {
+            HookPhaseSelector::PreGenerate => defaults.hooks.pre_generate.as_ref(),
+            HookPhaseSelector::PostGenerate => defaults.hooks.post_generate.as_ref(),
+        })
+        .or_else(|| match phase {
+            HookPhaseSelector::PreGenerate => {
+                workspace.workspace.defaults.hooks.pre_generate.as_ref()
+            }
+            HookPhaseSelector::PostGenerate => {
+                workspace.workspace.defaults.hooks.post_generate.as_ref()
+            }
+        })?;
+
+    Some(rebase_workspace_hook(workspace_root, member_root, hook))
 }
 
 fn command_looks_like_path(command: &str) -> bool {
@@ -1245,6 +1281,117 @@ name = "assets"
                 .as_ref()
                 .map(|hook| hook.command.clone()),
             Some(vec!["swiftformat".to_string()])
+        );
+    }
+
+    #[test]
+    fn workspace_global_hooks_inherit_when_job_hooks_are_missing() {
+        let manifest = parse_manifest_str(
+            r#"
+version = 1
+
+[workspace]
+members = ["AppUI"]
+
+[workspace.defaults.hooks.post_generate]
+command = ["swiftformat"]
+"#,
+        )
+        .expect("workspace should parse");
+        let Manifest::Workspace(workspace) = manifest else {
+            panic!("expected workspace manifest");
+        };
+
+        let member_config = toml::from_str::<Config>(
+            r#"
+version = 1
+
+[jobs.assets]
+output = "Generated/Assets.h"
+
+[[jobs.assets.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.assets.template.builtin]
+language = "objc"
+name = "assets"
+"#,
+        )
+        .expect("member config should deserialize");
+
+        let resolved = resolve_workspace_member_config(
+            Path::new("/tmp/workspace"),
+            &workspace,
+            "AppUI",
+            &member_config,
+        )
+        .expect("workspace defaults should resolve");
+
+        assert_eq!(
+            resolved.jobs[0]
+                .hooks
+                .post_generate
+                .as_ref()
+                .map(|hook| hook.command.clone()),
+            Some(vec!["swiftformat".to_string()])
+        );
+    }
+
+    #[test]
+    fn workspace_job_hooks_override_workspace_global_hooks() {
+        let manifest = parse_manifest_str(
+            r#"
+version = 1
+
+[workspace]
+members = ["AppUI"]
+
+[workspace.defaults.hooks.post_generate]
+command = ["swiftformat"]
+
+[workspace.defaults.jobs.assets.hooks.post_generate]
+command = ["swiftlint", "format"]
+"#,
+        )
+        .expect("workspace should parse");
+        let Manifest::Workspace(workspace) = manifest else {
+            panic!("expected workspace manifest");
+        };
+
+        let member_config = toml::from_str::<Config>(
+            r#"
+version = 1
+
+[jobs.assets]
+output = "Generated/Assets.h"
+
+[[jobs.assets.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.assets.template.builtin]
+language = "objc"
+name = "assets"
+"#,
+        )
+        .expect("member config should deserialize");
+
+        let resolved = resolve_workspace_member_config(
+            Path::new("/tmp/workspace"),
+            &workspace,
+            "AppUI",
+            &member_config,
+        )
+        .expect("workspace defaults should resolve");
+
+        assert_eq!(
+            resolved.jobs[0]
+                .hooks
+                .post_generate
+                .as_ref()
+                .map(|hook| hook.command.clone()),
+            Some(vec!["swiftlint".to_string(), "format".to_string()])
         );
     }
 

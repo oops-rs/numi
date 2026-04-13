@@ -1739,6 +1739,80 @@ command = {}
 }
 
 #[test]
+fn generate_workspace_runs_shared_hooks_and_passes_workspace_manifest_path() {
+    let temp_root = make_temp_dir("generate-workspace-shared-hooks");
+    let workspace_root = temp_root.join("workspace");
+    let member_root = workspace_root.join("apps/files");
+    let hook_log = workspace_root.join("hook.log");
+    let hook_script = write_hook_probe_script(&workspace_root, "workspace-post-hook", 0);
+
+    fs::create_dir_all(member_root.join("Resources")).expect("member resources dir should exist");
+    copy_dir_all(
+        &repo_root().join("fixtures/files-basic/Resources/Fixtures"),
+        &member_root.join("Resources/Fixtures"),
+    );
+    write_manifest(
+        &member_root,
+        r#"
+version = 1
+
+[jobs.files]
+output = "Generated/Files.swift"
+incremental = false
+
+[[jobs.files.inputs]]
+type = "files"
+path = "Resources/Fixtures"
+
+[jobs.files.template.builtin]
+language = "swift"
+name = "files"
+"#,
+    );
+    write_manifest(
+        &workspace_root,
+        &format!(
+            r#"
+version = 1
+
+[workspace]
+members = ["apps/files"]
+
+[workspace.defaults.hooks.post_generate]
+command = {}
+"#,
+            toml_array(&[hook_script, hook_log.display().to_string()])
+        ),
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_numi"))
+        .args(["generate"])
+        .current_dir(&member_root)
+        .output()
+        .expect("numi generate should run");
+
+    assert!(
+        output.status.success(),
+        "command failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let log = fs::read_to_string(&hook_log).expect("hook log should exist");
+    let line = log.lines().next().expect("hook line should exist");
+    let workspace_manifest = workspace_root
+        .join("numi.toml")
+        .canonicalize()
+        .expect("workspace manifest should canonicalize");
+    assert_eq!(
+        line,
+        format!("post_generate|files|{}", workspace_manifest.display())
+    );
+
+    fs::remove_dir_all(temp_root).expect("temp dir should be removed");
+}
+
+#[test]
 fn check_prefers_workspace_manifest_from_member_directory() {
     let temp_root = make_temp_dir("check-prefers-workspace-manifest");
     let workspace_root = temp_root.join("workspace");

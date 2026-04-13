@@ -274,11 +274,13 @@ fn parse_xcstrings_file(path: &Path) -> Result<LocalizationTable, ParseL10nError
 
         let mut properties = Metadata::from([
             ("key".to_string(), Value::String(key.clone())),
-            ("translation".to_string(), Value::String(translation)),
+            ("translation".to_string(), Value::String(translation.clone())),
         ]);
 
-        if let Some(metadata) = adapter_metadata.get(&key)
-            && let Some(placeholders) = build_placeholder_metadata(&metadata.placeholder_specs)
+        if let Some(placeholders) = adapter_metadata
+            .get(&key)
+            .and_then(|metadata| build_placeholder_metadata(&metadata.placeholder_specs))
+            .or_else(|| build_strings_placeholder_metadata(&translation))
         {
             properties.insert("placeholders".to_string(), Value::Array(placeholders));
         }
@@ -1082,6 +1084,48 @@ mod tests {
         assert_eq!(
             tables[0].entries[0].properties["placeholders"],
             json!([{"name": "name"}])
+        );
+        assert!(tables[0].warnings.is_empty());
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn infers_xcstrings_printf_placeholders_from_plain_string_unit_values() {
+        let temp_dir = make_temp_dir("parse-xcstrings-printf-placeholders");
+        let xcstrings_path = temp_dir.join("Localizable.xcstrings");
+        fs::write(
+            &xcstrings_path,
+            r#"{
+  "version": "1.0",
+  "sourceLanguage": "en",
+  "strings": {
+    "welcome.user": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Welcome %@ (%lld)"
+          }
+        }
+      }
+    }
+  }
+}
+"#,
+        )
+        .expect("xcstrings file should be written");
+
+        let tables = parse_xcstrings(&xcstrings_path).expect("xcstrings should parse");
+
+        assert_eq!(tables.len(), 1);
+        assert_eq!(tables[0].entries.len(), 1);
+        assert_eq!(
+            tables[0].entries[0].properties["placeholders"],
+            json!([
+                {"format": "@", "swiftType": "String"},
+                {"format": "lld", "swiftType": "Int"}
+            ])
         );
         assert!(tables[0].warnings.is_empty());
 

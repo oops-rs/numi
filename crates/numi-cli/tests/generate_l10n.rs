@@ -187,6 +187,109 @@ private func tr(_ table: String, _ key: String) -> String {
 }
 
 #[test]
+fn generate_supports_appui_style_custom_strings_template_from_xcstrings() {
+    let temp_root = make_temp_dir("generate-appui-xcstrings-template");
+    let working_root = temp_root.join("fixture");
+    let resources_root = working_root.join("Sources/AppResource/Resources");
+    let generated_root = working_root.join("Sources/AppResource/Generated");
+    let templates_root = working_root.join("Templates");
+    fs::create_dir_all(&resources_root).expect("resources directory should exist");
+    fs::create_dir_all(&generated_root).expect("generated directory should exist");
+    fs::create_dir_all(&templates_root).expect("templates directory should exist");
+
+    fs::write(
+        working_root.join("numi.toml"),
+        r#"
+version = 1
+
+[jobs.strings]
+output = "Sources/AppResource/Generated/Strings.generated.swift"
+
+[[jobs.strings.inputs]]
+type = "xcstrings"
+path = "Sources/AppResource/Resources/Localizable.xcstrings"
+
+[jobs.strings.template]
+path = "Templates/strings.template.jinja"
+"#,
+    )
+    .expect("config should be written");
+    fs::write(
+        templates_root.join("strings.template.jinja"),
+        r#"{% set table_name = modules[0].properties.tableName %}
+public enum L10n {
+{%- for entry in modules[0].entries %}
+{%- if entry.properties.placeholders %}
+    public static func {{ entry.swiftIdentifier | lower_first }}({%- for placeholder in entry.properties.placeholders -%}_ p{{ loop.index }}: {% if placeholder.swiftType == "String" %}Any{% else %}{{ placeholder.swiftType | default("Any") }}{% endif %}{% if not loop.last %}, {% endif %}{%- endfor -%}) -> String {
+        L10n.tr({{ table_name | string_literal }}, {{ entry.properties.key | string_literal }}, {%- for placeholder in entry.properties.placeholders -%}{% if placeholder.swiftType == "String" %}String(describing: p{{ loop.index }}){% else %}p{{ loop.index }}{% endif %}{% if not loop.last %}, {% endif %}{%- endfor -%}, fallback: {{ entry.properties.translation | string_literal }})
+    }
+{%- else %}
+    public static var {{ entry.swiftIdentifier | lower_first }}: String { L10n.tr({{ table_name | string_literal }}, {{ entry.properties.key | string_literal }}, fallback: {{ entry.properties.translation | string_literal }}) }
+{%- endif %}
+{%- endfor %}
+}
+"#,
+    )
+    .expect("template should be written");
+    fs::write(
+        resources_root.join("Localizable.xcstrings"),
+        r#"{
+  "version": "1.0",
+  "sourceLanguage": "en",
+  "strings": {
+    "profile.title": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Profile"
+          }
+        }
+      }
+    },
+    "welcome.user": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Welcome %@ (%lld)"
+          }
+        }
+      }
+    }
+  }
+}
+"#,
+    )
+    .expect("xcstrings file should be written");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_numi"))
+        .args(["generate", "--config", "numi.toml", "--job", "strings"])
+        .current_dir(&working_root)
+        .output()
+        .expect("numi generate should run");
+
+    assert!(
+        output.status.success(),
+        "command failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let generated = fs::read_to_string(generated_root.join("Strings.generated.swift"))
+        .expect("generated strings file should exist");
+
+    assert!(generated.contains(
+        "public static var profileTitle: String { L10n.tr(\"Localizable\", \"profile.title\", fallback: \"Profile\") }"
+    ));
+    assert!(generated.contains("public static func welcomeUser(_ p1: Any, _ p2: Int) -> String {"));
+    assert!(generated.contains("L10n.tr(\"Localizable\", \"welcome.user\","));
+    assert!(generated.contains("String(describing: p1), p2, fallback: \"Welcome %@ (%lld)\""));
+
+    fs::remove_dir_all(temp_root).expect("temp dir should be removed");
+}
+
+#[test]
 fn repeated_l10n_generate_is_byte_stable() {
     let temp_root = make_temp_dir("generate-l10n-stable");
     let fixture_root = repo_root().join("fixtures/l10n-basic");

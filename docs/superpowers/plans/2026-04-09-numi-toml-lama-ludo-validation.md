@@ -455,8 +455,8 @@ name = "l10n"
 output = "Sources/AppResource/Generated/NumiL10n.swift"
 
 [[jobs.inputs]]
-type = "strings"
-path = "Sources/AppResource/Resources/en.lproj"
+type = "xcstrings"
+path = "Sources/AppResource/Resources/Localizable.xcstrings"
 
 [jobs.template]
 builtin = "l10n"

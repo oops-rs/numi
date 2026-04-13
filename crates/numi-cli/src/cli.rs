@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{ArgAction, Args, Parser, Subcommand};
+use clap::{ArgAction, Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -135,27 +135,47 @@ pub struct DumpContextArgs {
 pub struct IncrementalOverrideArgs {
     #[arg(
         long = "incremental",
-        action = ArgAction::SetTrue,
-        help = "Force incremental parsing when supported",
-        conflicts_with = "no_incremental"
+        value_enum,
+        value_name = "MODE",
+        help = "Control generation cache behavior for this run"
     )]
-    pub incremental: bool,
-    #[arg(
-        long = "no-incremental",
-        action = ArgAction::SetTrue,
-        help = "Disable incremental parsing even when the config enables it"
-    )]
-    pub no_incremental: bool,
+    pub incremental: Option<IncrementalMode>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum IncrementalMode {
+    Auto,
+    Always,
+    Never,
+    Refresh,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct IncrementalResolution {
+    pub incremental: Option<bool>,
+    pub parse_cache: Option<bool>,
+    pub force_regenerate: bool,
 }
 
 impl IncrementalOverrideArgs {
-    pub fn resolve(&self) -> Option<bool> {
-        if self.incremental {
-            Some(true)
-        } else if self.no_incremental {
-            Some(false)
-        } else {
-            None
+    pub fn resolve(&self) -> IncrementalResolution {
+        match self.incremental {
+            Some(IncrementalMode::Auto) | None => IncrementalResolution::default(),
+            Some(IncrementalMode::Always) => IncrementalResolution {
+                incremental: Some(true),
+                parse_cache: Some(true),
+                force_regenerate: false,
+            },
+            Some(IncrementalMode::Never) => IncrementalResolution {
+                incremental: Some(false),
+                parse_cache: Some(false),
+                force_regenerate: false,
+            },
+            Some(IncrementalMode::Refresh) => IncrementalResolution {
+                incremental: Some(true),
+                parse_cache: Some(true),
+                force_regenerate: true,
+            },
         }
     }
 }

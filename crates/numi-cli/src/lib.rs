@@ -86,11 +86,14 @@ fn run_generate_config(
     args: &GenerateArgs,
 ) -> Result<(), CliError> {
     let selected_jobs = selected_jobs(&args.jobs);
+    let incremental = args.incremental_override.resolve();
     let report = numi_core::generate_with_options(
         config_path,
         selected_jobs,
         numi_core::GenerateOptions {
-            incremental: args.incremental_override.resolve(),
+            incremental: incremental.incremental,
+            parse_cache: incremental.parse_cache,
+            force_regenerate: incremental.force_regenerate,
             workspace_manifest_path: None,
         },
     )
@@ -208,12 +211,15 @@ fn run_generate_workspace(
         )
         .map_err(render_config_diagnostics)?;
         let selected_jobs = workspace_jobs(args, &member);
+        let incremental = args.incremental_override.resolve();
         let report = numi_core::generate_loaded_config(
             &config_path,
             &merged_config,
             selected_jobs.as_deref(),
             numi_core::GenerateOptions {
-                incremental: args.incremental_override.resolve(),
+                incremental: incremental.incremental,
+                parse_cache: incremental.parse_cache,
+                force_regenerate: incremental.force_regenerate,
                 workspace_manifest_path: Some(manifest_path.to_path_buf()),
             },
         )

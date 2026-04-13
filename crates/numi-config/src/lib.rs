@@ -577,7 +577,7 @@ fn workspace_hook_for_phase(
             HookPhaseSelector::PreGenerate => defaults.hooks.pre_generate.as_ref(),
             HookPhaseSelector::PostGenerate => defaults.hooks.post_generate.as_ref(),
         })
-        .or_else(|| match phase {
+        .or(match phase {
             HookPhaseSelector::PreGenerate => {
                 workspace.workspace.defaults.hooks.pre_generate.as_ref()
             }

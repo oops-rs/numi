@@ -785,7 +785,7 @@ fn config_print_emits_files_builtin_and_input_kind() {
 }
 
 #[test]
-fn generate_from_member_directory_uses_nearest_member_manifest() {
+fn generate_from_member_directory_auto_prefers_workspace_manifest() {
     let temp_root = make_temp_dir("generate-member-manifest");
     let workspace_root = temp_root.join("workspace");
     let assets_root = workspace_root.join("apps/assets");
@@ -820,8 +820,8 @@ members = ["apps/assets", "packages/files"]
         "member output was not generated"
     );
     assert!(
-        !files_root.join("Generated/Files.swift").exists(),
-        "workspace output should not be generated without --workspace"
+        files_root.join("Generated/Files.swift").exists(),
+        "workspace sibling output should be generated when auto-preferring the ancestor workspace"
     );
 
     fs::remove_dir_all(temp_root).expect("temp dir should be removed");

@@ -20,6 +20,15 @@ Numi started as a modern SwiftGen replacement path, but its core model is broade
 
 ## Install
 
+With Homebrew:
+
+```bash
+brew tap oops-rs/tap
+brew install numi
+```
+
+With Cargo:
+
 ```bash
 cargo install numi
 ```

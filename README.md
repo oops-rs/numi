@@ -4,8 +4,19 @@
 
 # Numi
 
-Numi is a blazingly fast CLI for generating code from Apple project resources.
-It turns asset catalogs, localization files, and file lists into generated accessors and helpers using built-in or custom templates.
+Numi is a deterministic resource code generator for Apple projects.
+It turns asset catalogs, localization resources, and file lists into generated code using built-in or custom templates, with first-class support for multi-module repositories and CI verification.
+
+## Why Numi
+
+- Generates code from `.xcassets`, `.strings`, `.xcstrings`, and file-based inputs
+- Supports built-in templates and custom Minijinja templates
+- Works well in modular repos through workspace manifests and shared defaults
+- Avoids rewriting unchanged outputs
+- Verifies checked-in generated files with `numi check`
+- Supports per-job and workspace-level generation hooks for tasks like formatting
+
+Numi started as a modern SwiftGen replacement path, but its core model is broader: parse resources into a stable context, then render the output shape your project actually wants.
 
 ## Install
 
@@ -13,48 +24,38 @@ It turns asset catalogs, localization files, and file lists into generated acces
 cargo install numi
 ```
 
-The installed binary is named `numi`.
-
-## What Numi Does
-
-- reads `.xcassets` and generates image and color accessors
-- reads `.strings` and `.xcstrings` and generates localization helpers
-- reads `files` inputs and generates file-oriented helpers
-- renders built-in templates or custom Minijinja templates
-- supports workspace orchestration when a repo has multiple `numi.toml` files
-
-Numi is built for deterministic generation workflows: check in the outputs you want, regenerate them locally, and verify them in CI with `numi check`.
+The installed binary is `numi`.
 
 ## Quick Start
 
-Initialize a starter config in your project:
+Initialize a starter config:
 
 ```bash
 numi init
 ```
 
-Generate code:
+Generate outputs:
 
 ```bash
 numi generate
 ```
 
-Check whether committed generated files are up to date:
+Check whether generated files are up to date:
 
 ```bash
 numi check
 ```
 
-Workspace orchestration is also available when a repo has multiple `numi.toml` files:
+If your repo has a root workspace manifest, plain `numi generate` and `numi check` already do the right thing:
 
-```bash
-numi generate --workspace
-numi check --workspace
-```
+- from the repo root, they use the nearest workspace manifest
+- from a workspace member directory, they auto-prefer the nearest ancestor workspace
 
-## Minimal Config
+Use `--config` when you want to force a specific manifest, and `--workspace` when you want to explicitly require workspace execution.
 
-Numi uses `numi.toml` as its config filename.
+## A Minimal Config
+
+Numi uses `numi.toml`.
 
 ```toml
 version = 1
@@ -80,21 +81,6 @@ name = "swiftui-assets"
 output = "Generated/L10n.swift"
 
 [[jobs.l10n.inputs]]
-type = "strings"
-path = "Resources/Localization"
-
-[jobs.l10n.template.builtin]
-language = "swift"
-name = "l10n"
-```
-
-You can also point localization generation at `.xcstrings`:
-
-```toml
-[jobs.l10n]
-output = "Generated/L10n.swift"
-
-[[jobs.l10n.inputs]]
 type = "xcstrings"
 path = "Resources/Localization"
 
@@ -105,73 +91,105 @@ name = "l10n"
 
 The starter config shipped with `numi init` lives in [docs/examples/starter-numi.toml](docs/examples/starter-numi.toml).
 
-The same shape also works for Objective-C built-ins when you want an ObjC output:
+## Typical Workflows
 
-```toml
-[jobs.assets.template.builtin]
-language = "objc"
-name = "assets"
+### Single module
+
+```bash
+numi generate
+numi check
 ```
 
-## Commands
+### Generate only selected jobs
 
-`numi generate`
+```bash
+numi generate --job assets --job l10n
+```
 
-- discovers the nearest manifest unless `--config` is passed
-- auto-prefers the nearest ancestor workspace when run from a workspace member directory
-- runs one config for `[jobs]` manifests and the whole workspace for `[workspace]` manifests
-- generates outputs for all named jobs, or only selected jobs when `--job` is repeated
-- runs per-job `pre_generate` hooks before rendering and `post_generate` hooks after created or updated outputs
-- prints non-fatal warnings to stderr
-- may reuse cached parser outputs when inputs are unchanged
+### Monorepo or modular app
 
-`numi check`
+From the repo root:
 
-- computes what `generate` would write without modifying files
-- exits `0` when outputs are current
-- exits `2` when outputs are stale
-- auto-prefers the nearest ancestor workspace when run from a workspace member directory
-- never runs generation hooks
-- prints warnings to stderr without turning the run into a failure
+```bash
+numi generate
+numi check
+```
 
-`numi dump-context`
+From a member directory:
 
-- prints the exact JSON context a job template receives
-- only supports single-config (`[jobs]`) manifests and rejects workspace manifests
-- is the fastest way to debug or author custom templates
+```bash
+numi generate
+numi check
+```
 
-`numi config locate`
+Force a specific manifest when needed:
 
-- prints the resolved config path
+```bash
+numi generate --config AppUI/numi.toml
+```
 
-`numi config print`
+### Template authoring
 
-- prints the resolved config with defaults materialized
-- only supports single-config (`[jobs]`) manifests and rejects workspace manifests
+Inspect the exact template context for one job:
+
+```bash
+numi dump-context --job l10n
+```
+
+That is the fastest way to build or debug a custom template.
+
+## Supported Inputs
+
+| Input type | What it reads | Notes |
+| --- | --- | --- |
+| `xcassets` | Asset catalogs | Built-in Swift and Objective-C templates available |
+| `strings` | `.strings` files or directories | Localization helpers |
+| `xcstrings` | `.xcstrings` files or directories | Placeholder metadata is preserved when available |
+| `files` | Files or directories | Good for bundle/resource accessors |
+| `fonts` | Font files or directories | Supported in template context and custom templates |
 
 ## Built-In Templates
 
-Numi currently ships these built-in templates:
+| Language | Built-in name | Purpose |
+| --- | --- | --- |
+| `swift` | `swiftui-assets` | SwiftUI-friendly asset accessors |
+| `swift` | `l10n` | Localization accessors for `.strings` and `.xcstrings` |
+| `swift` | `files` | File-oriented helpers |
+| `objc` | `assets` | Objective-C asset accessors |
+| `objc` | `l10n` | Objective-C localization accessors |
+| `objc` | `files` | Objective-C file-oriented helpers |
 
-- Swift:
-  - `language = "swift"`, `name = "swiftui-assets"`
-  - `language = "swift"`, `name = "l10n"`
-  - `language = "swift"`, `name = "files"`
-- Objective-C:
-  - `language = "objc"`, `name = "assets"`
-  - `language = "objc"`, `name = "l10n"`
-  - `language = "objc"`, `name = "files"`
+Example:
 
-Fonts are supported in the template context and in custom-template workflows, but the first public release does not ship a dedicated built-in Swift template for fonts.
+```toml
+[jobs.assets.template.builtin]
+language = "swift"
+name = "swiftui-assets"
+```
 
-## Current Limitations
+Fonts are supported in the stable template context, but Numi does not currently ship a dedicated built-in Swift fonts template.
 
-- `.xcstrings` plural and device-specific variations are skipped with warnings
-- the shipped `l10n` template currently emits simple no-argument accessors even when placeholder metadata is present in template context
+## Custom Templates
+
+Custom templates use Minijinja:
+
+```toml
+[jobs.l10n.template]
+path = "Templates/l10n.jinja"
+```
+
+Numi resolves templates and includes carefully:
+
+- the configured template path is resolved from the manifest that declared it
+- `{% include %}` can resolve from the including template directory
+- `{% include %}` can also resolve from the config-root search path
+- if the same include exists in both places, Numi fails instead of guessing
+
+The stable template context is documented in [docs/context-schema.md](docs/context-schema.md).
 
 ## Workspace Manifests
 
-Repos with more than one `numi.toml` can orchestrate them from a repo-level `numi.toml`:
+For multi-module repositories, a repo-root `numi.toml` can orchestrate member configs:
 
 ```toml
 version = 1
@@ -179,25 +197,47 @@ version = 1
 [workspace]
 members = ["AppUI", "Core"]
 
-[workspace.defaults.jobs.assets.template.builtin]
-language = "objc"
+[workspace.defaults]
+access_level = "internal"
 
-[workspace.member_overrides.Core]
-jobs = ["assets"]
+[workspace.defaults.bundle]
+mode = "module"
+
+[workspace.defaults.jobs.assets.template.builtin]
+language = "swift"
+
+[workspace.defaults.jobs.l10n.template]
+path = "Templates/l10n.jinja"
 ```
 
-Then each member job can keep only the built-in name:
+Then a member can stay lean:
 
 ```toml
+version = 1
+
+[jobs.assets]
+output = "Generated/Assets.swift"
+
+[[jobs.assets.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
 [jobs.assets.template.builtin]
-name = "assets"
+name = "swiftui-assets"
 ```
 
-Workspace members are directory roots, not config-file paths. From the repo root, plain `numi generate` and `numi check` use that nearest workspace `numi.toml` automatically. From inside a member directory, plain `numi generate` and `numi check` also auto-prefer the nearest ancestor workspace. Use `--config` when you want to force a specific member manifest instead. Workspace defaults can provide `template.builtin.language`, but each job still needs to pick its own built-in `name`.
+Workspace rules:
+
+- workspace members are directory roots, not config file paths
+- workspace defaults can provide shared defaults, built-in languages, template paths, and hooks
+- workspace-default template paths are resolved relative to the workspace manifest
+- plain `generate` and `check` auto-prefer the nearest ancestor workspace when run from a member directory
 
 ## Generation Hooks
 
-Jobs can run optional hooks around generation:
+Hooks let you run tools before or after generation, which is especially useful for formatting generated files.
+
+### Per-job hooks
 
 ```toml
 [jobs.l10n.hooks.pre_generate]
@@ -207,7 +247,7 @@ command = ["Scripts/prepare-generated.sh"]
 command = ["swiftformat"]
 ```
 
-Workspace defaults can provide the same phases:
+### Shared workspace hooks
 
 ```toml
 [workspace.defaults.hooks.post_generate]
@@ -217,14 +257,14 @@ command = ["Scripts/format-generated.sh"]
 command = ["Scripts/format-generated-localization.sh"]
 ```
 
-Hook rules:
+Hook behavior:
 
 - hooks run only during `numi generate`
 - `pre_generate` runs before rendering and writing
 - `post_generate` runs only after a job creates or updates its output
 - `workspace.defaults.hooks` applies to every workspace job
-- `workspace.defaults.jobs.<job>.hooks` overrides `workspace.defaults.hooks` for that job and phase
-- job-level hooks replace workspace defaults for the same phase
+- `workspace.defaults.jobs.<job>.hooks` overrides shared workspace hooks for that job and phase
+- job-level hooks replace inherited hooks for the same phase
 - hook failures fail the command
 
 Numi passes target metadata through environment variables:
@@ -236,31 +276,85 @@ Numi passes target metadata through environment variables:
 - `NUMI_WORKSPACE_MANIFEST_PATH` when running through a workspace
 - `NUMI_WRITE_OUTCOME` for post hooks, set to `created` or `updated`
 
-If `command[0]` looks like a filesystem path, Numi resolves it relative to the manifest that declared it. That means workspace-default hook paths stay repo-root-relative, while member hook paths stay member-relative.
+If `command[0]` looks like a filesystem path, Numi resolves it relative to the manifest that declared it.
 
-## Custom Templates
+## Incremental Generation Modes
 
-Custom templates use Minijinja:
-
-```toml
-[jobs.l10n.template]
-path = "Templates/l10n.jinja"
-```
-
-Numi supports `{% include %}` from:
-
-- the including template's local directory
-- the config-root search path
-
-If the same include path exists in both places, Numi errors instead of guessing.
-
-Start custom-template work with:
+`numi generate` supports one incremental mode flag:
 
 ```bash
-numi dump-context --job l10n
+numi generate --incremental auto
+numi generate --incremental always
+numi generate --incremental never
+numi generate --incremental refresh
 ```
 
-The stable context contract is documented in [docs/context-schema.md](docs/context-schema.md).
+Mode meanings:
+
+- `auto`: use the config and default behavior
+- `always`: force incremental generation behavior on for this run
+- `never`: disable incremental parsing and generation-cache reuse for this run
+- `refresh`: rerender now even if the job would otherwise be skipped, while still allowing parser cache reuse
+
+## Command Reference
+
+| Command | Purpose |
+| --- | --- |
+| `numi generate` | Generate outputs for one config or workspace |
+| `numi check` | Check whether generated outputs are up to date |
+| `numi init` | Write a starter `numi.toml` in the current directory |
+| `numi config locate` | Print the resolved config path |
+| `numi config print` | Print the resolved single-config manifest with defaults materialized |
+| `numi dump-context --job <name>` | Print the template context for one job |
+
+Top-level help:
+
+```bash
+numi --help
+numi generate --help
+```
+
+## CI
+
+Numi is designed for checked-in outputs.
+A typical CI step is:
+
+```bash
+numi check
+```
+
+For modular repos with a root workspace manifest:
+
+```bash
+numi check
+```
+
+`numi check` exits:
+
+- `0` when outputs are current
+- `2` when outputs are stale
+
+It never runs generation hooks.
+
+## Diagnostics and UX
+
+`numi generate` and `numi check` emit clearer interactive status output in a terminal, including which manifest was selected, per-job outcomes, warnings, and a final summary. Non-interactive output stays plain and script-friendly.
+
+Warnings are surfaced without silently changing behavior. When Numi cannot safely guess, it prefers a clear failure over an implicit fallback.
+
+## Current Limitations
+
+- `.xcstrings` plural and device-specific variations are currently skipped with warnings
+- the shipped Swift `l10n` built-in is still conservative and does not yet expose every placeholder-aware output shape a custom template can implement
+- `dump-context` and `config print` are single-config tools and reject workspace manifests
+
+## Docs
+
+- [docs/context-schema.md](docs/context-schema.md): stable template context reference
+- [docs/migration-from-swiftgen.md](docs/migration-from-swiftgen.md): migration notes from SwiftGen
+- [docs/spec.md](docs/spec.md): full product and technical specification
+- [docs/examples/starter-numi.toml](docs/examples/starter-numi.toml): starter manifest
+- [docs/crates-io-release.md](docs/crates-io-release.md): release workflow notes
 
 ## Development
 
@@ -271,5 +365,3 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
-
-crates.io release notes for the workspace live in [docs/crates-io-release.md](docs/crates-io-release.md).

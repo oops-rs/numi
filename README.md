@@ -21,6 +21,12 @@ Numi started as a modern SwiftGen replacement path, but its core model is broade
 
 ## Install
 
+With the install script (macOS and Linux):
+
+```bash
+curl -fsSL https://numi.elata.ai/install.sh | sh
+```
+
 With Homebrew:
 
 ```bash
@@ -32,6 +38,8 @@ With Cargo:
 ```bash
 cargo install numi
 ```
+
+Set `NUMI_VERSION` to install a specific release, or `NUMI_INSTALL_DIR` to change the install location.
 
 ## Quick Start
 

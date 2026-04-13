@@ -1,4 +1,32 @@
-use super::*;
+use super::{make_temp_dir, seed_cached_parse, with_temp_dir_override};
+use super::super::{check, generate};
+use crate::parse_cache::{CacheKind, CachedParseData};
+use camino::Utf8PathBuf;
+use numi_ir::{EntryKind, Metadata, RawEntry};
+use serde_json::json;
+use std::{fs, path::Path};
+
+fn write_files_job_config(config_path: &Path) {
+    fs::write(
+        config_path,
+        r#"
+version = 1
+
+[jobs.files]
+output = "Generated/Files.swift"
+
+[[jobs.files.inputs]]
+type = "files"
+path = "Resources/Fixtures"
+
+[jobs.files.template]
+[jobs.files.template.builtin]
+language = "swift"
+name = "files"
+"#,
+    )
+    .expect("config should be written");
+}
 
 #[test]
 fn check_uses_cached_files_parse_and_still_reports_stale_outputs() {
@@ -43,7 +71,6 @@ fn check_uses_cached_files_parse_and_still_reports_stale_outputs() {
 
     fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
 }
-
 
 #[test]
 fn check_degrades_when_cache_root_is_unusable() {

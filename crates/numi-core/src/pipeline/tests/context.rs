@@ -1,4 +1,42 @@
-use super::*;
+use super::{entry, make_temp_dir, seed_cached_parse, write_xcstrings_job_config};
+use super::super::{
+    dump_context, sort_entries_for_assets, swiftgen_file_sort_key,
+    GenerationFingerprintRecord, GenerationTemplateFingerprintRecord,
+    GENERATION_FINGERPRINT_SCHEMA_VERSION,
+};
+use blake3::Hasher;
+use camino::Utf8PathBuf;
+use crate::{
+    parse_cache::{CacheKind, CachedParseData},
+    parse_l10n::LocalizationTable,
+};
+use numi_ir::{EntryKind, Metadata, ModuleKind, RawEntry};
+use serde_json::{json, Value};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+
+fn cache_record_path(kind: CacheKind, input_path: &Path) -> PathBuf {
+    let canonical = fs::canonicalize(input_path).expect("input path should canonicalize");
+    let mut hasher = Hasher::new();
+    hasher.update(
+        match kind {
+            CacheKind::Xcassets => "xcassets",
+            CacheKind::Strings => "strings",
+            CacheKind::Xcstrings => "xcstrings",
+            CacheKind::Files => "files",
+        }
+        .as_bytes(),
+    );
+    hasher.update(b"\0");
+    hasher.update(canonical.as_os_str().as_encoded_bytes());
+
+    std::env::temp_dir()
+        .join("numi-cache")
+        .join("parsed-v1")
+        .join(format!("{}.json", hasher.finalize().to_hex()))
+}
 
 #[test]
 fn file_sort_keys_match_case_insensitive_name_ordering() {

@@ -1,4 +1,7 @@
-use crate::{Config, Manifest, parse_manifest_str, resolve_workspace_member_config, workspace_member_config_path};
+use crate::{
+    Config, Manifest, parse_manifest_str, parse_str, resolve_workspace_member_config,
+    workspace_member_config_path,
+};
 use std::{path::Path, path::PathBuf};
 
 #[test]
@@ -489,4 +492,33 @@ name = "swiftui-assets"
         .expect("builtin should exist");
     assert_eq!(builtin.language.as_deref(), Some("swift"));
     assert_eq!(builtin.name.as_deref(), Some("swiftui-assets"));
+}
+
+#[test]
+fn resolve_config_materializes_v1_default_values() {
+    let config = parse_str(
+        r#"
+version = 1
+
+[jobs.assets]
+output = "Generated/Assets.swift"
+
+[[jobs.assets.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.assets.template]
+[jobs.assets.template.builtin]
+language = "swift"
+name = "swiftui-assets"
+"#,
+    )
+    .expect("config should parse");
+
+    let resolved = crate::resolve_config(&config);
+
+    assert_eq!(resolved.defaults.access_level.as_deref(), Some("internal"));
+    assert_eq!(resolved.defaults.bundle.mode.as_deref(), Some("module"));
+    assert_eq!(resolved.defaults.incremental, Some(true));
+    assert!(resolved.jobs[0].bundle.is_empty());
 }

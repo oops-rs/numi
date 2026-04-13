@@ -148,6 +148,36 @@ name = "swiftui-assets"
 }
 
 #[test]
+fn rejects_empty_job_hook_command() {
+    let error = parse_str(
+        r#"
+version = 1
+
+[jobs.assets]
+output = "Generated/Assets.swift"
+
+[[jobs.assets.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.assets.template.builtin]
+language = "swift"
+name = "swiftui-assets"
+
+[jobs.assets.hooks.post_generate]
+command = []
+"#,
+    )
+    .expect_err("empty hook commands should fail validation");
+
+    assert!(
+        error
+            .to_string()
+            .contains("job hook command must not be empty")
+    );
+}
+
+#[test]
 fn rejects_builtin_template_language_without_name() {
     let error = parse_str(
         r#"

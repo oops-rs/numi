@@ -1470,6 +1470,256 @@ path = "Templates/l10n"
 }
 
 #[test]
+fn generate_prefers_workspace_manifest_from_member_directory() {
+    let temp_root = make_temp_dir("generate-prefers-workspace-manifest");
+    let workspace_root = temp_root.join("workspace");
+    let assets_root = workspace_root.join("apps/assets");
+    let files_root = workspace_root.join("packages/files");
+
+    fs::create_dir_all(assets_root.join("Resources")).expect("assets resources dir should exist");
+    fs::create_dir_all(files_root.join("Resources")).expect("files resources dir should exist");
+    copy_dir_all(
+        &repo_root().join("fixtures/xcassets-basic/Resources/Assets.xcassets"),
+        &assets_root.join("Resources/Assets.xcassets"),
+    );
+    copy_dir_all(
+        &repo_root().join("fixtures/files-basic/Resources/Fixtures"),
+        &files_root.join("Resources/Fixtures"),
+    );
+    write_manifest(
+        &assets_root,
+        r#"
+version = 1
+
+[jobs.assets]
+output = "Generated/Assets.swift"
+
+[[jobs.assets.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.assets.template.builtin]
+language = "swift"
+name = "swiftui-assets"
+"#,
+    );
+    write_manifest(
+        &files_root,
+        r#"
+version = 1
+
+[jobs.files]
+output = "Generated/Files.swift"
+
+[[jobs.files.inputs]]
+type = "files"
+path = "Resources/Fixtures"
+
+[jobs.files.template.builtin]
+language = "swift"
+name = "files"
+"#,
+    );
+    write_manifest(
+        &workspace_root,
+        r#"
+version = 1
+
+[workspace]
+members = ["apps/assets", "packages/files"]
+"#,
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_numi"))
+        .args(["generate"])
+        .current_dir(&assets_root)
+        .output()
+        .expect("numi generate should run");
+
+    assert!(
+        output.status.success(),
+        "command failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        assets_root.join("Generated/Assets.swift").exists(),
+        "current member output should be generated"
+    );
+    assert!(
+        files_root.join("Generated/Files.swift").exists(),
+        "other workspace member output should be generated"
+    );
+
+    fs::remove_dir_all(temp_root).expect("temp dir should be removed");
+}
+
+#[test]
+fn generate_prefers_workspace_manifest_before_validating_member_config() {
+    let temp_root = make_temp_dir("generate-prefers-workspace-before-validating-member");
+    let workspace_root = temp_root.join("workspace");
+    let member_root = workspace_root.join("apps/l10n");
+    let templates_root = workspace_root.join("Templates");
+
+    fs::create_dir_all(member_root.join("Resources/Localization"))
+        .expect("member localization dir should exist");
+    fs::create_dir_all(&templates_root).expect("workspace templates dir should exist");
+    copy_dir_all(
+        &repo_root().join("fixtures/l10n-basic/Resources/Localization"),
+        &member_root.join("Resources/Localization"),
+    );
+    fs::write(
+        templates_root.join("l10n.jinja"),
+        "AUTO|{{ job.name }}|{{ modules[0].name }}\n",
+    )
+    .expect("workspace template should be written");
+    write_manifest(
+        &member_root,
+        r#"
+version = 1
+
+[jobs.l10n]
+output = "Generated/L10n.swift"
+
+[[jobs.l10n.inputs]]
+type = "strings"
+path = "Resources/Localization"
+"#,
+    );
+    write_manifest(
+        &workspace_root,
+        r#"
+version = 1
+
+[workspace]
+members = ["apps/l10n"]
+
+[workspace.defaults.jobs.l10n.template]
+path = "Templates/l10n"
+"#,
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_numi"))
+        .args(["generate"])
+        .current_dir(&member_root)
+        .output()
+        .expect("numi generate should run");
+
+    assert!(
+        output.status.success(),
+        "command failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let generated = fs::read_to_string(member_root.join("Generated/L10n.swift"))
+        .expect("generated l10n file should exist");
+    assert_eq!(generated, "AUTO|l10n|Localizable\n");
+
+    fs::remove_dir_all(temp_root).expect("temp dir should be removed");
+}
+
+#[test]
+fn check_prefers_workspace_manifest_from_member_directory() {
+    let temp_root = make_temp_dir("check-prefers-workspace-manifest");
+    let workspace_root = temp_root.join("workspace");
+    let assets_root = workspace_root.join("apps/assets");
+    let files_root = workspace_root.join("packages/files");
+
+    fs::create_dir_all(assets_root.join("Resources")).expect("assets resources dir should exist");
+    fs::create_dir_all(files_root.join("Resources")).expect("files resources dir should exist");
+    copy_dir_all(
+        &repo_root().join("fixtures/xcassets-basic/Resources/Assets.xcassets"),
+        &assets_root.join("Resources/Assets.xcassets"),
+    );
+    copy_dir_all(
+        &repo_root().join("fixtures/files-basic/Resources/Fixtures"),
+        &files_root.join("Resources/Fixtures"),
+    );
+    write_manifest(
+        &assets_root,
+        r#"
+version = 1
+
+[jobs.assets]
+output = "Generated/Assets.swift"
+
+[[jobs.assets.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.assets.template.builtin]
+language = "swift"
+name = "swiftui-assets"
+"#,
+    );
+    write_manifest(
+        &files_root,
+        r#"
+version = 1
+
+[jobs.files]
+output = "Generated/Files.swift"
+
+[[jobs.files.inputs]]
+type = "files"
+path = "Resources/Fixtures"
+
+[jobs.files.template.builtin]
+language = "swift"
+name = "files"
+"#,
+    );
+    write_manifest(
+        &workspace_root,
+        r#"
+version = 1
+
+[workspace]
+members = ["apps/assets", "packages/files"]
+"#,
+    );
+
+    let setup_output = Command::new(env!("CARGO_BIN_EXE_numi"))
+        .args(["generate", "--workspace"])
+        .current_dir(&assets_root)
+        .output()
+        .expect("numi generate --workspace should run");
+    assert!(
+        setup_output.status.success(),
+        "setup generate failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&setup_output.stdout),
+        String::from_utf8_lossy(&setup_output.stderr)
+    );
+
+    fs::write(
+        files_root.join("Generated/Files.swift"),
+        "// stale files output\n",
+    )
+    .expect("stale files output should be written");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_numi"))
+        .args(["check"])
+        .current_dir(&assets_root)
+        .output()
+        .expect("numi check should run");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "unexpected status: {output:?}"
+    );
+
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
+    assert!(
+        stderr.contains("packages/files/Generated/Files.swift"),
+        "stderr was: {stderr}"
+    );
+
+    fs::remove_dir_all(temp_root).expect("temp dir should be removed");
+}
+
+#[test]
 fn dump_context_rejects_workspace_manifests() {
     let temp_root = make_temp_dir("dump-context-workspace-manifest");
     let workspace_root = temp_root.join("workspace");

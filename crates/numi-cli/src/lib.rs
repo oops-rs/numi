@@ -70,7 +70,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
 }
 
 fn run_generate(args: &GenerateArgs) -> Result<(), CliError> {
-    let loaded = load_cli_manifest(args.config.as_deref(), args.workspace)?;
+    let loaded = load_execution_manifest(args.config.as_deref(), args.workspace)?;
     match &loaded.manifest {
         Manifest::Config(config) => run_generate_config(&loaded.path, config, args),
         Manifest::Workspace(workspace) => run_generate_workspace(&loaded.path, workspace, args),
@@ -96,7 +96,7 @@ fn run_generate_config(
 }
 
 fn run_check(args: &CheckArgs) -> Result<(), CliError> {
-    let loaded = load_cli_manifest(args.config.as_deref(), args.workspace)?;
+    let loaded = load_execution_manifest(args.config.as_deref(), args.workspace)?;
     match &loaded.manifest {
         Manifest::Config(config) => run_check_config(&loaded.path, config, args),
         Manifest::Workspace(workspace) => run_check_workspace(&loaded.path, workspace, args),
@@ -284,6 +284,36 @@ fn load_cli_manifest(
     let cwd = current_dir()?;
     let manifest_path = numi_config::discover_config(&cwd, explicit_path)
         .map_err(|error| CliError::new(error.to_string()))?;
+
+    numi_config::load_manifest_from_path(&manifest_path)
+        .map_err(|error| CliError::new(error.to_string()))
+}
+
+fn load_execution_manifest(
+    explicit_path: Option<&Path>,
+    workspace: bool,
+) -> Result<LoadedManifest, CliError> {
+    if workspace || explicit_path.is_some() {
+        return load_cli_manifest(explicit_path, workspace);
+    }
+
+    let cwd = current_dir()?;
+    let manifest_path = numi_config::discover_config(&cwd, None)
+        .map_err(|error| CliError::new(error.to_string()))?;
+    let manifest_kind =
+        numi_config::sniff_manifest_kind_from_path(&manifest_path).map_err(|error| {
+            CliError::new(format!(
+                "failed to read manifest {}: {error}",
+                manifest_path.display()
+            ))
+        })?;
+
+    if matches!(manifest_kind, ManifestKindSniff::ConfigLike)
+        && let Ok(workspace_loaded) = load_workspace_cli_manifest(None)
+        && workspace_loaded.path != manifest_path
+    {
+        return Ok(workspace_loaded);
+    }
 
     numi_config::load_manifest_from_path(&manifest_path)
         .map_err(|error| CliError::new(error.to_string()))

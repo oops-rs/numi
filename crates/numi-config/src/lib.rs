@@ -470,9 +470,11 @@ pub fn resolve_workspace_member_config(
             && job.template.is_empty()
             && defaults.template.path.is_some()
         {
-            job.template.path = defaults.template.path.as_deref().map(|path| {
-                rebase_workspace_template_path(workspace_root, member_root, path)
-            });
+            job.template.path = defaults
+                .template
+                .path
+                .as_deref()
+                .map(|path| rebase_workspace_template_path(workspace_root, member_root, path));
         }
 
         if let Some(defaults) = workspace.workspace.defaults.jobs.get(&job.name)

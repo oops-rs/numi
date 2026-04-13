@@ -4,7 +4,8 @@ use std::{
     borrow::Cow,
     collections::BTreeSet,
     fs,
-    path::{Path, PathBuf},
+    io::{self, IsTerminal},
+    path::{Component, Path, PathBuf},
 };
 
 use cli::{
@@ -17,6 +18,7 @@ use numi_config::{
 };
 
 const STARTER_CONFIG_FALLBACK: &str = include_str!("../assets/starter-numi.toml");
+const STATUS_LABEL_WIDTH: usize = 10;
 
 #[derive(Debug)]
 pub struct CliError {
@@ -71,6 +73,7 @@ pub fn run(cli: Cli) -> Result<(), CliError> {
 
 fn run_generate(args: &GenerateArgs) -> Result<(), CliError> {
     let loaded = load_execution_manifest(args.config.as_deref(), args.workspace)?;
+    cli_ui().manifest(&loaded.manifest, &loaded.path);
     match &loaded.manifest {
         Manifest::Config(config) => run_generate_config(&loaded.path, config, args),
         Manifest::Workspace(workspace) => run_generate_workspace(&loaded.path, workspace, args),
@@ -91,12 +94,18 @@ fn run_generate_config(
         },
     )
     .map_err(|error| CliError::new(error.to_string()))?;
+    let output_root = manifest_dir(config_path)?;
+    cli_ui().job_reports(output_root, &report.jobs);
     print_warnings(&report.warnings);
+    let mut summary = JobSummary::default();
+    summary.record_jobs(&report.jobs);
+    cli_ui().generation_summary(summary);
     Ok(())
 }
 
 fn run_check(args: &CheckArgs) -> Result<(), CliError> {
     let loaded = load_execution_manifest(args.config.as_deref(), args.workspace)?;
+    cli_ui().manifest(&loaded.manifest, &loaded.path);
     match &loaded.manifest {
         Manifest::Config(config) => run_check_config(&loaded.path, config, args),
         Manifest::Workspace(workspace) => run_check_workspace(&loaded.path, workspace, args),
@@ -115,6 +124,11 @@ fn run_check_config(
     print_warnings(&report.warnings);
 
     if report.stale_paths.is_empty() {
+        cli_ui().status(
+            StatusTone::Success,
+            "Polished",
+            "generated outputs look fresh",
+        );
         Ok(())
     } else {
         let lines = report
@@ -163,6 +177,11 @@ fn run_init(args: &InitArgs) -> Result<(), CliError> {
             config_path.display()
         ))
     })?;
+    cli_ui().status(
+        StatusTone::Success,
+        "Stitched",
+        format!("starter {}", display_contextual_path(&config_path)),
+    );
 
     Ok(())
 }
@@ -173,6 +192,7 @@ fn run_generate_workspace(
     args: &GenerateArgs,
 ) -> Result<(), CliError> {
     let workspace_dir = manifest_dir(manifest_path)?;
+    let mut summary = JobSummary::default();
 
     for member in workspace.members() {
         let member_root = workspace_member_root(&member);
@@ -196,9 +216,12 @@ fn run_generate_workspace(
             },
         )
         .map_err(|error| CliError::new(error.to_string()))?;
+        cli_ui().job_reports(workspace_dir, &report.jobs);
         print_warnings(&report.warnings);
+        summary.record_jobs(&report.jobs);
     }
 
+    cli_ui().generation_summary(summary);
     Ok(())
 }
 
@@ -236,6 +259,11 @@ fn run_check_workspace(
     }
 
     if stale_paths.is_empty() {
+        cli_ui().status(
+            StatusTone::Success,
+            "Polished",
+            "workspace outputs look fresh",
+        );
         Ok(())
     } else {
         let lines = stale_paths
@@ -482,7 +510,7 @@ fn normalize_workspace_stale_path(path: &Path, workspace_dir: &Path) -> PathBuf 
 
 fn print_warnings<T: std::fmt::Display>(warnings: &[T]) {
     for warning in warnings {
-        eprintln!("{warning}");
+        cli_ui().warning(&warning.to_string());
     }
 }
 
@@ -516,5 +544,305 @@ impl WorkspaceJobArgs for GenerateArgs {
 impl WorkspaceJobArgs for CheckArgs {
     fn selected_jobs(&self) -> Option<&[String]> {
         selected_jobs(&self.jobs)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StatusTone {
+    Accent,
+    Success,
+    Warning,
+    Error,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CliUi {
+    interactive: bool,
+    color: bool,
+}
+
+impl CliUi {
+    fn stderr() -> Self {
+        let interactive = io::stderr().is_terminal();
+        let color = interactive && std::env::var_os("NO_COLOR").is_none();
+        Self { interactive, color }
+    }
+
+    fn manifest(&self, manifest: &Manifest, path: &Path) {
+        let kind = match manifest {
+            Manifest::Config(_) => "config",
+            Manifest::Workspace(_) => "workspace",
+        };
+        self.status(
+            StatusTone::Accent,
+            "Summoning",
+            format!("{kind} {}", display_contextual_path(path)),
+        );
+    }
+
+    fn job_reports(&self, root: &Path, jobs: &[numi_core::JobReport]) {
+        for job in jobs {
+            let (label, tone) = match job.outcome {
+                numi_core::WriteOutcome::Created => ("Stitched", StatusTone::Success),
+                numi_core::WriteOutcome::Updated => ("Restitched", StatusTone::Success),
+                numi_core::WriteOutcome::Unchanged => ("Keeping", StatusTone::Accent),
+                numi_core::WriteOutcome::Skipped => ("Skipping", StatusTone::Warning),
+            };
+            let output_path = display_relative_path(root, job.output_path.as_std_path());
+            self.status(tone, label, format!("{} -> {}", job.job_name, output_path));
+        }
+    }
+
+    fn generation_summary(&self, summary: JobSummary) {
+        if summary.total == 0 {
+            self.status(StatusTone::Accent, "Keeping", "no jobs were selected");
+            return;
+        }
+
+        let mut parts = Vec::new();
+        if summary.created > 0 {
+            parts.push(format!("{} stitched", summary.created));
+        }
+        if summary.updated > 0 {
+            parts.push(format!("{} re-stitched", summary.updated));
+        }
+        if summary.unchanged > 0 {
+            parts.push(format!("{} kept", summary.unchanged));
+        }
+        if summary.skipped > 0 {
+            parts.push(format!("{} skipped", summary.skipped));
+        }
+
+        let message = if parts.is_empty() {
+            format!("{} jobs settled", summary.total)
+        } else {
+            format!("{} jobs settled ({})", summary.total, parts.join(", "))
+        };
+        self.status(StatusTone::Success, "Polished", message);
+    }
+
+    fn warning(&self, message: &str) {
+        if self.interactive {
+            let body = message.strip_prefix("warning: ").unwrap_or(message);
+            self.block(StatusTone::Warning, "Noted", body);
+        } else {
+            eprintln!("{message}");
+        }
+    }
+
+    fn error(&self, message: &str) {
+        if self.interactive {
+            self.block(StatusTone::Error, "Oops", message);
+        } else {
+            eprintln!("{message}");
+        }
+    }
+
+    fn status(&self, tone: StatusTone, label: &str, message: impl AsRef<str>) {
+        if !self.interactive {
+            return;
+        }
+        self.block(tone, label, message.as_ref());
+    }
+
+    fn block(&self, tone: StatusTone, label: &str, message: &str) {
+        let rendered = format_status_block(label, tone, message, self.color);
+        eprint!("{rendered}");
+    }
+}
+
+fn cli_ui() -> CliUi {
+    CliUi::stderr()
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct JobSummary {
+    total: usize,
+    created: usize,
+    updated: usize,
+    unchanged: usize,
+    skipped: usize,
+}
+
+impl JobSummary {
+    fn record_jobs(&mut self, jobs: &[numi_core::JobReport]) {
+        for job in jobs {
+            self.record_outcome(job.outcome);
+        }
+    }
+
+    fn record_outcome(&mut self, outcome: numi_core::WriteOutcome) {
+        self.total += 1;
+        match outcome {
+            numi_core::WriteOutcome::Created => self.created += 1,
+            numi_core::WriteOutcome::Updated => self.updated += 1,
+            numi_core::WriteOutcome::Unchanged => self.unchanged += 1,
+            numi_core::WriteOutcome::Skipped => self.skipped += 1,
+        }
+    }
+}
+
+fn format_status_block(label: &str, tone: StatusTone, message: &str, color: bool) -> String {
+    let padded_label = format!("{label:>width$}", width = STATUS_LABEL_WIDTH);
+    let rendered_label = format_status_label(&padded_label, tone, color);
+    let continuation = " ".repeat(STATUS_LABEL_WIDTH);
+    let mut lines = message.lines();
+    let mut rendered = String::new();
+
+    if let Some(first_line) = lines.next() {
+        rendered.push_str(&format!("{rendered_label} {first_line}\n"));
+    } else {
+        rendered.push_str(&format!("{rendered_label}\n"));
+    }
+
+    for line in lines {
+        rendered.push_str(&format!("{continuation} {line}\n"));
+    }
+
+    rendered
+}
+
+fn format_status_label(label: &str, tone: StatusTone, color: bool) -> String {
+    if !color {
+        return label.to_string();
+    }
+
+    let code = match tone {
+        StatusTone::Accent => "36",
+        StatusTone::Success => "32",
+        StatusTone::Warning => "33",
+        StatusTone::Error => "31",
+    };
+    format!("\x1b[{code};1m{label}\x1b[0m")
+}
+
+fn display_relative_path(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn display_contextual_path(path: &Path) -> String {
+    let absolute_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+
+    if let Ok(cwd) = std::env::current_dir() {
+        let absolute_cwd = cwd.canonicalize().unwrap_or(cwd);
+        if let Some(relative) = lexical_relative_path(&absolute_path, &absolute_cwd) {
+            return display_path(relative);
+        }
+    }
+
+    display_path(absolute_path)
+}
+
+fn lexical_relative_path(path: &Path, base: &Path) -> Option<PathBuf> {
+    let path_components = path.components().collect::<Vec<_>>();
+    let base_components = base.components().collect::<Vec<_>>();
+
+    let mut common_len = 0;
+    while common_len < path_components.len()
+        && common_len < base_components.len()
+        && path_components[common_len] == base_components[common_len]
+    {
+        common_len += 1;
+    }
+
+    if common_len == 0 {
+        return None;
+    }
+
+    let mut relative = PathBuf::new();
+    for component in &base_components[common_len..] {
+        match component {
+            Component::Normal(_) => relative.push(".."),
+            Component::CurDir => {}
+            Component::ParentDir => relative.push(".."),
+            Component::RootDir | Component::Prefix(_) => return None,
+        }
+    }
+
+    for component in &path_components[common_len..] {
+        relative.push(component.as_os_str());
+    }
+
+    if relative.as_os_str().is_empty() {
+        relative.push(".");
+    }
+
+    Some(relative)
+}
+
+pub fn print_error(error: &CliError) {
+    cli_ui().error(&error.message);
+}
+
+#[cfg(test)]
+mod cli_ui_tests {
+    use super::*;
+
+    #[test]
+    fn format_status_block_renders_single_line_plain() {
+        let rendered = format_status_block(
+            "Summoning",
+            StatusTone::Accent,
+            "workspace numi.toml",
+            false,
+        );
+        assert_eq!(rendered, " Summoning workspace numi.toml\n");
+    }
+
+    #[test]
+    fn format_status_block_indents_multiline_messages() {
+        let rendered =
+            format_status_block("Oops", StatusTone::Error, "first line\nsecond line", false);
+        assert_eq!(rendered, "      Oops first line\n           second line\n");
+    }
+
+    #[test]
+    fn format_status_label_wraps_color_when_enabled() {
+        let rendered = format_status_label("Stitched", StatusTone::Success, true);
+        assert!(rendered.starts_with("\u{1b}[32;1m"));
+        assert!(rendered.ends_with("\u{1b}[0m"));
+        assert!(rendered.contains("Stitched"));
+    }
+
+    #[test]
+    fn generation_summary_reports_breakdown() {
+        let mut summary = JobSummary::default();
+        summary.record_outcome(numi_core::WriteOutcome::Created);
+        summary.record_outcome(numi_core::WriteOutcome::Unchanged);
+        summary.record_outcome(numi_core::WriteOutcome::Skipped);
+        let rendered = format_status_block(
+            "Polished",
+            StatusTone::Success,
+            "3 jobs settled (1 stitched, 1 kept, 1 skipped)",
+            false,
+        );
+
+        assert_eq!(
+            rendered,
+            "  Polished 3 jobs settled (1 stitched, 1 kept, 1 skipped)\n"
+        );
+        assert_eq!(
+            summary,
+            JobSummary {
+                total: 3,
+                created: 1,
+                updated: 0,
+                unchanged: 1,
+                skipped: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn lexical_relative_path_walks_up_to_workspace_manifest() {
+        let path = Path::new("/tmp/workspace/numi.toml");
+        let base = Path::new("/tmp/workspace/AppUI");
+
+        let relative = lexical_relative_path(path, base).expect("relative path should resolve");
+
+        assert_eq!(relative, PathBuf::from("../numi.toml"));
     }
 }

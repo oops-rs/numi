@@ -28,6 +28,14 @@ path = "Resources/Localization"
 language = "swift"
 name = "l10n"
 
+# Optional generation hooks run only during `numi generate`.
+# Numi passes target metadata through environment variables such as:
+# NUMI_JOB_NAME, NUMI_OUTPUT_PATH, NUMI_OUTPUT_DIR, NUMI_CONFIG_PATH,
+# NUMI_WORKSPACE_MANIFEST_PATH, and for post hooks NUMI_WRITE_OUTCOME.
+#
+# [jobs.l10n.hooks.post_generate]
+# command = ["swiftformat"]
+
 # For multi-module repositories, a repo-root numi.toml can switch to:
 #
 # [workspace]
@@ -35,3 +43,6 @@ name = "l10n"
 #
 # [workspace.defaults.jobs.l10n.template]
 # path = "Templates/l10n"
+#
+# [workspace.defaults.jobs.l10n.hooks.post_generate]
+# command = ["Scripts/format-generated.sh"]

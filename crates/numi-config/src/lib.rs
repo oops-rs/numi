@@ -15,8 +15,8 @@ pub use discovery::{
 };
 pub use model::{
     ACCESS_LEVEL_VALUES, BUNDLE_MODE_VALUES, BuiltinTemplateConfig, BundleConfig, Config,
-    DEFAULT_ACCESS_LEVEL, DEFAULT_BUNDLE_MODE, DEFAULT_INCREMENTAL, DefaultsConfig,
-    INPUT_KIND_VALUES, InputConfig, JobConfig, TemplateConfig,
+    DEFAULT_ACCESS_LEVEL, DEFAULT_BUNDLE_MODE, DEFAULT_INCREMENTAL, DefaultsConfig, HookConfig,
+    HooksConfig, INPUT_KIND_VALUES, InputConfig, JobConfig, TemplateConfig,
 };
 pub use workspace::{
     LoadedWorkspace, WorkspaceConfig, WorkspaceDefaults, WorkspaceError, WorkspaceJobDefaults,
@@ -486,6 +486,24 @@ pub fn resolve_workspace_member_config(
         {
             job_builtin.language = default_builtin.language.clone();
         }
+
+        if let Some(defaults) = workspace.workspace.defaults.jobs.get(&job.name) {
+            if job.hooks.pre_generate.is_none() {
+                job.hooks.pre_generate = defaults
+                    .hooks
+                    .pre_generate
+                    .as_ref()
+                    .map(|hook| rebase_workspace_hook(workspace_root, member_root, hook));
+            }
+
+            if job.hooks.post_generate.is_none() {
+                job.hooks.post_generate = defaults
+                    .hooks
+                    .post_generate
+                    .as_ref()
+                    .map(|hook| rebase_workspace_hook(workspace_root, member_root, hook));
+            }
+        }
     }
 
     if let Some(override_config) = workspace.workspace.member_overrides.get(member_root) {
@@ -510,6 +528,39 @@ fn rebase_workspace_template_path(
     relative_path_from(&member_dir, &workspace_template_path)
         .to_string_lossy()
         .into_owned()
+}
+
+fn rebase_workspace_hook(
+    workspace_root: &Path,
+    member_root: &str,
+    hook: &HookConfig,
+) -> HookConfig {
+    let mut rebased = hook.clone();
+    let Some(command0) = rebased.command.first_mut() else {
+        return rebased;
+    };
+
+    if !command_looks_like_path(command0) {
+        return rebased;
+    }
+
+    let member_dir = workspace_root.join(member_root);
+    let workspace_command_path = workspace_root.join(&*command0);
+    *command0 = relative_path_from(&member_dir, &workspace_command_path)
+        .to_string_lossy()
+        .into_owned();
+
+    rebased
+}
+
+fn command_looks_like_path(command: &str) -> bool {
+    let path = Path::new(command);
+    path.is_absolute()
+        || command.starts_with('.')
+        || path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+        || path.components().count() > 1
 }
 
 fn relative_path_from(from: &Path, to: &Path) -> PathBuf {
@@ -891,6 +942,105 @@ language = "swift"
     }
 
     #[test]
+    fn parses_job_hooks_shape() {
+        let config = parse_str(
+            r#"
+version = 1
+
+[jobs.assets]
+output = "Generated/Assets.swift"
+
+[[jobs.assets.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.assets.template.builtin]
+language = "swift"
+name = "swiftui-assets"
+
+[jobs.assets.hooks.pre_generate]
+command = ["swiftformat", "--lint"]
+
+[jobs.assets.hooks.post_generate]
+command = ["swiftformat"]
+"#,
+        )
+        .expect("config with hooks should parse");
+
+        let hooks = config.jobs[0].hooks.clone();
+        assert_eq!(
+            hooks.pre_generate.as_ref().map(|hook| hook.command.clone()),
+            Some(vec!["swiftformat".to_string(), "--lint".to_string()])
+        );
+        assert_eq!(
+            hooks
+                .post_generate
+                .as_ref()
+                .map(|hook| hook.command.clone()),
+            Some(vec!["swiftformat".to_string()])
+        );
+    }
+
+    #[test]
+    fn rejects_empty_job_hook_command() {
+        let error = parse_str(
+            r#"
+version = 1
+
+[jobs.assets]
+output = "Generated/Assets.swift"
+
+[[jobs.assets.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.assets.template.builtin]
+language = "swift"
+name = "swiftui-assets"
+
+[jobs.assets.hooks.post_generate]
+command = []
+"#,
+        )
+        .expect_err("empty hook commands should fail validation");
+
+        assert!(
+            error
+                .to_string()
+                .contains("job hook command must not be empty")
+        );
+    }
+
+    #[test]
+    fn parses_workspace_defaults_job_hooks_shape() {
+        let manifest = parse_manifest_str(
+            r#"
+version = 1
+
+[workspace]
+members = ["AppUI"]
+
+[workspace.defaults.jobs.assets.hooks.post_generate]
+command = ["swiftformat"]
+"#,
+        )
+        .expect("workspace defaults hooks should parse");
+
+        let Manifest::Workspace(workspace) = manifest else {
+            panic!("expected workspace manifest");
+        };
+
+        assert_eq!(
+            workspace.workspace.defaults.jobs["assets"]
+                .hooks
+                .post_generate
+                .as_ref()
+                .map(|hook| hook.command.clone()),
+            Some(vec!["swiftformat".to_string()])
+        );
+    }
+
+    #[test]
     fn rejects_workspace_member_overrides_for_undeclared_members() {
         let error = parse_manifest_str(
             r#"
@@ -1042,6 +1192,117 @@ name = "assets"
             .expect("builtin should exist");
         assert_eq!(builtin.language.as_deref(), Some("objc"));
         assert_eq!(builtin.name.as_deref(), Some("assets"));
+    }
+
+    #[test]
+    fn workspace_defaults_hooks_inherit_when_job_hooks_are_missing() {
+        let manifest = parse_manifest_str(
+            r#"
+version = 1
+
+[workspace]
+members = ["AppUI"]
+
+[workspace.defaults.jobs.assets.hooks.post_generate]
+command = ["swiftformat"]
+"#,
+        )
+        .expect("workspace should parse");
+        let Manifest::Workspace(workspace) = manifest else {
+            panic!("expected workspace manifest");
+        };
+
+        let member_config = toml::from_str::<Config>(
+            r#"
+version = 1
+
+[jobs.assets]
+output = "Generated/Assets.h"
+
+[[jobs.assets.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.assets.template.builtin]
+language = "objc"
+name = "assets"
+"#,
+        )
+        .expect("member config should deserialize");
+
+        let resolved = resolve_workspace_member_config(
+            Path::new("/tmp/workspace"),
+            &workspace,
+            "AppUI",
+            &member_config,
+        )
+        .expect("workspace defaults should resolve");
+
+        assert_eq!(
+            resolved.jobs[0]
+                .hooks
+                .post_generate
+                .as_ref()
+                .map(|hook| hook.command.clone()),
+            Some(vec!["swiftformat".to_string()])
+        );
+    }
+
+    #[test]
+    fn job_level_hooks_replace_workspace_default_hooks_for_same_phase() {
+        let manifest = parse_manifest_str(
+            r#"
+version = 1
+
+[workspace]
+members = ["AppUI"]
+
+[workspace.defaults.jobs.assets.hooks.post_generate]
+command = ["swiftformat"]
+"#,
+        )
+        .expect("workspace should parse");
+        let Manifest::Workspace(workspace) = manifest else {
+            panic!("expected workspace manifest");
+        };
+
+        let member_config = toml::from_str::<Config>(
+            r#"
+version = 1
+
+[jobs.assets]
+output = "Generated/Assets.h"
+
+[[jobs.assets.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.assets.template.builtin]
+language = "objc"
+name = "assets"
+
+[jobs.assets.hooks.post_generate]
+command = ["swiftlint", "format"]
+"#,
+        )
+        .expect("member config should deserialize");
+
+        let resolved = resolve_workspace_member_config(
+            Path::new("/tmp/workspace"),
+            &workspace,
+            "AppUI",
+            &member_config,
+        )
+        .expect("workspace defaults should resolve");
+
+        assert_eq!(
+            resolved.jobs[0]
+                .hooks
+                .post_generate
+                .as_ref()
+                .map(|hook| hook.command.clone()),
+            Some(vec!["swiftlint".to_string(), "format".to_string()])
+        );
     }
 
     #[test]
@@ -1731,6 +1992,7 @@ path = "Templates/assets.jinja"
                     }),
                     path: None,
                 },
+                hooks: HooksConfig::default(),
             }],
         };
 

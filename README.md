@@ -118,9 +118,10 @@ name = "assets"
 `numi generate`
 
 - discovers the nearest manifest unless `--config` is passed
-- uses the nearest local `numi.toml` first
+- auto-prefers the nearest ancestor workspace when run from a workspace member directory
 - runs one config for `[jobs]` manifests and the whole workspace for `[workspace]` manifests
 - generates outputs for all named jobs, or only selected jobs when `--job` is repeated
+- runs per-job `pre_generate` hooks before rendering and `post_generate` hooks after created or updated outputs
 - prints non-fatal warnings to stderr
 - may reuse cached parser outputs when inputs are unchanged
 
@@ -129,6 +130,8 @@ name = "assets"
 - computes what `generate` would write without modifying files
 - exits `0` when outputs are current
 - exits `2` when outputs are stale
+- auto-prefers the nearest ancestor workspace when run from a workspace member directory
+- never runs generation hooks
 - prints warnings to stderr without turning the run into a failure
 
 `numi dump-context`
@@ -190,7 +193,45 @@ Then each member job can keep only the built-in name:
 name = "assets"
 ```
 
-Workspace members are directory roots, not config-file paths. From the repo root, plain `numi generate` and `numi check` use that nearest workspace `numi.toml` automatically. From inside a member directory, add `--workspace` when you want the ancestor workspace instead of the local member manifest. Workspace defaults can provide `template.builtin.language`, but each job still needs to pick its own built-in `name`.
+Workspace members are directory roots, not config-file paths. From the repo root, plain `numi generate` and `numi check` use that nearest workspace `numi.toml` automatically. From inside a member directory, plain `numi generate` and `numi check` also auto-prefer the nearest ancestor workspace. Use `--config` when you want to force a specific member manifest instead. Workspace defaults can provide `template.builtin.language`, but each job still needs to pick its own built-in `name`.
+
+## Generation Hooks
+
+Jobs can run optional hooks around generation:
+
+```toml
+[jobs.l10n.hooks.pre_generate]
+command = ["Scripts/prepare-generated.sh"]
+
+[jobs.l10n.hooks.post_generate]
+command = ["swiftformat"]
+```
+
+Workspace defaults can provide the same phases:
+
+```toml
+[workspace.defaults.jobs.l10n.hooks.post_generate]
+command = ["Scripts/format-generated.sh"]
+```
+
+Hook rules:
+
+- hooks run only during `numi generate`
+- `pre_generate` runs before rendering and writing
+- `post_generate` runs only after a job creates or updates its output
+- job-level hooks replace workspace defaults for the same phase
+- hook failures fail the command
+
+Numi passes target metadata through environment variables:
+
+- `NUMI_JOB_NAME`
+- `NUMI_OUTPUT_PATH`
+- `NUMI_OUTPUT_DIR`
+- `NUMI_CONFIG_PATH`
+- `NUMI_WORKSPACE_MANIFEST_PATH` when running through a workspace
+- `NUMI_WRITE_OUTCOME` for post hooks, set to `created` or `updated`
+
+If `command[0]` looks like a filesystem path, Numi resolves it relative to the manifest that declared it. That means workspace-default hook paths stay repo-root-relative, while member hook paths stay member-relative.
 
 ## Custom Templates
 

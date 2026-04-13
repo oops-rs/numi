@@ -3,8 +3,8 @@ use std::collections::HashSet;
 use numi_diagnostics::Diagnostic;
 
 use crate::model::{
-    ACCESS_LEVEL_VALUES, BUILTIN_TEMPLATE_LANGUAGES, BUNDLE_MODE_VALUES, Config, INPUT_KIND_VALUES,
-    TemplateConfig, builtin_template_names_for_language,
+    ACCESS_LEVEL_VALUES, BUILTIN_TEMPLATE_LANGUAGES, BUNDLE_MODE_VALUES, Config, HooksConfig,
+    INPUT_KIND_VALUES, TemplateConfig, builtin_template_names_for_language,
 };
 
 pub fn validate_config(config: &Config) -> Vec<Diagnostic> {
@@ -102,9 +102,77 @@ pub fn validate_config(config: &Config) -> Vec<Diagnostic> {
             &format!("jobs.{}.template", job.name),
             Some(job.name.as_str()),
         );
+        validate_hooks(
+            &mut diagnostics,
+            &job.hooks,
+            "job hook",
+            &format!("jobs.{}.hooks", job.name),
+            Some(job.name.as_str()),
+        );
     }
 
     diagnostics
+}
+
+pub(crate) fn validate_hooks(
+    diagnostics: &mut Vec<Diagnostic>,
+    hooks: &HooksConfig,
+    label: &str,
+    field_path: &str,
+    job: Option<&str>,
+) {
+    validate_hook_command(
+        diagnostics,
+        hooks
+            .pre_generate
+            .as_ref()
+            .map(|hook| hook.command.as_slice()),
+        label,
+        &format!("{field_path}.pre_generate.command"),
+        job,
+    );
+    validate_hook_command(
+        diagnostics,
+        hooks
+            .post_generate
+            .as_ref()
+            .map(|hook| hook.command.as_slice()),
+        label,
+        &format!("{field_path}.post_generate.command"),
+        job,
+    );
+}
+
+fn validate_hook_command(
+    diagnostics: &mut Vec<Diagnostic>,
+    command: Option<&[String]>,
+    label: &str,
+    field_path: &str,
+    job: Option<&str>,
+) {
+    let Some(command) = command else {
+        return;
+    };
+
+    if command.is_empty() {
+        let diagnostic = Diagnostic::error(format!("{label} command must not be empty")).with_hint(
+            format!("set `{field_path} = [\"tool\"]` or remove the hook"),
+        );
+        diagnostics.push(match job {
+            Some(job) => diagnostic.with_job(job.to_owned()),
+            None => diagnostic,
+        });
+        return;
+    }
+
+    if command[0].trim().is_empty() {
+        let diagnostic = Diagnostic::error(format!("{label} executable must not be empty"))
+            .with_hint(format!("set a non-empty executable in `{field_path}[0]`"));
+        diagnostics.push(match job {
+            Some(job) => diagnostic.with_job(job.to_owned()),
+            None => diagnostic,
+        });
+    }
 }
 
 pub(crate) fn validate_template(

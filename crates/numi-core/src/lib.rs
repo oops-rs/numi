@@ -11,9 +11,9 @@ mod render;
 
 pub use output::WriteOutcome;
 pub use pipeline::{
-    CheckReport, DumpContextReport, GenerateError, GenerateOptions, GenerateReport, JobReport,
-    check, check_loaded_config, dump_context, generate, generate_loaded_config,
-    generate_with_options,
+    CheckReport, DumpContextReport, GenerateError, GenerateOptions, GenerateReport, HookPhase,
+    HookReport, JobReport, check, check_loaded_config, dump_context, generate,
+    generate_loaded_config, generate_with_options,
 };
 
 #[cfg(test)]

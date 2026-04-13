@@ -1,6 +1,6 @@
 use blake3::Hasher;
 use camino::Utf8PathBuf;
-use numi_config::{BundleConfig, DefaultsConfig, JobConfig};
+use numi_config::{BundleConfig, DefaultsConfig, HookConfig, JobConfig};
 use numi_diagnostics::Diagnostic;
 use numi_ir::{
     GraphMetadata, Metadata, ModuleKind, ResourceGraph, ResourceModule,
@@ -13,6 +13,7 @@ use std::{
     collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
+    process::Command,
 };
 
 use crate::{
@@ -41,6 +42,7 @@ pub struct GenerateReport {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GenerateOptions {
     pub incremental: Option<bool>,
+    pub workspace_manifest_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,6 +50,27 @@ pub struct JobReport {
     pub job_name: String,
     pub output_path: Utf8PathBuf,
     pub outcome: WriteOutcome,
+    pub hook_reports: Vec<HookReport>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HookReport {
+    pub phase: HookPhase,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HookPhase {
+    PreGenerate,
+    PostGenerate,
+}
+
+impl HookPhase {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::PreGenerate => "pre_generate",
+            Self::PostGenerate => "post_generate",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,6 +129,20 @@ pub enum GenerateError {
     InspectOutput {
         job: String,
         source: OutputError,
+    },
+    HookSpawn {
+        job: String,
+        phase: HookPhase,
+        command: Vec<String>,
+        source: std::io::Error,
+    },
+    HookExit {
+        job: String,
+        phase: HookPhase,
+        command: Vec<String>,
+        status: std::process::ExitStatus,
+        stdout: String,
+        stderr: String,
     },
     InvalidOutputPath {
         path: PathBuf,
@@ -167,6 +204,40 @@ impl std::fmt::Display for GenerateError {
             Self::InspectOutput { job, source } => {
                 write!(f, "failed to inspect output for job `{job}`: {source}")
             }
+            Self::HookSpawn {
+                job,
+                phase,
+                command,
+                source,
+            } => write!(
+                f,
+                "failed to run {} hook for job `{job}` ({}): {source}",
+                phase.as_str(),
+                render_hook_command(command)
+            ),
+            Self::HookExit {
+                job,
+                phase,
+                command,
+                status,
+                stdout,
+                stderr,
+            } => {
+                write!(
+                    f,
+                    "{} hook for job `{job}` failed ({}) with status {}",
+                    phase.as_str(),
+                    render_hook_command(command),
+                    status
+                )?;
+                if !stderr.trim().is_empty() {
+                    write!(f, "\nstderr:\n{}", stderr.trim_end())?;
+                }
+                if !stdout.trim().is_empty() {
+                    write!(f, "\nstdout:\n{}", stdout.trim_end())?;
+                }
+                Ok(())
+            }
             Self::InvalidOutputPath { path } => write!(
                 f,
                 "generated output path {} is not valid UTF-8 and cannot be recorded",
@@ -214,6 +285,7 @@ pub fn generate_loaded_config(
             job_name: job_report.job_name,
             output_path: job_report.output_path,
             outcome: job_report.outcome,
+            hook_reports: job_report.hook_reports,
         });
     }
 
@@ -295,6 +367,7 @@ fn generate_job(
     options: &GenerateOptions,
 ) -> Result<JobExecution, GenerateError> {
     let output_path = config_dir.join(&job.output);
+    let mut hook_reports = Vec::new();
     let incremental = resolve_incremental(defaults, job, options);
     let should_check_generation_cache = incremental
         && generation_cache::cache_record_exists(config_path, &job.name)
@@ -316,12 +389,30 @@ fn generate_job(
             job_name: job.name.clone(),
             output_path: to_utf8_path(&output_path)?,
             outcome: WriteOutcome::Skipped,
+            hook_reports,
             warnings: Vec::new(),
         });
     }
 
     if generation_plan.is_none() {
         generation_plan = compute_generation_fingerprint(config_dir, defaults, job);
+    }
+
+    let hook_env = HookEnvironment::new(
+        config_path,
+        options.workspace_manifest_path.as_deref(),
+        &job.name,
+        &output_path,
+    )?;
+    if let Some(hook) = job.hooks.pre_generate.as_ref() {
+        hook_reports.push(run_hook(
+            config_dir,
+            hook,
+            HookPhase::PreGenerate,
+            &job.name,
+            &hook_env,
+            None,
+        )?);
     }
 
     let (context, warnings) = build_context(
@@ -343,10 +434,24 @@ fn generate_job(
         let _ = generation_cache::store(config_path, &job.name, &plan.fingerprint, &output_path);
     }
 
+    if matches!(outcome, WriteOutcome::Created | WriteOutcome::Updated)
+        && let Some(hook) = job.hooks.post_generate.as_ref()
+    {
+        hook_reports.push(run_hook(
+            config_dir,
+            hook,
+            HookPhase::PostGenerate,
+            &job.name,
+            &hook_env,
+            Some(outcome),
+        )?);
+    }
+
     Ok(JobExecution {
         job_name: job.name.clone(),
         output_path: to_utf8_path(&output_path)?,
         outcome,
+        hook_reports,
         warnings,
     })
 }
@@ -422,6 +527,7 @@ struct JobExecution {
     job_name: String,
     output_path: Utf8PathBuf,
     outcome: WriteOutcome,
+    hook_reports: Vec<HookReport>,
     warnings: Vec<Diagnostic>,
 }
 
@@ -1406,6 +1512,145 @@ fn merged_bundle(defaults: &DefaultsConfig, job: &JobConfig) -> BundleConfig {
     }
 }
 
+#[derive(Debug, Clone)]
+struct HookEnvironment {
+    config_path: PathBuf,
+    workspace_manifest_path: Option<PathBuf>,
+    output_path: PathBuf,
+    output_dir: PathBuf,
+    job_name: String,
+}
+
+impl HookEnvironment {
+    fn new(
+        config_path: &Path,
+        workspace_manifest_path: Option<&Path>,
+        job_name: &str,
+        output_path: &Path,
+    ) -> Result<Self, GenerateError> {
+        Ok(Self {
+            config_path: absolute_path(config_path)?,
+            workspace_manifest_path: workspace_manifest_path.map(absolute_path).transpose()?,
+            output_path: absolute_path(output_path)?,
+            output_dir: absolute_path(output_path.parent().unwrap_or_else(|| Path::new(".")))?,
+            job_name: job_name.to_owned(),
+        })
+    }
+}
+
+fn run_hook(
+    config_dir: &Path,
+    hook: &HookConfig,
+    phase: HookPhase,
+    job_name: &str,
+    env: &HookEnvironment,
+    outcome: Option<WriteOutcome>,
+) -> Result<HookReport, GenerateError> {
+    let (program, args) = resolve_hook_command(config_dir, &hook.command);
+    let output = Command::new(&program)
+        .args(args)
+        .current_dir(config_dir)
+        .env("NUMI_HOOK_PHASE", phase.as_str())
+        .env("NUMI_HOOK_JOB_NAME", &env.job_name)
+        .env("NUMI_HOOK_CONFIG_PATH", &env.config_path)
+        .env("NUMI_HOOK_OUTPUT_PATH", &env.output_path)
+        .env("NUMI_HOOK_OUTPUT_DIR", &env.output_dir)
+        .env_remove("NUMI_HOOK_WRITE_OUTCOME")
+        .env_remove("NUMI_HOOK_WORKSPACE_CONFIG_PATH")
+        .envs(
+            outcome
+                .map(|value| {
+                    [(
+                        "NUMI_HOOK_WRITE_OUTCOME",
+                        write_outcome_name(value).to_string(),
+                    )]
+                })
+                .into_iter()
+                .flatten(),
+        )
+        .envs(
+            env.workspace_manifest_path
+                .as_ref()
+                .map(|path| {
+                    [(
+                        "NUMI_HOOK_WORKSPACE_CONFIG_PATH",
+                        path.display().to_string(),
+                    )]
+                })
+                .into_iter()
+                .flatten(),
+        )
+        .output()
+        .map_err(|source| GenerateError::HookSpawn {
+            job: job_name.to_owned(),
+            phase,
+            command: hook.command.clone(),
+            source,
+        })?;
+
+    if !output.status.success() {
+        return Err(GenerateError::HookExit {
+            job: job_name.to_owned(),
+            phase,
+            command: hook.command.clone(),
+            status: output.status,
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        });
+    }
+
+    Ok(HookReport { phase })
+}
+
+fn resolve_hook_command<'a>(config_dir: &Path, command: &'a [String]) -> (PathBuf, &'a [String]) {
+    let program = command
+        .first()
+        .map(|value| {
+            if command_looks_like_path(value) {
+                config_dir.join(value)
+            } else {
+                PathBuf::from(value)
+            }
+        })
+        .unwrap_or_default();
+    (program, &command[1..])
+}
+
+fn command_looks_like_path(command: &str) -> bool {
+    let path = Path::new(command);
+    path.is_absolute()
+        || command.starts_with('.')
+        || path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+        || path.components().count() > 1
+}
+
+fn absolute_path(path: &Path) -> Result<PathBuf, GenerateError> {
+    if path.is_absolute() {
+        return Ok(path.to_path_buf());
+    }
+
+    let cwd = std::env::current_dir().map_err(|error| GenerateError::UnsupportedJob {
+        job: "hooks".to_string(),
+        detail: format!("failed to read cwd while resolving hook paths: {error}"),
+    })?;
+    Ok(cwd.join(path))
+}
+
+fn write_outcome_name(outcome: WriteOutcome) -> &'static str {
+    match outcome {
+        WriteOutcome::Created => "created",
+        WriteOutcome::Updated => "updated",
+        WriteOutcome::Unchanged => "unchanged",
+        WriteOutcome::Skipped => "skipped",
+    }
+}
+
+fn render_hook_command(command: &[String]) -> String {
+    command.join(" ")
+}
+
 fn to_utf8_path(path: &Path) -> Result<Utf8PathBuf, GenerateError> {
     Utf8PathBuf::from_path_buf(path.to_path_buf())
         .map_err(|path| GenerateError::InvalidOutputPath { path })
@@ -1424,8 +1669,11 @@ mod tests {
     use camino::Utf8PathBuf;
     use numi_ir::{EntryKind, Metadata, ModuleKind, RawEntry, ResourceEntry, swift_identifier};
     use serde_json::json;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
     use std::{
         fs,
+        path::MAIN_SEPARATOR,
         path::Path,
         path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
@@ -1699,6 +1947,44 @@ path = "Templates/files.jinja"
         .expect("config should be written");
     }
 
+    fn write_custom_files_job_config_with_hooks(
+        config_path: &Path,
+        incremental: Option<bool>,
+        pre_generate: Option<&[String]>,
+        post_generate: Option<&[String]>,
+    ) {
+        let incremental_line = incremental
+            .map(|value| format!("incremental = {value}\n"))
+            .unwrap_or_default();
+        let mut manifest = format!(
+            r#"
+version = 1
+
+[jobs.files]
+output = "Generated/Files.swift"
+{incremental_line}
+[[jobs.files.inputs]]
+type = "files"
+path = "Resources/Fixtures"
+
+[jobs.files.template]
+path = "Templates/files.jinja"
+"#
+        );
+
+        if let Some(command) = pre_generate {
+            manifest.push_str("\n[jobs.files.hooks.pre_generate]\n");
+            manifest.push_str(&format!("command = {}\n", toml_array(command)));
+        }
+
+        if let Some(command) = post_generate {
+            manifest.push_str("\n[jobs.files.hooks.post_generate]\n");
+            manifest.push_str(&format!("command = {}\n", toml_array(command)));
+        }
+
+        fs::write(config_path, manifest).expect("config should be written");
+    }
+
     fn write_xcstrings_job_config(config_path: &Path) {
         fs::write(
             config_path,
@@ -1741,6 +2027,50 @@ name = "files"
 "#,
         )
         .expect("config should be written");
+    }
+
+    fn toml_array(values: &[String]) -> String {
+        let parts = values
+            .iter()
+            .map(|value| format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\"")))
+            .collect::<Vec<_>>();
+        format!("[{}]", parts.join(", "))
+    }
+
+    fn write_hook_probe_script(root: &Path, name: &str, exit_code: i32) -> String {
+        let scripts_root = root.join("Scripts");
+        fs::create_dir_all(&scripts_root).expect("scripts dir should exist");
+        let file_name = if cfg!(windows) {
+            format!("{name}.cmd")
+        } else {
+            format!("{name}.sh")
+        };
+        let script_path = scripts_root.join(&file_name);
+        let script_body = if cfg!(windows) {
+            format!(
+                "@echo off\r\nsetlocal\r\n>> \"%~1\" echo %NUMI_HOOK_PHASE%^|%NUMI_HOOK_JOB_NAME%^|%NUMI_HOOK_OUTPUT_PATH%^|%NUMI_HOOK_OUTPUT_DIR%^|%NUMI_HOOK_CONFIG_PATH%^|%NUMI_HOOK_WRITE_OUTCOME%^|%NUMI_HOOK_WORKSPACE_CONFIG_PATH%\r\nexit /b {exit_code}\r\n"
+            )
+        } else {
+            format!(
+                "#!/bin/sh\nlog_path=\"$1\"\nprintf '%s|%s|%s|%s|%s|%s|%s\\n' \"$NUMI_HOOK_PHASE\" \"$NUMI_HOOK_JOB_NAME\" \"$NUMI_HOOK_OUTPUT_PATH\" \"$NUMI_HOOK_OUTPUT_DIR\" \"$NUMI_HOOK_CONFIG_PATH\" \"${{NUMI_HOOK_WRITE_OUTCOME-}}\" \"${{NUMI_HOOK_WORKSPACE_CONFIG_PATH-}}\" >> \"$log_path\"\nexit {exit_code}\n"
+            )
+        };
+        fs::write(&script_path, script_body).expect("hook script should be written");
+        #[cfg(unix)]
+        {
+            let mut permissions = fs::metadata(&script_path)
+                .expect("script metadata should exist")
+                .permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&script_path, permissions)
+                .expect("script permissions should be updated");
+        }
+
+        PathBuf::from("Scripts")
+            .join(file_name)
+            .display()
+            .to_string()
+            .replace(MAIN_SEPARATOR, "/")
     }
 
     fn seed_cached_parse(
@@ -2385,6 +2715,7 @@ name = "files"
             None,
             GenerateOptions {
                 incremental: Some(true),
+                workspace_manifest_path: None,
             },
         )
         .expect("second generation should honor the explicit override");
@@ -2393,6 +2724,227 @@ name = "files"
             fs::read_to_string(&generated_path).expect("generated file should remain"),
             "faq.pdf\n"
         );
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn generate_runs_pre_and_post_hooks_with_target_env() {
+        let temp_dir = make_temp_dir("pipeline-hooks-pre-post");
+        let config_path = temp_dir.join("numi.toml");
+        let files_root = temp_dir.join("Resources/Fixtures");
+        let template_path = temp_dir.join("Templates/files.jinja");
+        let generated_path = temp_dir.join("Generated/Files.swift");
+        let log_path = temp_dir.join("hook.log");
+        let pre_script = write_hook_probe_script(&temp_dir, "pre-hook", 0);
+        let post_script = write_hook_probe_script(&temp_dir, "post-hook", 0);
+
+        fs::create_dir_all(&files_root).expect("files directory should exist");
+        fs::create_dir_all(
+            template_path
+                .parent()
+                .expect("template path should have parent"),
+        )
+        .expect("template dir should exist");
+        fs::write(files_root.join("faq.pdf"), "faq").expect("faq file should be written");
+        fs::write(
+            &template_path,
+            "{{ modules[0].entries[0].properties.fileName }}\n",
+        )
+        .expect("template should be written");
+        write_custom_files_job_config_with_hooks(
+            &config_path,
+            Some(false),
+            Some(&[pre_script, log_path.display().to_string()]),
+            Some(&[post_script, log_path.display().to_string()]),
+        );
+
+        let report = generate(&config_path, None).expect("generation should succeed");
+        let log = fs::read_to_string(&log_path).expect("hook log should exist");
+        let lines = log.lines().collect::<Vec<_>>();
+        let generated_abs = generated_path.display().to_string();
+        let generated_dir_abs = generated_path
+            .parent()
+            .expect("generated path should have parent")
+            .display()
+            .to_string();
+        let config_abs = config_path.display().to_string();
+
+        assert_eq!(report.jobs[0].outcome, WriteOutcome::Created);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(
+            lines[0],
+            format!("pre_generate|files|{generated_abs}|{generated_dir_abs}|{config_abs}||")
+        );
+        assert_eq!(
+            lines[1],
+            format!(
+                "post_generate|files|{generated_abs}|{generated_dir_abs}|{config_abs}|created|"
+            )
+        );
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn generate_does_not_run_post_hook_when_output_is_unchanged() {
+        let temp_dir = make_temp_dir("pipeline-hooks-post-unchanged");
+        let config_path = temp_dir.join("numi.toml");
+        let files_root = temp_dir.join("Resources/Fixtures");
+        let template_path = temp_dir.join("Templates/files.jinja");
+        let log_path = temp_dir.join("hook.log");
+        let post_script = write_hook_probe_script(&temp_dir, "post-hook", 0);
+
+        fs::create_dir_all(&files_root).expect("files directory should exist");
+        fs::create_dir_all(
+            template_path
+                .parent()
+                .expect("template path should have parent"),
+        )
+        .expect("template dir should exist");
+        fs::write(files_root.join("faq.pdf"), "faq").expect("faq file should be written");
+        fs::write(
+            &template_path,
+            "{{ modules[0].entries[0].properties.fileName }}\n",
+        )
+        .expect("template should be written");
+        write_custom_files_job_config_with_hooks(
+            &config_path,
+            Some(false),
+            None,
+            Some(&[post_script, log_path.display().to_string()]),
+        );
+
+        let first = generate(&config_path, None).expect("first generation should succeed");
+        let second = generate(&config_path, None).expect("second generation should succeed");
+        let log = fs::read_to_string(&log_path).expect("hook log should exist");
+        let lines = log.lines().collect::<Vec<_>>();
+
+        assert_eq!(first.jobs[0].outcome, WriteOutcome::Created);
+        assert_eq!(second.jobs[0].outcome, WriteOutcome::Unchanged);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("|created|"));
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn generate_fails_when_pre_generate_hook_fails() {
+        let temp_dir = make_temp_dir("pipeline-hooks-pre-fail");
+        let config_path = temp_dir.join("numi.toml");
+        let files_root = temp_dir.join("Resources/Fixtures");
+        let template_path = temp_dir.join("Templates/files.jinja");
+        let generated_path = temp_dir.join("Generated/Files.swift");
+        let log_path = temp_dir.join("hook.log");
+        let pre_script = write_hook_probe_script(&temp_dir, "pre-hook", 7);
+
+        fs::create_dir_all(&files_root).expect("files directory should exist");
+        fs::create_dir_all(
+            template_path
+                .parent()
+                .expect("template path should have parent"),
+        )
+        .expect("template dir should exist");
+        fs::write(files_root.join("faq.pdf"), "faq").expect("faq file should be written");
+        fs::write(
+            &template_path,
+            "{{ modules[0].entries[0].properties.fileName }}\n",
+        )
+        .expect("template should be written");
+        write_custom_files_job_config_with_hooks(
+            &config_path,
+            Some(false),
+            Some(&[pre_script, log_path.display().to_string()]),
+            None,
+        );
+
+        let error = generate(&config_path, None).expect_err("generation should fail");
+        let message = error.to_string();
+
+        assert!(message.contains("pre_generate"));
+        assert!(message.contains("job `files`"));
+        assert!(!generated_path.exists());
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn generate_loaded_config_passes_workspace_manifest_path_to_hooks() {
+        let temp_dir = make_temp_dir("pipeline-hooks-workspace-env");
+        let workspace_root = temp_dir.join("workspace");
+        let workspace_manifest_path = workspace_root.join("numi.toml");
+        let member_root = workspace_root.join("AppUI");
+        let member_config_path = member_root.join("numi.toml");
+        let files_root = member_root.join("Resources/Fixtures");
+        let template_path = member_root.join("Templates/files.jinja");
+        let log_path = workspace_root.join("hook.log");
+        let hook_script = write_hook_probe_script(&workspace_root, "workspace-post-hook", 0);
+
+        fs::create_dir_all(&files_root).expect("files directory should exist");
+        fs::create_dir_all(
+            template_path
+                .parent()
+                .expect("template path should have parent"),
+        )
+        .expect("template dir should exist");
+        fs::write(files_root.join("faq.pdf"), "faq").expect("faq file should be written");
+        fs::write(
+            &template_path,
+            "{{ modules[0].entries[0].properties.fileName }}\n",
+        )
+        .expect("template should be written");
+        fs::write(
+            &workspace_manifest_path,
+            format!(
+                r#"
+version = 1
+
+[workspace]
+members = ["AppUI"]
+
+[workspace.defaults.jobs.files.hooks.post_generate]
+command = {}
+"#,
+                toml_array(&[hook_script, log_path.display().to_string()])
+            ),
+        )
+        .expect("workspace manifest should be written");
+        write_custom_files_job_config(&member_config_path, Some(false));
+
+        let manifest = numi_config::parse_manifest_str(
+            &fs::read_to_string(&workspace_manifest_path).expect("workspace manifest should exist"),
+        )
+        .expect("workspace manifest should parse");
+        let numi_config::Manifest::Workspace(workspace) = manifest else {
+            panic!("expected workspace manifest");
+        };
+        let member_config = numi_config::parse_str(
+            &fs::read_to_string(&member_config_path).expect("member config should exist"),
+        )
+        .expect("member config should parse");
+        let resolved = numi_config::resolve_workspace_member_config(
+            &workspace_root,
+            &workspace,
+            "AppUI",
+            &member_config,
+        )
+        .expect("workspace config should resolve");
+
+        let report = generate_loaded_config(
+            &member_config_path,
+            &resolved,
+            None,
+            GenerateOptions {
+                incremental: Some(false),
+                workspace_manifest_path: Some(workspace_manifest_path.clone()),
+            },
+        )
+        .expect("generation should succeed");
+        let log = fs::read_to_string(&log_path).expect("hook log should exist");
+        let line = log.lines().next().expect("hook line should exist");
+
+        assert_eq!(report.jobs[0].outcome, WriteOutcome::Created);
+        assert!(line.ends_with(&workspace_manifest_path.display().to_string()));
 
         fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
     }

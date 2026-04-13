@@ -1,3 +1,5 @@
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::{
     fs,
     fs::OpenOptions,
@@ -46,6 +48,49 @@ fn copy_dir_all(source: &Path, destination: &Path) {
 
 fn write_manifest(root: &Path, contents: &str) {
     fs::write(root.join("numi.toml"), contents).expect("manifest should exist");
+}
+
+fn toml_array(values: &[String]) -> String {
+    let parts = values
+        .iter()
+        .map(|value| format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\"")))
+        .collect::<Vec<_>>();
+    format!("[{}]", parts.join(", "))
+}
+
+fn write_hook_probe_script(root: &Path, name: &str, exit_code: i32) -> String {
+    let scripts_root = root.join("Scripts");
+    fs::create_dir_all(&scripts_root).expect("scripts dir should exist");
+    let file_name = if cfg!(windows) {
+        format!("{name}.cmd")
+    } else {
+        format!("{name}.sh")
+    };
+    let script_path = scripts_root.join(&file_name);
+    let script_body = if cfg!(windows) {
+        format!(
+            "@echo off\r\nsetlocal\r\n>> \"%~1\" echo %NUMI_HOOK_PHASE%^|%NUMI_HOOK_JOB_NAME%^|%NUMI_HOOK_WORKSPACE_CONFIG_PATH%\r\nexit /b {exit_code}\r\n"
+        )
+    } else {
+        format!(
+            "#!/bin/sh\nlog_path=\"$1\"\nprintf '%s|%s|%s\\n' \"$NUMI_HOOK_PHASE\" \"$NUMI_HOOK_JOB_NAME\" \"${{NUMI_HOOK_WORKSPACE_CONFIG_PATH-}}\" >> \"$log_path\"\nexit {exit_code}\n"
+        )
+    };
+    fs::write(&script_path, script_body).expect("hook script should be written");
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&script_path)
+            .expect("script metadata should exist")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("script should be executable");
+    }
+
+    PathBuf::from("Scripts")
+        .join(file_name)
+        .display()
+        .to_string()
+        .replace(std::path::MAIN_SEPARATOR, "/")
 }
 
 fn starter_config_lock_path() -> PathBuf {
@@ -1615,6 +1660,80 @@ path = "Templates/l10n"
     let generated = fs::read_to_string(member_root.join("Generated/L10n.swift"))
         .expect("generated l10n file should exist");
     assert_eq!(generated, "AUTO|l10n|Localizable\n");
+
+    fs::remove_dir_all(temp_root).expect("temp dir should be removed");
+}
+
+#[test]
+fn generate_workspace_runs_inherited_hooks_and_passes_workspace_manifest_path() {
+    let temp_root = make_temp_dir("generate-workspace-inherited-hooks");
+    let workspace_root = temp_root.join("workspace");
+    let member_root = workspace_root.join("apps/files");
+    let hook_log = workspace_root.join("hook.log");
+    let hook_script = write_hook_probe_script(&workspace_root, "workspace-post-hook", 0);
+
+    fs::create_dir_all(member_root.join("Resources")).expect("member resources dir should exist");
+    copy_dir_all(
+        &repo_root().join("fixtures/files-basic/Resources/Fixtures"),
+        &member_root.join("Resources/Fixtures"),
+    );
+    write_manifest(
+        &member_root,
+        r#"
+version = 1
+
+[jobs.files]
+output = "Generated/Files.swift"
+incremental = false
+
+[[jobs.files.inputs]]
+type = "files"
+path = "Resources/Fixtures"
+
+[jobs.files.template.builtin]
+language = "swift"
+name = "files"
+"#,
+    );
+    write_manifest(
+        &workspace_root,
+        &format!(
+            r#"
+version = 1
+
+[workspace]
+members = ["apps/files"]
+
+[workspace.defaults.jobs.files.hooks.post_generate]
+command = {}
+"#,
+            toml_array(&[hook_script, hook_log.display().to_string()])
+        ),
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_numi"))
+        .args(["generate"])
+        .current_dir(&member_root)
+        .output()
+        .expect("numi generate should run");
+
+    assert!(
+        output.status.success(),
+        "command failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let log = fs::read_to_string(&hook_log).expect("hook log should exist");
+    let line = log.lines().next().expect("hook line should exist");
+    let workspace_manifest = workspace_root
+        .join("numi.toml")
+        .canonicalize()
+        .expect("workspace manifest should canonicalize");
+    assert_eq!(
+        line,
+        format!("post_generate|files|{}", workspace_manifest.display())
+    );
 
     fs::remove_dir_all(temp_root).expect("temp dir should be removed");
 }

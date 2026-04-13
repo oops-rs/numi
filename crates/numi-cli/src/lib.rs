@@ -91,6 +91,7 @@ fn run_generate_config(
         selected_jobs,
         numi_core::GenerateOptions {
             incremental: args.incremental_override.resolve(),
+            workspace_manifest_path: None,
         },
     )
     .map_err(|error| CliError::new(error.to_string()))?;
@@ -213,6 +214,7 @@ fn run_generate_workspace(
             selected_jobs.as_deref(),
             numi_core::GenerateOptions {
                 incremental: args.incremental_override.resolve(),
+                workspace_manifest_path: Some(manifest_path.to_path_buf()),
             },
         )
         .map_err(|error| CliError::new(error.to_string()))?;
@@ -582,6 +584,22 @@ impl CliUi {
 
     fn job_reports(&self, root: &Path, jobs: &[numi_core::JobReport]) {
         for job in jobs {
+            for hook in &job.hook_reports {
+                let (label, tone, message) = match hook.phase {
+                    numi_core::HookPhase::PreGenerate => (
+                        "Preparing",
+                        StatusTone::Accent,
+                        format!("{} hook", job.job_name),
+                    ),
+                    numi_core::HookPhase::PostGenerate => (
+                        "Tidying",
+                        StatusTone::Accent,
+                        format!("{} hook", job.job_name),
+                    ),
+                };
+                self.status(tone, label, message);
+            }
+
             let (label, tone) = match job.outcome {
                 numi_core::WriteOutcome::Created => ("Stitched", StatusTone::Success),
                 numi_core::WriteOutcome::Updated => ("Restitched", StatusTone::Success),

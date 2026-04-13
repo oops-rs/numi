@@ -49,6 +49,8 @@ struct RawJobConfig {
     pub inputs: Vec<InputConfig>,
     #[serde(default, skip_serializing_if = "TemplateConfig::is_empty")]
     pub template: TemplateConfig,
+    #[serde(default, skip_serializing_if = "HooksConfig::is_empty")]
+    pub hooks: HooksConfig,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -81,6 +83,8 @@ pub struct JobConfig {
     pub inputs: Vec<InputConfig>,
     #[serde(default, skip_serializing_if = "TemplateConfig::is_empty")]
     pub template: TemplateConfig,
+    #[serde(default, skip_serializing_if = "HooksConfig::is_empty")]
+    pub hooks: HooksConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -97,6 +101,22 @@ pub struct TemplateConfig {
     #[serde(default, skip_serializing_if = "TemplateConfig::builtin_is_empty")]
     pub builtin: Option<BuiltinTemplateConfig>,
     pub path: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct HooksConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pre_generate: Option<HookConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub post_generate: Option<HookConfig>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct HookConfig {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub command: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -121,6 +141,12 @@ impl TemplateConfig {
             None => true,
             Some(builtin) => builtin.is_empty(),
         }
+    }
+}
+
+impl HooksConfig {
+    pub fn is_empty(&self) -> bool {
+        self.pre_generate.is_none() && self.post_generate.is_none()
     }
 }
 
@@ -175,6 +201,7 @@ impl From<RawConfig> for Config {
                 bundle: job.bundle,
                 inputs: job.inputs,
                 template: job.template,
+                hooks: job.hooks,
             })
             .collect();
 
@@ -199,6 +226,7 @@ impl From<Config> for RawConfig {
                     bundle: job.bundle,
                     inputs: job.inputs,
                     template: job.template,
+                    hooks: job.hooks,
                 },
             );
             debug_assert!(previous.is_none(), "duplicate job names cannot serialize");

@@ -9,8 +9,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{
     ConfigError,
-    model::{BUILTIN_TEMPLATE_LANGUAGES, TemplateConfig},
-    validate::validate_template,
+    model::{BUILTIN_TEMPLATE_LANGUAGES, HooksConfig, TemplateConfig},
+    validate::{validate_hooks, validate_template},
     workspace_member_config_path,
 };
 
@@ -76,6 +76,8 @@ pub struct WorkspaceDefaults {
 pub struct WorkspaceJobDefaults {
     #[serde(default, skip_serializing_if = "TemplateConfig::is_empty")]
     pub template: TemplateConfig,
+    #[serde(default, skip_serializing_if = "HooksConfig::is_empty")]
+    pub hooks: HooksConfig,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -319,6 +321,13 @@ fn validate_workspace(config: &WorkspaceConfig) -> Vec<Diagnostic> {
             &format!("workspace.defaults.jobs.{job_name}.template"),
             Some(job_name.as_str()),
         );
+        validate_hooks(
+            &mut diagnostics,
+            &job_defaults.hooks,
+            "workspace default job hook",
+            &format!("workspace.defaults.jobs.{job_name}.hooks"),
+            Some(job_name.as_str()),
+        );
     }
 
     diagnostics
@@ -330,6 +339,10 @@ fn validate_workspace_default_template(
     field_path: &str,
     job: Option<&str>,
 ) {
+    if template.is_empty() {
+        return;
+    }
+
     let Some(builtin) = template.builtin.as_ref() else {
         validate_template(
             diagnostics,
@@ -482,6 +495,8 @@ struct RawWorkspaceDefaults {
 struct RawWorkspaceJobDefaults {
     #[serde(default)]
     template: TemplateConfig,
+    #[serde(default)]
+    hooks: HooksConfig,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
@@ -596,6 +611,7 @@ impl RawWorkspaceJobDefaults {
     fn into_workspace(self) -> WorkspaceJobDefaults {
         WorkspaceJobDefaults {
             template: self.template,
+            hooks: self.hooks,
         }
     }
 }

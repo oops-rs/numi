@@ -231,15 +231,18 @@ numi dump-context --job assets
 #### 6.3.2 Command Definitions
 `numi generate`:
 - Discover config
-- Resolve the nearest `numi.toml`
+- Resolve the execution manifest
+- When the discovered manifest is a workspace member and an ancestor workspace exists, prefer the ancestor workspace
 - Run a single config for `[jobs]` manifests
 - Run a workspace for `[workspace]` manifests
 - Resolve jobs
+- Run any configured `pre_generate` hooks
 - Parse inputs
 - Normalize IR
 - Build template context
 - Render outputs
 - Write changed files
+- Run any configured `post_generate` hooks for created or updated outputs
 - Report warnings/errors
 - May reuse cached parser outputs when inputs are unchanged
 - Cache invalidation occurs on relevant file add, remove, rename, or content change
@@ -248,9 +251,11 @@ numi dump-context --job assets
 `numi check`:
 - Run generation logically without modifying files
 - Exit non-zero if any output is stale, missing, or would change
-- Resolve the nearest `numi.toml`
+- Resolve the execution manifest
+- When the discovered manifest is a workspace member and an ancestor workspace exists, prefer the ancestor workspace
 - Check a single config for `[jobs]` manifests
 - Check a workspace for `[workspace]` manifests
+- Never run generation hooks
 - May reuse cached parser outputs when inputs are unchanged
 - Cache invalidation occurs on relevant file add, remove, rename, or content change
 - Normalization, rendering, and output checks still run every time
@@ -289,9 +294,10 @@ A future alias like `numi.toml` can be considered later.
 
 #### 7.2.1 Priority Order
 1. If `--config` is provided, use it.
-2. Otherwise use the nearest `numi.toml` in the current directory or an ancestor directory.
-3. If no local or ancestor manifest exists, fail.
-4. When `--workspace` is set, skip a nearer member manifest and search ancestors for the nearest workspace `numi.toml`.
+2. For `generate` and `check`, if `--workspace` is set, search ancestors for the nearest workspace `numi.toml`.
+3. Otherwise use the nearest `numi.toml` in the current directory or an ancestor directory.
+4. For `generate` and `check`, if that discovered manifest is a workspace member and an ancestor workspace exists, execute the ancestor workspace instead.
+5. If no local or ancestor manifest exists, fail.
 
 #### 7.2.2 Discovery Rules
 - Discovery is ancestor-only unless `--config` is explicit.
@@ -362,6 +368,7 @@ Each named job contains:
 - `inputs`: non-empty list
 - `template`: built-in or path-based template
 - `output`: destination file path
+- `hooks`: optional `pre_generate` and `post_generate` commands
 - Optional job-level overrides for defaults
 
 #### 7.3.5 Input Schema
@@ -404,7 +411,25 @@ Optional future fields:
 - `partials_dir`
 - `strict`
 
-#### 7.3.7 Naming Settings
+#### 7.3.7 Hook Schema
+Hooks are optional and only run during `numi generate`.
+
+```toml
+[jobs.assets.hooks.pre_generate]
+command = ["Scripts/prepare-generated.sh"]
+
+[jobs.assets.hooks.post_generate]
+command = ["swiftformat"]
+```
+
+Hook rules:
+- `command`: required argv-style array with a non-empty executable in `command[0]`
+- `pre_generate`: runs before rendering and writing
+- `post_generate`: runs only after created or updated outputs
+- Hook failures fail the job and the command
+- Hook metadata is passed through environment variables, not argv
+
+#### 7.3.8 Naming Settings
 Possible v1 naming controls:
 - Casing style per generated symbol family
 - Keyword escaping strategy
@@ -436,7 +461,7 @@ Workspace manifest fields:
 - `workspace.defaults`: optional job defaults applied before member execution
 - `workspace.member_overrides`: optional per-member overrides keyed by member root
 
-Workspace defaults may provide `template.builtin.language`, but not a built-in `name`; each member job still selects its own built-in template name.
+Workspace defaults may provide `template.builtin.language`, but not a built-in `name`; each member job still selects its own built-in template name. Workspace defaults may also provide `hooks.pre_generate` and `hooks.post_generate`, and member jobs replace those defaults per phase when they define their own hooks.
 
 Each workspace member contains:
 - one directory root that resolves to `<member>/numi.toml`
@@ -779,6 +804,9 @@ This includes:
 - Input paths
 - Output paths
 - Template paths
+- Path-like hook executables in `command[0]`
+
+For hook commands, `command[0]` is treated as a path only when it looks path-like. Member hook paths resolve relative to the member manifest directory. Workspace-default hook paths resolve relative to the workspace manifest directory and are rebased for member execution.
 
 ### 16.3 Ignore Rules
 V1 may optionally skip obvious build directories for downward search, such as:
@@ -963,7 +991,7 @@ To reduce decision load, start with these defaults:
 - Output naming: preserve hierarchy
 - Collision strategy: hard error
 - Check mode: strict
-- Config discovery: nearest local or ancestor manifest only
+- Config discovery: nearest manifest with workspace auto-preference for `generate` and `check`
 
 ## 25. AI-Agent Execution Notes
 This section is intended for an implementation agent.

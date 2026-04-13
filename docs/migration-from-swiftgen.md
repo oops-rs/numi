@@ -14,11 +14,11 @@ Numi is a general-purpose code generator that currently ships Swift and Objectiv
 ## What Changes
 
 - Numi renders from a stable template context instead of hard-coded generators
-- Config discovery is explicit: the nearest local or ancestor `numi.toml` wins, with no descendant fallback
+- Config discovery is explicit: the nearest local or ancestor `numi.toml` wins, with no descendant fallback, and `generate` or `check` auto-prefer an ancestor workspace when run from a workspace member
 - Output writing is deterministic and no-op stable, so unchanged files are not rewritten
 - Diagnostics are designed to fail loudly with actionable messages instead of silently picking a fallback
 - `.xcstrings` records are parsed into the same stable localization surface as `.strings`, with placeholder metadata preserved when present
-- `numi generate` and `numi check` stay nearest-manifest-first; use `--workspace` from a member directory when you want the nearest ancestor workspace `numi.toml`
+- `numi generate` and `numi check` auto-prefer the nearest ancestor workspace when run from a workspace member; use `--config` when you want to force a specific member manifest instead
 
 ## Config Mapping
 
@@ -61,7 +61,8 @@ If a SwiftGen setup relied on a custom Stencil template, the closest Numi migrat
 - The stable context contract is documented in [context-schema.md](context-schema.md)
 - In monorepos, you can keep per-module `numi.toml` files and add a repo-level `numi.toml` with `[workspace]` to orchestrate them
 - Workspace defaults may provide `template.builtin.language`, while each job still declares its built-in `name`
-- CI can keep using `numi check` either once per config or once from the repo root, or force ancestor workspace orchestration from a member directory with `numi check --workspace`
+- Jobs can run optional `pre_generate` and `post_generate` hooks during `numi generate`, including hooks inherited from workspace defaults
+- CI can keep using `numi check` either once per config or once from the repo root; `check` never runs hooks
 
 ## Suggested Migration Flow
 

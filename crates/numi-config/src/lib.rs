@@ -29,6 +29,9 @@ pub struct LoadedConfig {
     pub config: Config,
 }
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Manifest {
     Config(Config),
@@ -631,7 +634,7 @@ fn relative_path_from(from: &Path, to: &Path) -> PathBuf {
 }
 
 #[cfg(test)]
-mod tests {
+mod legacy_tests {
     use super::*;
     use std::{
         fs,

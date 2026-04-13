@@ -458,6 +458,7 @@ pub fn workspace_member_config_path(workspace_root: &Path, member_root: &str) ->
 }
 
 pub fn resolve_workspace_member_config(
+    workspace_root: &Path,
     workspace: &WorkspaceConfig,
     member_root: &str,
     member_config: &Config,
@@ -469,7 +470,9 @@ pub fn resolve_workspace_member_config(
             && job.template.is_empty()
             && defaults.template.path.is_some()
         {
-            job.template.path = defaults.template.path.clone();
+            job.template.path = defaults.template.path.as_deref().map(|path| {
+                rebase_workspace_template_path(workspace_root, member_root, path)
+            });
         }
 
         if let Some(defaults) = workspace.workspace.defaults.jobs.get(&job.name)
@@ -493,6 +496,49 @@ pub fn resolve_workspace_member_config(
     } else {
         Err(diagnostics)
     }
+}
+
+fn rebase_workspace_template_path(
+    workspace_root: &Path,
+    member_root: &str,
+    template_path: &str,
+) -> String {
+    let member_dir = workspace_root.join(member_root);
+    let workspace_template_path = workspace_root.join(template_path);
+    relative_path_from(&member_dir, &workspace_template_path)
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn relative_path_from(from: &Path, to: &Path) -> PathBuf {
+    let from_components = from.components().collect::<Vec<_>>();
+    let to_components = to.components().collect::<Vec<_>>();
+
+    let mut common_prefix = 0;
+    while common_prefix < from_components.len()
+        && common_prefix < to_components.len()
+        && from_components[common_prefix] == to_components[common_prefix]
+    {
+        common_prefix += 1;
+    }
+
+    let mut result = PathBuf::new();
+
+    for component in &from_components[common_prefix..] {
+        if !matches!(component, std::path::Component::CurDir) {
+            result.push("..");
+        }
+    }
+
+    for component in &to_components[common_prefix..] {
+        result.push(component.as_os_str());
+    }
+
+    if result.as_os_str().is_empty() {
+        result.push(".");
+    }
+
+    result
 }
 
 #[cfg(test)]
@@ -979,8 +1025,13 @@ name = "assets"
         )
         .expect("member config should deserialize");
 
-        let resolved = resolve_workspace_member_config(&workspace, "AppUI", &member_config)
-            .expect("workspace defaults should resolve");
+        let resolved = resolve_workspace_member_config(
+            Path::new("/tmp/workspace"),
+            &workspace,
+            "AppUI",
+            &member_config,
+        )
+        .expect("workspace defaults should resolve");
 
         let builtin = resolved.jobs[0]
             .template
@@ -1046,14 +1097,76 @@ path = "Resources/Assets.xcassets"
         )
         .expect("member config should deserialize");
 
-        let resolved = resolve_workspace_member_config(&workspace, "AppUI", &member_config)
-            .expect("workspace defaults should resolve");
+        let resolved = resolve_workspace_member_config(
+            Path::new("/tmp/workspace"),
+            &workspace,
+            "AppUI",
+            &member_config,
+        )
+        .expect("workspace defaults should resolve");
+        let expected_path = PathBuf::from("..")
+            .join("Templates")
+            .join("assets.stencil")
+            .display()
+            .to_string();
 
         assert_eq!(
             resolved.jobs[0].template.path.as_deref(),
-            Some("Templates/assets.stencil")
+            Some(expected_path.as_str())
         );
         assert!(resolved.jobs[0].template.builtin.is_none());
+    }
+
+    #[test]
+    fn workspace_defaults_path_inherit_handles_nested_member_roots_with_native_separators() {
+        let manifest = parse_manifest_str(
+            r#"
+version = 1
+
+[workspace]
+members = ["apps/AppUI"]
+
+[workspace.defaults.jobs.assets.template]
+path = "Templates/assets.stencil"
+"#,
+        )
+        .expect("workspace should parse");
+        let Manifest::Workspace(workspace) = manifest else {
+            panic!("expected workspace manifest");
+        };
+
+        let member_config = toml::from_str::<Config>(
+            r#"
+version = 1
+
+[jobs.assets]
+output = "Generated/Assets.h"
+
+[[jobs.assets.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+"#,
+        )
+        .expect("member config should deserialize");
+
+        let resolved = resolve_workspace_member_config(
+            Path::new("/tmp/workspace"),
+            &workspace,
+            "apps/AppUI",
+            &member_config,
+        )
+        .expect("workspace defaults should resolve");
+        let expected_path = PathBuf::from("..")
+            .join("..")
+            .join("Templates")
+            .join("assets.stencil")
+            .display()
+            .to_string();
+
+        assert_eq!(
+            resolved.jobs[0].template.path.as_deref(),
+            Some(expected_path.as_str())
+        );
     }
 
     #[test]
@@ -1090,8 +1203,13 @@ path = "Resources/Assets.xcassets"
         )
         .expect("member config should deserialize");
 
-        let error = resolve_workspace_member_config(&workspace, "AppUI", &member_config)
-            .expect_err("missing builtin name should remain invalid after resolution");
+        let error = resolve_workspace_member_config(
+            Path::new("/tmp/workspace"),
+            &workspace,
+            "AppUI",
+            &member_config,
+        )
+        .expect_err("missing builtin name should remain invalid after resolution");
 
         let message = error
             .into_iter()
@@ -1138,8 +1256,13 @@ name = "swiftui-assets"
         )
         .expect("member config should deserialize");
 
-        let resolved = resolve_workspace_member_config(&workspace, "AppUI", &member_config)
-            .expect("workspace defaults should resolve");
+        let resolved = resolve_workspace_member_config(
+            Path::new("/tmp/workspace"),
+            &workspace,
+            "AppUI",
+            &member_config,
+        )
+        .expect("workspace defaults should resolve");
 
         let builtin = resolved.jobs[0]
             .template

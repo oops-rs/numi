@@ -1405,6 +1405,71 @@ jobs = ["l10n"]
 }
 
 #[test]
+fn generate_workspace_uses_root_relative_custom_template_defaults() {
+    let temp_root = make_temp_dir("generate-workspace-root-relative-template-default");
+    let workspace_root = temp_root.join("workspace");
+    let member_root = workspace_root.join("apps/l10n");
+    let templates_root = workspace_root.join("Templates");
+
+    fs::create_dir_all(member_root.join("Resources/Localization"))
+        .expect("member localization dir should exist");
+    fs::create_dir_all(&templates_root).expect("workspace templates dir should exist");
+    copy_dir_all(
+        &repo_root().join("fixtures/l10n-basic/Resources/Localization"),
+        &member_root.join("Resources/Localization"),
+    );
+    fs::write(
+        templates_root.join("l10n.jinja"),
+        "ROOT|{{ job.name }}|{{ modules[0].name }}\n",
+    )
+    .expect("workspace template should be written");
+    write_manifest(
+        &member_root,
+        r#"
+version = 1
+
+[jobs.l10n]
+output = "Generated/L10n.swift"
+
+[[jobs.l10n.inputs]]
+type = "strings"
+path = "Resources/Localization"
+"#,
+    );
+    write_manifest(
+        &workspace_root,
+        r#"
+version = 1
+
+[workspace]
+members = ["apps/l10n"]
+
+[workspace.defaults.jobs.l10n.template]
+path = "Templates/l10n"
+"#,
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_numi"))
+        .args(["generate", "--workspace"])
+        .current_dir(&member_root)
+        .output()
+        .expect("numi generate --workspace should run");
+
+    assert!(
+        output.status.success(),
+        "command failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let generated = fs::read_to_string(member_root.join("Generated/L10n.swift"))
+        .expect("generated workspace l10n file should exist");
+    assert_eq!(generated, "ROOT|l10n|Localizable\n");
+
+    fs::remove_dir_all(temp_root).expect("temp dir should be removed");
+}
+
+#[test]
 fn dump_context_rejects_workspace_manifests() {
     let temp_root = make_temp_dir("dump-context-workspace-manifest");
     let workspace_root = temp_root.join("workspace");

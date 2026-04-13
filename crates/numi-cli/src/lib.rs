@@ -179,9 +179,13 @@ fn run_generate_workspace(
         let config_path = workspace_member_config_path(workspace_dir, &member_root);
         let loaded_member = numi_config::load_unvalidated_from_path(&config_path)
             .map_err(|error| CliError::new(error.to_string()))?;
-        let merged_config =
-            resolve_workspace_member_config(workspace, &member_root, &loaded_member.config)
-                .map_err(render_config_diagnostics)?;
+        let merged_config = resolve_workspace_member_config(
+            workspace_dir,
+            workspace,
+            &member_root,
+            &loaded_member.config,
+        )
+        .map_err(render_config_diagnostics)?;
         let selected_jobs = workspace_jobs(args, &member);
         let report = numi_core::generate_loaded_config(
             &config_path,
@@ -211,9 +215,13 @@ fn run_check_workspace(
         let config_path = workspace_member_config_path(workspace_dir, &member_root);
         let loaded_member = numi_config::load_unvalidated_from_path(&config_path)
             .map_err(|error| CliError::new(error.to_string()))?;
-        let merged_config =
-            resolve_workspace_member_config(workspace, &member_root, &loaded_member.config)
-                .map_err(render_config_diagnostics)?;
+        let merged_config = resolve_workspace_member_config(
+            workspace_dir,
+            workspace,
+            &member_root,
+            &loaded_member.config,
+        )
+        .map_err(render_config_diagnostics)?;
         let selected_jobs = workspace_jobs(args, &member);
         let report =
             numi_core::check_loaded_config(&config_path, &merged_config, selected_jobs.as_deref())

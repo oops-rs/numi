@@ -4,6 +4,18 @@ use crate::{
 };
 use std::{path::Path, path::PathBuf};
 
+fn workspace_fixture(toml: &str) -> crate::WorkspaceConfig {
+    let manifest = parse_manifest_str(toml).expect("workspace should parse");
+    let Manifest::Workspace(workspace) = manifest else {
+        panic!("expected workspace manifest");
+    };
+    workspace
+}
+
+fn member_fixture(toml: &str) -> Config {
+    toml::from_str::<Config>(toml).expect("member config should deserialize")
+}
+
 #[test]
 fn workspace_member_config_path_joins_member_root_with_numi_toml() {
     assert_eq!(
@@ -14,7 +26,7 @@ fn workspace_member_config_path_joins_member_root_with_numi_toml() {
 
 #[test]
 fn workspace_defaults_can_supply_builtin_language() {
-    let manifest = parse_manifest_str(
+    let workspace = workspace_fixture(
         r#"
 version = 1
 
@@ -24,13 +36,9 @@ members = ["AppUI"]
 [workspace.defaults.jobs.assets.template.builtin]
 language = "objc"
 "#,
-    )
-    .expect("workspace should parse");
-    let Manifest::Workspace(workspace) = manifest else {
-        panic!("expected workspace manifest");
-    };
+    );
 
-    let member_config = toml::from_str::<Config>(
+    let member_config = member_fixture(
         r#"
 version = 1
 
@@ -44,8 +52,7 @@ path = "Resources/Assets.xcassets"
 [jobs.assets.template.builtin]
 name = "assets"
 "#,
-    )
-    .expect("member config should deserialize");
+    );
 
     let resolved = resolve_workspace_member_config(
         Path::new("/tmp/workspace"),
@@ -66,7 +73,7 @@ name = "assets"
 
 #[test]
 fn workspace_defaults_hooks_inherit_when_job_hooks_are_missing() {
-    let manifest = parse_manifest_str(
+    let workspace = workspace_fixture(
         r#"
 version = 1
 
@@ -76,13 +83,9 @@ members = ["AppUI"]
 [workspace.defaults.jobs.assets.hooks.post_generate]
 command = ["swiftformat"]
 "#,
-    )
-    .expect("workspace should parse");
-    let Manifest::Workspace(workspace) = manifest else {
-        panic!("expected workspace manifest");
-    };
+    );
 
-    let member_config = toml::from_str::<Config>(
+    let member_config = member_fixture(
         r#"
 version = 1
 
@@ -97,8 +100,7 @@ path = "Resources/Assets.xcassets"
 language = "objc"
 name = "assets"
 "#,
-    )
-    .expect("member config should deserialize");
+    );
 
     let resolved = resolve_workspace_member_config(
         Path::new("/tmp/workspace"),
@@ -120,7 +122,7 @@ name = "assets"
 
 #[test]
 fn workspace_global_hooks_inherit_when_job_hooks_are_missing() {
-    let manifest = parse_manifest_str(
+    let workspace = workspace_fixture(
         r#"
 version = 1
 
@@ -130,13 +132,9 @@ members = ["AppUI"]
 [workspace.defaults.hooks.post_generate]
 command = ["swiftformat"]
 "#,
-    )
-    .expect("workspace should parse");
-    let Manifest::Workspace(workspace) = manifest else {
-        panic!("expected workspace manifest");
-    };
+    );
 
-    let member_config = toml::from_str::<Config>(
+    let member_config = member_fixture(
         r#"
 version = 1
 
@@ -151,8 +149,7 @@ path = "Resources/Assets.xcassets"
 language = "objc"
 name = "assets"
 "#,
-    )
-    .expect("member config should deserialize");
+    );
 
     let resolved = resolve_workspace_member_config(
         Path::new("/tmp/workspace"),
@@ -174,7 +171,7 @@ name = "assets"
 
 #[test]
 fn workspace_job_hooks_override_workspace_global_hooks() {
-    let manifest = parse_manifest_str(
+    let workspace = workspace_fixture(
         r#"
 version = 1
 
@@ -187,13 +184,9 @@ command = ["swiftformat"]
 [workspace.defaults.jobs.assets.hooks.post_generate]
 command = ["swiftlint", "format"]
 "#,
-    )
-    .expect("workspace should parse");
-    let Manifest::Workspace(workspace) = manifest else {
-        panic!("expected workspace manifest");
-    };
+    );
 
-    let member_config = toml::from_str::<Config>(
+    let member_config = member_fixture(
         r#"
 version = 1
 
@@ -208,8 +201,7 @@ path = "Resources/Assets.xcassets"
 language = "objc"
 name = "assets"
 "#,
-    )
-    .expect("member config should deserialize");
+    );
 
     let resolved = resolve_workspace_member_config(
         Path::new("/tmp/workspace"),
@@ -231,7 +223,7 @@ name = "assets"
 
 #[test]
 fn job_level_hooks_replace_workspace_default_hooks_for_same_phase() {
-    let manifest = parse_manifest_str(
+    let workspace = workspace_fixture(
         r#"
 version = 1
 
@@ -241,13 +233,9 @@ members = ["AppUI"]
 [workspace.defaults.jobs.assets.hooks.post_generate]
 command = ["swiftformat"]
 "#,
-    )
-    .expect("workspace should parse");
-    let Manifest::Workspace(workspace) = manifest else {
-        panic!("expected workspace manifest");
-    };
+    );
 
-    let member_config = toml::from_str::<Config>(
+    let member_config = member_fixture(
         r#"
 version = 1
 
@@ -265,8 +253,7 @@ name = "assets"
 [jobs.assets.hooks.post_generate]
 command = ["swiftlint", "format"]
 "#,
-    )
-    .expect("member config should deserialize");
+    );
 
     let resolved = resolve_workspace_member_config(
         Path::new("/tmp/workspace"),
@@ -288,7 +275,7 @@ command = ["swiftlint", "format"]
 
 #[test]
 fn workspace_defaults_path_inherit_for_empty_member_template() {
-    let manifest = parse_manifest_str(
+    let workspace = workspace_fixture(
         r#"
 version = 1
 
@@ -298,13 +285,9 @@ members = ["AppUI"]
 [workspace.defaults.jobs.assets.template]
 path = "Templates/assets.stencil"
 "#,
-    )
-    .expect("workspace should parse");
-    let Manifest::Workspace(workspace) = manifest else {
-        panic!("expected workspace manifest");
-    };
+    );
 
-    let member_config = toml::from_str::<Config>(
+    let member_config = member_fixture(
         r#"
 version = 1
 
@@ -315,8 +298,7 @@ output = "Generated/Assets.h"
 type = "xcassets"
 path = "Resources/Assets.xcassets"
 "#,
-    )
-    .expect("member config should deserialize");
+    );
 
     let resolved = resolve_workspace_member_config(
         Path::new("/tmp/workspace"),
@@ -340,7 +322,7 @@ path = "Resources/Assets.xcassets"
 
 #[test]
 fn workspace_defaults_path_inherit_handles_nested_member_roots_with_native_separators() {
-    let manifest = parse_manifest_str(
+    let workspace = workspace_fixture(
         r#"
 version = 1
 
@@ -350,13 +332,9 @@ members = ["apps/AppUI"]
 [workspace.defaults.jobs.assets.template]
 path = "Templates/assets.stencil"
 "#,
-    )
-    .expect("workspace should parse");
-    let Manifest::Workspace(workspace) = manifest else {
-        panic!("expected workspace manifest");
-    };
+    );
 
-    let member_config = toml::from_str::<Config>(
+    let member_config = member_fixture(
         r#"
 version = 1
 
@@ -367,8 +345,7 @@ output = "Generated/Assets.h"
 type = "xcassets"
 path = "Resources/Assets.xcassets"
 "#,
-    )
-    .expect("member config should deserialize");
+    );
 
     let resolved = resolve_workspace_member_config(
         Path::new("/tmp/workspace"),
@@ -392,7 +369,7 @@ path = "Resources/Assets.xcassets"
 
 #[test]
 fn workspace_defaults_missing_member_builtin_name_remains_invalid() {
-    let manifest = parse_manifest_str(
+    let workspace = workspace_fixture(
         r#"
 version = 1
 
@@ -402,13 +379,9 @@ members = ["AppUI"]
 [workspace.defaults.jobs.assets.template.builtin]
 language = "objc"
 "#,
-    )
-    .expect("workspace should parse");
-    let Manifest::Workspace(workspace) = manifest else {
-        panic!("expected workspace manifest");
-    };
+    );
 
-    let member_config = toml::from_str::<Config>(
+    let member_config = member_fixture(
         r#"
 version = 1
 
@@ -421,8 +394,7 @@ path = "Resources/Assets.xcassets"
 
 [jobs.assets.template.builtin]
 "#,
-    )
-    .expect("member config should deserialize");
+    );
 
     let error = resolve_workspace_member_config(
         Path::new("/tmp/workspace"),
@@ -443,7 +415,7 @@ path = "Resources/Assets.xcassets"
 
 #[test]
 fn job_level_builtin_language_overrides_workspace_default_language() {
-    let manifest = parse_manifest_str(
+    let workspace = workspace_fixture(
         r#"
 version = 1
 
@@ -453,13 +425,9 @@ members = ["AppUI"]
 [workspace.defaults.jobs.assets.template.builtin]
 language = "objc"
 "#,
-    )
-    .expect("workspace should parse");
-    let Manifest::Workspace(workspace) = manifest else {
-        panic!("expected workspace manifest");
-    };
+    );
 
-    let member_config = toml::from_str::<Config>(
+    let member_config = member_fixture(
         r#"
 version = 1
 
@@ -474,8 +442,7 @@ path = "Resources/Assets.xcassets"
 language = "swift"
 name = "swiftui-assets"
 "#,
-    )
-    .expect("member config should deserialize");
+    );
 
     let resolved = resolve_workspace_member_config(
         Path::new("/tmp/workspace"),

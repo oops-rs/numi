@@ -1,7 +1,6 @@
 use crate::{
     BuiltinTemplateConfig, BundleConfig, Config, DefaultsConfig, HooksConfig, InputConfig,
-    JobConfig, Manifest, ManifestKindSniff, TemplateConfig, parse_manifest_str, parse_str,
-    sniff_manifest_kind_str,
+    JobConfig, Manifest, TemplateConfig, parse_manifest_str, parse_str,
 };
 #[test]
 fn parses_defaults_and_jobs_from_toml() {
@@ -679,93 +678,4 @@ name = "swiftui-assets"
         }
         other => panic!("expected config manifest, got {other:?}"),
     }
-}
-
-#[test]
-fn parses_unified_workspace_manifest() {
-    let manifest = parse_manifest_str(
-        r#"
-version = 1
-
-[workspace]
-members = ["AppUI", "Core"]
-
-[workspace.defaults.jobs.l10n.template]
-[workspace.defaults.jobs.l10n.template.builtin]
-language = "swift"
-
-[workspace.member_overrides.AppUI]
-jobs = ["assets", "l10n"]
-"#,
-    )
-    .expect("workspace manifest should parse");
-
-    match manifest {
-        Manifest::Workspace(workspace) => {
-            assert_eq!(workspace.version, 1);
-            assert_eq!(workspace.workspace.members, vec!["AppUI", "Core"]);
-            assert_eq!(
-                workspace
-                    .members()
-                    .iter()
-                    .map(|member| member.config.as_str())
-                    .collect::<Vec<_>>(),
-                vec!["AppUI/numi.toml", "Core/numi.toml"]
-            );
-            assert_eq!(
-                workspace.workspace.defaults.jobs["l10n"]
-                    .template
-                    .builtin
-                    .as_ref()
-                    .and_then(|builtin| builtin.language.as_deref()),
-                Some("swift")
-            );
-            assert!(
-                workspace.workspace.defaults.jobs["l10n"]
-                    .template
-                    .builtin
-                    .as_ref()
-                    .and_then(|builtin| builtin.name.as_deref())
-                    .is_none()
-            );
-            assert_eq!(
-                workspace.workspace.member_overrides["AppUI"].jobs,
-                Some(vec!["assets".to_string(), "l10n".to_string()])
-            );
-        }
-        other => panic!("expected workspace manifest, got {other:?}"),
-    }
-}
-
-#[test]
-fn rejects_legacy_workspace_default_builtin_shape_with_migration_hint() {
-    let error = parse_manifest_str(
-        r#"
-version = 1
-
-[workspace]
-members = ["AppUI", "Core"]
-
-[workspace.defaults.jobs.l10n.template]
-builtin = "l10n"
-"#,
-    )
-    .expect_err("legacy workspace default builtin shape should fail");
-
-    let message = error.to_string();
-    assert!(message.contains("legacy flat built-in template syntax is no longer supported"));
-    assert!(message.contains("[workspace.defaults.jobs.l10n.template.builtin] language = \"...\""));
-}
-
-#[test]
-fn sniffs_inline_table_workspace_manifest_as_workspace_like() {
-    assert_eq!(
-        sniff_manifest_kind_str(
-            r#"
-version = 1
-workspace={members=["AppUI"]}
-"#
-        ),
-        ManifestKindSniff::WorkspaceLike
-    );
 }

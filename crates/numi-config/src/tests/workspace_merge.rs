@@ -1,6 +1,6 @@
 use crate::{
-    DiscoveryError, Manifest, discover_workspace_ancestor, load_workspace_from_path,
-    parse_manifest_str,
+    DiscoveryError, Manifest, discover_config, discover_workspace_ancestor,
+    load_workspace_from_path, parse_manifest_str,
 };
 use std::fs;
 
@@ -699,6 +699,43 @@ fn discovers_workspace_manifest_in_ancestors_only() {
 
     let error = crate::discover_workspace_ancestor(&descendant_root, None)
         .expect_err("descendant workspace manifests should not be discovered");
+    match error {
+        DiscoveryError::NotFound { start_dir } => assert_eq!(
+            start_dir,
+            descendant_root
+                .canonicalize()
+                .expect("path should canonicalize")
+        ),
+        other => panic!("expected not found discovery error, got {other:?}"),
+    }
+}
+
+#[test]
+fn discovers_config_manifest_in_ancestors_only() {
+    let ancestor_root = create_temp_dir("config-discovery-ancestor");
+    let ancestor_manifest = ancestor_root.join("numi.toml");
+    write_file(&ancestor_manifest, "version = 1\njobs = []\n");
+
+    let nested = ancestor_root.join("apps/ios/App");
+    fs::create_dir_all(&nested).expect("nested directory should exist");
+
+    let discovered =
+        discover_config(&nested, None).expect("ancestor config manifest should be discovered");
+    assert_eq!(
+        discovered,
+        ancestor_manifest
+            .canonicalize()
+            .expect("manifest path should canonicalize")
+    );
+
+    let descendant_root = create_temp_dir("config-discovery-descendant");
+    write_file(
+        &descendant_root.join("apps/App/numi.toml"),
+        "version = 1\njobs = []\n",
+    );
+
+    let error = discover_config(&descendant_root, None)
+        .expect_err("descendant config manifests should not be discovered");
     match error {
         DiscoveryError::NotFound { start_dir } => assert_eq!(
             start_dir,

@@ -11,9 +11,10 @@ mod render;
 
 pub use output::WriteOutcome;
 pub use pipeline::{
-    CheckReport, DumpContextReport, GenerateError, GenerateOptions, GenerateProgress,
-    GenerateReport, HookPhase, HookReport, JobReport, check, check_loaded_config, dump_context,
-    generate, generate_loaded_config, generate_loaded_config_with_progress, generate_with_options,
+    CheckOptions, CheckReport, DumpContextReport, GenerateError, GenerateOptions, GenerateProgress,
+    GenerateReport, HookPhase, HookReport, JobReport, check, check_loaded_config,
+    check_loaded_config_with_options, dump_context, generate, generate_loaded_config,
+    generate_loaded_config_with_progress, generate_with_options,
     generate_with_options_and_progress,
 };
 

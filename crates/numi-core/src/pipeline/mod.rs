@@ -14,6 +14,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use crate::{
@@ -49,6 +50,11 @@ pub struct GenerateOptions {
     pub incremental: Option<bool>,
     pub parse_cache: Option<bool>,
     pub force_regenerate: bool,
+    pub workspace_manifest_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CheckOptions {
     pub workspace_manifest_path: Option<PathBuf>,
 }
 
@@ -366,13 +372,27 @@ pub fn check(
     selected_jobs: Option<&[String]>,
 ) -> Result<CheckReport, GenerateError> {
     let loaded = numi_config::load_from_path(config_path).map_err(GenerateError::LoadConfig)?;
-    check_loaded_config(&loaded.path, &loaded.config, selected_jobs)
+    check_loaded_config_with_options(
+        &loaded.path,
+        &loaded.config,
+        selected_jobs,
+        CheckOptions::default(),
+    )
 }
 
 pub fn check_loaded_config(
     config_path: &Path,
     config: &numi_config::Config,
     selected_jobs: Option<&[String]>,
+) -> Result<CheckReport, GenerateError> {
+    check_loaded_config_with_options(config_path, config, selected_jobs, CheckOptions::default())
+}
+
+pub fn check_loaded_config_with_options(
+    config_path: &Path,
+    config: &numi_config::Config,
+    selected_jobs: Option<&[String]>,
+    options: CheckOptions,
 ) -> Result<CheckReport, GenerateError> {
     let config_dir = config_dir(config_path);
     let jobs = numi_config::resolve_selected_jobs(config, selected_jobs)
@@ -381,7 +401,13 @@ pub fn check_loaded_config(
     let mut stale_paths = Vec::new();
 
     for job in jobs {
-        let job_report = check_job(config_path, config_dir, &config.defaults, job)?;
+        let job_report = check_job(
+            config_path,
+            config_dir,
+            &config.defaults,
+            job,
+            options.workspace_manifest_path.as_deref(),
+        )?;
         warnings.extend(job_report.warnings);
         if let Some(output_path) = job_report.stale_path {
             stale_paths.push(output_path);
@@ -475,10 +501,6 @@ fn generate_job(
         }
     })?;
 
-    if let Some(plan) = generation_plan.as_ref() {
-        let _ = generation_cache::store(config_path, &job.name, &plan.fingerprint, &output_path);
-    }
-
     let should_run_post_hook = matches!(outcome, WriteOutcome::Created | WriteOutcome::Updated)
         || (options.force_regenerate && matches!(outcome, WriteOutcome::Unchanged));
 
@@ -491,6 +513,10 @@ fn generate_job(
             &hook_env,
             Some(outcome),
         )?);
+    }
+
+    if let Some(plan) = generation_plan.as_ref() {
+        let _ = generation_cache::store(config_path, &job.name, &plan.fingerprint, &output_path);
     }
 
     Ok(JobExecution {
@@ -507,16 +533,32 @@ fn check_job(
     config_dir: &Path,
     defaults: &DefaultsConfig,
     job: &JobConfig,
+    workspace_manifest_path: Option<&Path>,
 ) -> Result<CheckJobExecution, GenerateError> {
     let (context, warnings) = build_context(config_path, config_dir, defaults, job, None)?;
     let rendered = render_job(config_dir, job, &context)?;
     let output_path = config_dir.join(&job.output);
-    let stale = output_is_stale(&output_path, &rendered).map_err(|source| {
+    let stale_without_hook = output_is_stale(&output_path, &rendered).map_err(|source| {
         GenerateError::InspectOutput {
             job: job.name.clone(),
             source,
         }
     })?;
+    let stale = if !stale_without_hook {
+        false
+    } else if let Some(hook) = job.hooks.post_generate.as_ref() {
+        output_is_stale_after_post_hook(
+            config_path,
+            config_dir,
+            workspace_manifest_path,
+            job,
+            hook,
+            &output_path,
+            &rendered,
+        )?
+    } else {
+        true
+    };
 
     Ok(CheckJobExecution {
         stale_path: if stale {
@@ -526,6 +568,116 @@ fn check_job(
         },
         warnings,
     })
+}
+
+fn output_is_stale_after_post_hook(
+    config_path: &Path,
+    config_dir: &Path,
+    workspace_manifest_path: Option<&Path>,
+    job: &JobConfig,
+    hook: &HookConfig,
+    output_path: &Path,
+    rendered: &str,
+) -> Result<bool, GenerateError> {
+    let temp_output_path = make_check_temp_output_path(job, output_path);
+    let temp_output_dir = temp_output_path
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(temp_output_dir).map_err(|source| GenerateError::InspectOutput {
+        job: job.name.clone(),
+        source: OutputError::CreateDirectory {
+            path: temp_output_dir.to_path_buf(),
+            source,
+        },
+    })?;
+    fs::write(&temp_output_path, rendered).map_err(|source| GenerateError::InspectOutput {
+        job: job.name.clone(),
+        source: OutputError::WriteTemp {
+            path: temp_output_path.clone(),
+            source,
+        },
+    })?;
+
+    let hook_env = HookEnvironment::new(
+        config_path,
+        workspace_manifest_path,
+        &job.name,
+        &temp_output_path,
+    )?;
+    let hook_result = run_hook(
+        config_dir,
+        hook,
+        HookPhase::PostGenerate,
+        &job.name,
+        &hook_env,
+        Some(WriteOutcome::Updated),
+    );
+    let transformed =
+        fs::read_to_string(&temp_output_path).map_err(|source| GenerateError::InspectOutput {
+            job: job.name.clone(),
+            source: OutputError::ReadExisting {
+                path: temp_output_path.clone(),
+                source,
+            },
+        });
+    let cleanup_result = fs::remove_dir_all(
+        temp_output_path
+            .parent()
+            .expect("temp output path should always have a parent"),
+    );
+
+    hook_result?;
+    let transformed = transformed?;
+    if let Err(source) = cleanup_result {
+        return Err(GenerateError::InspectOutput {
+            job: job.name.clone(),
+            source: OutputError::Cleanup {
+                path: temp_output_path
+                    .parent()
+                    .expect("temp output path should always have a parent")
+                    .to_path_buf(),
+                source,
+            },
+        });
+    }
+
+    output_is_stale(output_path, &transformed).map_err(|source| GenerateError::InspectOutput {
+        job: job.name.clone(),
+        source,
+    })
+}
+
+fn make_check_temp_output_path(job: &JobConfig, output_path: &Path) -> PathBuf {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock should be after epoch")
+        .as_nanos();
+    let file_name = output_path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "output".to_string());
+    std::env::temp_dir()
+        .join(format!(
+            "numi-check-{}-{}-{}",
+            sanitize_job_name(&job.name),
+            std::process::id(),
+            timestamp
+        ))
+        .join(file_name)
+}
+
+fn sanitize_job_name(job_name: &str) -> String {
+    job_name
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect()
 }
 
 fn build_context(

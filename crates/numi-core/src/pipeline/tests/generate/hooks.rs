@@ -86,6 +86,38 @@ fn write_legacy_hook_probe_script(root: &std::path::Path, name: &str, exit_code:
         .replace(std::path::MAIN_SEPARATOR, "/")
 }
 
+fn write_output_mutation_hook_script(root: &std::path::Path, name: &str) -> String {
+    let scripts_root = root.join("Scripts");
+    fs::create_dir_all(&scripts_root).expect("scripts dir should exist");
+    let file_name = if cfg!(windows) {
+        format!("{name}.cmd")
+    } else {
+        format!("{name}.sh")
+    };
+    let script_path = scripts_root.join(&file_name);
+    let script_body = if cfg!(windows) {
+        "@echo off\r\npowershell -NoProfile -Command \"$path = $env:NUMI_HOOK_OUTPUT_PATH; $content = Get-Content -Raw -LiteralPath $path; Set-Content -NoNewline -LiteralPath $path -Value ($content + '// formatted\\r\\n')\"\r\n".to_string()
+    } else {
+        "#!/bin/sh\nprintf '%s' '// formatted\n' >> \"$NUMI_HOOK_OUTPUT_PATH\"\n".to_string()
+    };
+    fs::write(&script_path, script_body).expect("hook script should be written");
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&script_path)
+            .expect("script metadata should exist")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions)
+            .expect("script permissions should be updated");
+    }
+
+    std::path::PathBuf::from("Scripts")
+        .join(file_name)
+        .display()
+        .to_string()
+        .replace(std::path::MAIN_SEPARATOR, "/")
+}
+
 fn write_custom_files_job_config_with_hooks(
     config_path: &std::path::Path,
     incremental: Option<bool>,
@@ -218,6 +250,43 @@ fn generate_does_not_run_post_hook_when_output_is_unchanged() {
     assert_eq!(second.jobs[0].outcome, WriteOutcome::Unchanged);
     assert_eq!(lines.len(), 1);
     assert!(lines[0].contains("|created|"));
+
+    fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn generate_skips_after_post_hook_mutates_output() {
+    let temp_dir = make_temp_dir("pipeline-hooks-post-mutation-skip");
+    let config_path = temp_dir.join("numi.toml");
+    let files_root = temp_dir.join("Resources/Fixtures");
+    let template_path = temp_dir.join("Templates/files.jinja");
+    let generated_path = temp_dir.join("Generated/Files.swift");
+    let post_script = write_output_mutation_hook_script(&temp_dir, "mutating-post-hook");
+
+    fs::create_dir_all(&files_root).expect("files directory should exist");
+    fs::create_dir_all(
+        template_path
+            .parent()
+            .expect("template path should have parent"),
+    )
+    .expect("template dir should exist");
+    fs::write(files_root.join("faq.pdf"), "faq").expect("faq file should be written");
+    fs::write(
+        &template_path,
+        "{{ modules[0].entries[0].properties.fileName }}\n",
+    )
+    .expect("template should be written");
+    write_custom_files_job_config_with_hooks(&config_path, Some(true), None, Some(&[post_script]));
+
+    let first = generate(&config_path, None).expect("first generation should succeed");
+    let second = generate(&config_path, None).expect("second generation should succeed");
+
+    assert_eq!(first.jobs[0].outcome, WriteOutcome::Created);
+    assert_eq!(second.jobs[0].outcome, WriteOutcome::Skipped);
+    assert_eq!(
+        fs::read_to_string(&generated_path).expect("generated file should exist"),
+        "faq.pdf\n// formatted\n"
+    );
 
     fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
 }

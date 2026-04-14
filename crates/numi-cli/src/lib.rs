@@ -258,9 +258,15 @@ fn run_check_workspace(
         )
         .map_err(render_config_diagnostics)?;
         let selected_jobs = workspace_jobs(args, &member);
-        let report =
-            numi_core::check_loaded_config(&config_path, &merged_config, selected_jobs.as_deref())
-                .map_err(|error| CliError::new(error.to_string()))?;
+        let report = numi_core::check_loaded_config_with_options(
+            &config_path,
+            &merged_config,
+            selected_jobs.as_deref(),
+            numi_core::CheckOptions {
+                workspace_manifest_path: Some(manifest_path.to_path_buf()),
+            },
+        )
+        .map_err(|error| CliError::new(error.to_string()))?;
         print_warnings(&report.warnings);
         stale_paths.extend(
             report

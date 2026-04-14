@@ -30,8 +30,12 @@ name = "l10n"
 
 # Optional generation hooks run only during `numi generate`.
 # Numi passes target metadata through environment variables such as:
-# NUMI_JOB_NAME, NUMI_OUTPUT_PATH, NUMI_OUTPUT_DIR, NUMI_CONFIG_PATH,
-# NUMI_WORKSPACE_MANIFEST_PATH, and for post hooks NUMI_WRITE_OUTCOME.
+# NUMI_HOOK_JOB_NAME, NUMI_HOOK_OUTPUT_PATH, NUMI_HOOK_OUTPUT_DIR,
+# NUMI_HOOK_CONFIG_PATH, NUMI_HOOK_WORKSPACE_CONFIG_PATH, and for post
+# hooks NUMI_HOOK_WRITE_OUTCOME.
+#
+# Legacy aliases without the NUMI_HOOK_ prefix are also exported for
+# compatibility with older hook scripts.
 #
 # [jobs.l10n.hooks.post_generate]
 # command = ["swiftformat"]

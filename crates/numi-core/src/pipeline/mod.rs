@@ -439,9 +439,10 @@ fn generate_job(
         let _ = generation_cache::store(config_path, &job.name, &plan.fingerprint, &output_path);
     }
 
-    if matches!(outcome, WriteOutcome::Created | WriteOutcome::Updated)
-        && let Some(hook) = job.hooks.post_generate.as_ref()
-    {
+    let should_run_post_hook = matches!(outcome, WriteOutcome::Created | WriteOutcome::Updated)
+        || (options.force_regenerate && matches!(outcome, WriteOutcome::Unchanged));
+
+    if should_run_post_hook && let Some(hook) = job.hooks.post_generate.as_ref() {
         hook_reports.push(run_hook(
             config_dir,
             hook,
@@ -1561,18 +1562,25 @@ fn run_hook(
         .current_dir(config_dir)
         .env("NUMI_HOOK_PHASE", phase.as_str())
         .env("NUMI_HOOK_JOB_NAME", &env.job_name)
+        .env("NUMI_JOB_NAME", &env.job_name)
         .env("NUMI_HOOK_CONFIG_PATH", &env.config_path)
+        .env("NUMI_CONFIG_PATH", &env.config_path)
         .env("NUMI_HOOK_OUTPUT_PATH", &env.output_path)
+        .env("NUMI_OUTPUT_PATH", &env.output_path)
         .env("NUMI_HOOK_OUTPUT_DIR", &env.output_dir)
+        .env("NUMI_OUTPUT_DIR", &env.output_dir)
         .env_remove("NUMI_HOOK_WRITE_OUTCOME")
+        .env_remove("NUMI_WRITE_OUTCOME")
         .env_remove("NUMI_HOOK_WORKSPACE_CONFIG_PATH")
+        .env_remove("NUMI_WORKSPACE_MANIFEST_PATH")
         .envs(
             outcome
                 .map(|value| {
-                    [(
-                        "NUMI_HOOK_WRITE_OUTCOME",
-                        write_outcome_name(value).to_string(),
-                    )]
+                    let outcome = write_outcome_name(value).to_string();
+                    [
+                        ("NUMI_HOOK_WRITE_OUTCOME", outcome.clone()),
+                        ("NUMI_WRITE_OUTCOME", outcome),
+                    ]
                 })
                 .into_iter()
                 .flatten(),
@@ -1581,10 +1589,11 @@ fn run_hook(
             env.workspace_manifest_path
                 .as_ref()
                 .map(|path| {
-                    [(
-                        "NUMI_HOOK_WORKSPACE_CONFIG_PATH",
-                        path.display().to_string(),
-                    )]
+                    let path = path.display().to_string();
+                    [
+                        ("NUMI_HOOK_WORKSPACE_CONFIG_PATH", path.clone()),
+                        ("NUMI_WORKSPACE_MANIFEST_PATH", path),
+                    ]
                 })
                 .into_iter()
                 .flatten(),

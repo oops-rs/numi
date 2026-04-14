@@ -471,13 +471,17 @@ pub fn resolve_workspace_member_config(
     for job in &mut resolved.jobs {
         if let Some(defaults) = workspace.workspace.defaults.jobs.get(&job.name)
             && job.template.is_empty()
-            && defaults.template.path.is_some()
         {
-            job.template.path = defaults
-                .template
-                .path
-                .as_deref()
-                .map(|path| rebase_workspace_template_path(workspace_root, member_root, path));
+            if defaults.template.path.is_some() {
+                job.template.path =
+                    defaults.template.path.as_deref().map(|path| {
+                        rebase_workspace_template_path(workspace_root, member_root, path)
+                    });
+            }
+
+            if defaults.template.auto_lookup.is_some() {
+                job.template.auto_lookup = defaults.template.auto_lookup;
+            }
         }
 
         if let Some(defaults) = workspace.workspace.defaults.jobs.get(&job.name)

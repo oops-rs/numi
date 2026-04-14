@@ -72,6 +72,88 @@ name = "assets"
 }
 
 #[test]
+fn workspace_defaults_can_disable_auto_lookup() {
+    let workspace = workspace_fixture(
+        r#"
+version = 1
+
+[workspace]
+members = ["AppUI"]
+
+[workspace.defaults.jobs.strings.template]
+auto_lookup = false
+"#,
+    );
+
+    let member_config = member_fixture(
+        r#"
+version = 1
+
+[jobs.strings]
+output = "Generated/Strings.swift"
+
+[[jobs.strings.inputs]]
+type = "strings"
+path = "Resources/Localization"
+"#,
+    );
+
+    let resolved = resolve_workspace_member_config(
+        Path::new("/tmp/workspace"),
+        &workspace,
+        "AppUI",
+        &member_config,
+    )
+    .expect("workspace defaults should resolve");
+
+    assert_eq!(resolved.jobs[0].template.auto_lookup, Some(false));
+    assert!(resolved.jobs[0].template.path.is_none());
+    assert!(resolved.jobs[0].template.builtin.is_none());
+}
+
+#[test]
+fn member_auto_lookup_flag_blocks_workspace_template_path_inheritance() {
+    let workspace = workspace_fixture(
+        r#"
+version = 1
+
+[workspace]
+members = ["AppUI"]
+
+[workspace.defaults.jobs.strings.template]
+path = "Templates/strings"
+"#,
+    );
+
+    let member_config = member_fixture(
+        r#"
+version = 1
+
+[jobs.strings]
+output = "Generated/Strings.swift"
+
+[[jobs.strings.inputs]]
+type = "strings"
+path = "Resources/Localization"
+
+[jobs.strings.template]
+auto_lookup = false
+"#,
+    );
+
+    let resolved = resolve_workspace_member_config(
+        Path::new("/tmp/workspace"),
+        &workspace,
+        "AppUI",
+        &member_config,
+    )
+    .expect("workspace defaults should resolve");
+
+    assert_eq!(resolved.jobs[0].template.auto_lookup, Some(false));
+    assert!(resolved.jobs[0].template.path.is_none());
+}
+
+#[test]
 fn workspace_defaults_hooks_inherit_when_job_hooks_are_missing() {
     let workspace = workspace_fixture(
         r#"

@@ -101,6 +101,8 @@ pub struct TemplateConfig {
     #[serde(default, skip_serializing_if = "TemplateConfig::builtin_is_empty")]
     pub builtin: Option<BuiltinTemplateConfig>,
     pub path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_lookup: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -133,7 +135,7 @@ impl TemplateConfig {
             Some(builtin) => builtin.is_empty(),
         };
 
-        builtin_is_empty && self.path.is_none()
+        builtin_is_empty && self.path.is_none() && self.auto_lookup.is_none()
     }
 
     fn builtin_is_empty(builtin: &Option<BuiltinTemplateConfig>) -> bool {

@@ -193,7 +193,8 @@ pub(crate) fn validate_template(
 
     let template_sources = usize::from(matches!(builtin_state, BuiltinState::Complete { .. }))
         + usize::from(template.path.is_some());
-    if template_sources != 1 {
+    let has_builtin_table = template.builtin.is_some();
+    if template_sources > 1 || (template_sources == 0 && has_builtin_table) {
         let diagnostic = Diagnostic::error(format!("{label} must set exactly one source"))
             .with_hint(format!(
                 "set either `[{field_path}.builtin] language = \"...\" name = \"...\"` or `[{field_path}] path = \"...\"`"

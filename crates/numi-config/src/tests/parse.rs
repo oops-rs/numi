@@ -119,6 +119,49 @@ name = "assets"
 }
 
 #[test]
+fn parses_template_auto_lookup_flag() {
+    let config = parse_str(
+        r#"
+version = 1
+
+[jobs.strings]
+output = "Generated/Strings.swift"
+
+[[jobs.strings.inputs]]
+type = "strings"
+path = "Resources/Localization"
+
+[jobs.strings.template]
+auto_lookup = false
+"#,
+    )
+    .expect("config should parse");
+
+    assert_eq!(config.jobs[0].template.auto_lookup, Some(false));
+    assert!(config.jobs[0].template.path.is_none());
+    assert!(config.jobs[0].template.builtin.is_none());
+}
+
+#[test]
+fn accepts_job_without_explicit_template_source() {
+    let config = parse_str(
+        r#"
+version = 1
+
+[jobs.strings]
+output = "Generated/Strings.swift"
+
+[[jobs.strings.inputs]]
+type = "strings"
+path = "Resources/Localization"
+"#,
+    )
+    .expect("config without explicit template source should parse");
+
+    assert!(config.jobs[0].template.is_empty());
+}
+
+#[test]
 fn parses_incremental_generation_settings_from_defaults_and_job() {
     let config = parse_str(
         r#"
@@ -523,6 +566,7 @@ fn serializing_empty_builtin_namespace_omits_builtin_table() {
                     name: None,
                 }),
                 path: None,
+                auto_lookup: None,
             },
             hooks: HooksConfig::default(),
         }],

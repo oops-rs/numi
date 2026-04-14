@@ -1,7 +1,7 @@
 use minijinja::{Environment, Error, ErrorKind};
 use std::{
     borrow::Cow,
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
 };
@@ -95,6 +95,55 @@ pub fn resolve_template_entry_path(
             minijinja::ErrorKind::InvalidOperation,
             format!(
                 "ambiguous template path `{configured_path}` matched both extensionless and `.jinja` files"
+            ),
+        ))),
+    }
+}
+
+pub fn discover_job_template_path(
+    config_root: &Path,
+    job_name: &str,
+) -> Result<Option<PathBuf>, RenderError> {
+    let candidates = [
+        format!("Templates/{job_name}.jinja"),
+        format!("Templates/{job_name}.template.jinja"),
+        format!("templates/{job_name}.jinja"),
+        format!("templates/{job_name}.template.jinja"),
+    ];
+    let mut matches = BTreeMap::<PathBuf, (String, PathBuf)>::new();
+    for candidate in candidates {
+        let path = config_root.join(&candidate);
+        if !path.is_file() {
+            continue;
+        }
+
+        let canonical = fs::canonicalize(&path).map_err(|source| RenderError::ReadTemplate {
+            path: path.clone(),
+            source,
+        })?;
+        matches
+            .entry(canonical)
+            .or_insert_with(|| (candidate, path));
+    }
+
+    match matches.len() {
+        0 => Ok(None),
+        1 => Ok(Some(
+            matches
+                .into_values()
+                .next()
+                .expect("single match should exist")
+                .1,
+        )),
+        _ => Err(RenderError::Render(Error::new(
+            ErrorKind::InvalidOperation,
+            format!(
+                "ambiguous implicit template lookup for job `{job_name}` matched {}; set `template.path` explicitly or disable auto lookup",
+                matches
+                    .values()
+                    .map(|(candidate, _)| format!("`{candidate}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ),
         ))),
     }

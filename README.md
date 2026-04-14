@@ -11,6 +11,7 @@ It turns asset catalogs, localization resources, fonts, and file lists into gene
 
 - Generates code from `.xcassets`, `.strings`, `.xcstrings`, fonts, and file-based inputs
 - Supports built-in templates and custom Minijinja templates
+- Auto-discovers job-matched custom templates from `Templates/` or `templates/` when a job omits `template`
 - Works well in modular repos through workspace manifests and shared defaults
 - Avoids rewriting unchanged outputs — deterministic, byte-stable generation
 - Verifies checked-in generated files with `numi check`
@@ -75,6 +76,28 @@ name = "swiftui-assets"
 ```
 
 The starter config shipped with `numi init` lives in [docs/examples/starter-numi.toml](docs/examples/starter-numi.toml).
+
+## Implicit Custom Templates
+
+If a job does not set `template.path` or `template.builtin`, Numi will look beside the active
+`numi.toml` for one of these files:
+
+```text
+Templates/<job>.jinja
+Templates/<job>.template.jinja
+templates/<job>.jinja
+templates/<job>.template.jinja
+```
+
+Examples for a `strings` job:
+
+```text
+Templates/strings.jinja
+Templates/strings.template.jinja
+```
+
+Set `auto_lookup = false` under `[jobs.<name>.template]` to disable this fallback for a job. In
+workspace mode, the same setting is available under `[workspace.defaults.jobs.<name>.template]`.
 
 ## Command Reference
 

@@ -27,8 +27,8 @@ use crate::{
     parse_l10n::{LocalizationTable, ParseL10nError, parse_strings, parse_xcstrings},
     parse_xcassets::{ParseXcassetsError, parse_catalog},
     render::{
-        RenderError, builtin_template_source, collect_custom_template_dependencies, render_builtin,
-        render_path, resolve_template_entry_path,
+        RenderError, builtin_template_source, collect_custom_template_dependencies,
+        discover_job_template_path, render_builtin, render_path, resolve_template_entry_path,
     },
 };
 
@@ -317,6 +317,11 @@ where
     F: FnMut(&GenerateProgress),
 {
     let config_dir = config_dir(config_path);
+    let template_lookup_root = options
+        .workspace_manifest_path
+        .as_deref()
+        .map(|path| self::config_dir(path))
+        .unwrap_or(config_dir);
     let jobs = numi_config::resolve_selected_jobs(config, selected_jobs)
         .map_err(GenerateError::Diagnostics)?;
 
@@ -327,7 +332,14 @@ where
         progress(&GenerateProgress::JobStarted {
             job_name: job.name.clone(),
         });
-        let job_report = generate_job(config_path, config_dir, &config.defaults, job, &options)?;
+        let job_report = generate_job(
+            config_path,
+            config_dir,
+            template_lookup_root,
+            &config.defaults,
+            job,
+            &options,
+        )?;
         warnings.extend(job_report.warnings);
         reports.push(JobReport {
             job_name: job_report.job_name,
@@ -395,6 +407,11 @@ pub fn check_loaded_config_with_options(
     options: CheckOptions,
 ) -> Result<CheckReport, GenerateError> {
     let config_dir = config_dir(config_path);
+    let template_lookup_root = options
+        .workspace_manifest_path
+        .as_deref()
+        .map(|path| self::config_dir(path))
+        .unwrap_or(config_dir);
     let jobs = numi_config::resolve_selected_jobs(config, selected_jobs)
         .map_err(GenerateError::Diagnostics)?;
     let mut warnings = Vec::new();
@@ -404,6 +421,7 @@ pub fn check_loaded_config_with_options(
         let job_report = check_job(
             config_path,
             config_dir,
+            template_lookup_root,
             &config.defaults,
             job,
             options.workspace_manifest_path.as_deref(),
@@ -430,6 +448,7 @@ fn config_dir(config_path: &Path) -> &Path {
 fn generate_job(
     config_path: &Path,
     config_dir: &Path,
+    template_lookup_root: &Path,
     defaults: &DefaultsConfig,
     job: &JobConfig,
     options: &GenerateOptions,
@@ -446,7 +465,8 @@ fn generate_job(
     let mut generation_plan = None;
 
     if should_check_generation_cache || parse_cache {
-        generation_plan = compute_generation_fingerprint(config_dir, defaults, job);
+        generation_plan =
+            compute_generation_fingerprint(config_dir, template_lookup_root, defaults, job);
     }
 
     if incremental
@@ -466,7 +486,8 @@ fn generate_job(
     }
 
     if generation_plan.is_none() && incremental {
-        generation_plan = compute_generation_fingerprint(config_dir, defaults, job);
+        generation_plan =
+            compute_generation_fingerprint(config_dir, template_lookup_root, defaults, job);
     }
 
     let hook_env = HookEnvironment::new(
@@ -493,7 +514,7 @@ fn generate_job(
         job,
         parse_cache.then_some(()).and(generation_plan.as_ref()),
     )?;
-    let rendered = render_job(config_dir, job, &context)?;
+    let rendered = render_job(config_dir, template_lookup_root, job, &context)?;
     let outcome = write_if_changed_atomic(&output_path, &rendered).map_err(|source| {
         GenerateError::WriteOutput {
             job: job.name.clone(),
@@ -531,12 +552,13 @@ fn generate_job(
 fn check_job(
     config_path: &Path,
     config_dir: &Path,
+    template_lookup_root: &Path,
     defaults: &DefaultsConfig,
     job: &JobConfig,
     workspace_manifest_path: Option<&Path>,
 ) -> Result<CheckJobExecution, GenerateError> {
     let (context, warnings) = build_context(config_path, config_dir, defaults, job, None)?;
-    let rendered = render_job(config_dir, job, &context)?;
+    let rendered = render_job(config_dir, template_lookup_root, job, &context)?;
     let output_path = config_dir.join(&job.output);
     let stale_without_hook = output_is_stale(&output_path, &rendered).map_err(|source| {
         GenerateError::InspectOutput {
@@ -1459,40 +1481,37 @@ fn store_cached_parse(
 
 fn render_job(
     config_dir: &Path,
+    template_lookup_root: &Path,
     job: &JobConfig,
     context: &AssetTemplateContext,
 ) -> Result<String, GenerateError> {
-    let builtin = job.template.builtin.as_ref();
-    let builtin_language = builtin.and_then(|builtin| builtin.language.as_deref());
-    let builtin_name = builtin.and_then(|builtin| builtin.name.as_deref());
-
-    if let (Some(language), Some(name)) = (builtin_language, builtin_name) {
-        return render_builtin((language, name), context).map_err(|source| GenerateError::Render {
+    match resolve_job_template(config_dir, template_lookup_root, job).map_err(|source| {
+        GenerateError::Render {
             job: job.name.clone(),
             source,
-        });
-    }
-
-    if let Some(template_path) = job.template.path.as_deref() {
-        let resolved_path =
-            resolve_template_entry_path(config_dir, template_path).map_err(|source| {
-                GenerateError::Render {
-                    job: job.name.clone(),
-                    source,
-                }
-            })?;
-        return render_path(&resolved_path, config_dir, context).map_err(|source| {
+        }
+    })? {
+        ResolvedJobTemplate::Builtin { language, name } => {
+            render_builtin((language, name), context).map_err(|source| GenerateError::Render {
+                job: job.name.clone(),
+                source,
+            })
+        }
+        ResolvedJobTemplate::Custom {
+            resolved_path,
+            template_root,
+            ..
+        } => render_path(&resolved_path, &template_root, context).map_err(|source| {
             GenerateError::Render {
                 job: job.name.clone(),
                 source,
             }
-        });
+        }),
+        ResolvedJobTemplate::Missing => Err(GenerateError::UnsupportedJob {
+            job: job.name.clone(),
+            detail: missing_template_detail(job),
+        }),
     }
-
-    Err(GenerateError::UnsupportedJob {
-        job: job.name.clone(),
-        detail: "job template must set a built-in or custom template path".to_string(),
-    })
 }
 
 fn resolve_incremental(
@@ -1513,6 +1532,7 @@ fn resolve_parse_cache(options: &GenerateOptions) -> bool {
 
 fn compute_generation_fingerprint(
     config_dir: &Path,
+    template_lookup_root: &Path,
     defaults: &DefaultsConfig,
     job: &JobConfig,
 ) -> Option<GenerationFingerprintPlan> {
@@ -1545,35 +1565,36 @@ fn compute_generation_fingerprint(
         })
         .collect::<Option<Vec<_>>>()?;
 
-    let builtin = job.template.builtin.as_ref();
-    let builtin_language = builtin.and_then(|builtin| builtin.language.as_deref());
-    let builtin_name = builtin.and_then(|builtin| builtin.name.as_deref());
-
-    let template = if let (Some(language), Some(name)) = (builtin_language, builtin_name) {
-        let source = builtin_template_source((language, name)).ok()?;
-        GenerationTemplateFingerprintRecord::Builtin {
-            language: language.to_owned(),
-            name: name.to_owned(),
-            fingerprint: generation_cache::blake3_hex([source.as_bytes()]),
+    let template = match resolve_job_template(config_dir, template_lookup_root, job).ok()? {
+        ResolvedJobTemplate::Builtin { language, name } => {
+            let source = builtin_template_source((language, name)).ok()?;
+            GenerationTemplateFingerprintRecord::Builtin {
+                language: language.to_owned(),
+                name: name.to_owned(),
+                fingerprint: generation_cache::blake3_hex([source.as_bytes()]),
+            }
         }
-    } else if let Some(template_path) = job.template.path.as_deref() {
-        let resolved_path = resolve_template_entry_path(config_dir, template_path).ok()?;
-        let dependencies = collect_custom_template_dependencies(&resolved_path, config_dir)
-            .ok()??
-            .into_iter()
-            .map(|dependency_path| {
-                Some(GenerationDependencyFingerprintRecord {
-                    path: display_relative_path(&dependency_path, config_dir),
-                    fingerprint: fingerprint_path_contents(&dependency_path).ok()?,
+        ResolvedJobTemplate::Custom {
+            configured_path,
+            resolved_path,
+            template_root,
+        } => {
+            let dependencies = collect_custom_template_dependencies(&resolved_path, &template_root)
+                .ok()??
+                .into_iter()
+                .map(|dependency_path| {
+                    Some(GenerationDependencyFingerprintRecord {
+                        path: display_relative_path(&dependency_path, &template_root),
+                        fingerprint: fingerprint_path_contents(&dependency_path).ok()?,
+                    })
                 })
-            })
-            .collect::<Option<Vec<_>>>()?;
-        GenerationTemplateFingerprintRecord::Custom {
-            path: template_path.to_owned(),
-            dependencies,
+                .collect::<Option<Vec<_>>>()?;
+            GenerationTemplateFingerprintRecord::Custom {
+                path: configured_path,
+                dependencies,
+            }
         }
-    } else {
-        return None;
+        ResolvedJobTemplate::Missing => return None,
     };
 
     let bundle = merged_bundle(defaults, job);
@@ -1592,6 +1613,65 @@ fn compute_generation_fingerprint(
         fingerprint: generation_cache::blake3_hex([payload.as_slice()]),
         cache_input_fingerprints,
     })
+}
+
+enum ResolvedJobTemplate<'a> {
+    Builtin {
+        language: &'a str,
+        name: &'a str,
+    },
+    Custom {
+        configured_path: String,
+        resolved_path: PathBuf,
+        template_root: PathBuf,
+    },
+    Missing,
+}
+
+fn resolve_job_template<'a>(
+    config_dir: &Path,
+    template_lookup_root: &Path,
+    job: &'a JobConfig,
+) -> Result<ResolvedJobTemplate<'a>, RenderError> {
+    let builtin = job.template.builtin.as_ref();
+    let builtin_language = builtin.and_then(|builtin| builtin.language.as_deref());
+    let builtin_name = builtin.and_then(|builtin| builtin.name.as_deref());
+
+    if let (Some(language), Some(name)) = (builtin_language, builtin_name) {
+        return Ok(ResolvedJobTemplate::Builtin { language, name });
+    }
+
+    if let Some(template_path) = job.template.path.as_deref() {
+        let resolved_path = resolve_template_entry_path(config_dir, template_path)?;
+        return Ok(ResolvedJobTemplate::Custom {
+            configured_path: template_path.to_owned(),
+            resolved_path,
+            template_root: config_dir.to_path_buf(),
+        });
+    }
+
+    if job.template.auto_lookup != Some(false) && job.template.builtin.is_none() {
+        if let Some(resolved_path) = discover_job_template_path(template_lookup_root, &job.name)? {
+            return Ok(ResolvedJobTemplate::Custom {
+                configured_path: display_relative_path(&resolved_path, template_lookup_root),
+                resolved_path,
+                template_root: template_lookup_root.to_path_buf(),
+            });
+        }
+    }
+
+    Ok(ResolvedJobTemplate::Missing)
+}
+
+fn missing_template_detail(job: &JobConfig) -> String {
+    if job.template.auto_lookup == Some(false) {
+        return "job template must set a built-in or custom template path; implicit template lookup is disabled".to_string();
+    }
+
+    format!(
+        "job template must set a built-in or custom template path; also checked `Templates/{0}.jinja`, `Templates/{0}.template.jinja`, `templates/{0}.jinja`, and `templates/{0}.template.jinja` beside numi.toml",
+        job.name
+    )
 }
 
 fn cache_kind_for_input(input_kind: &str) -> Option<CacheKind> {

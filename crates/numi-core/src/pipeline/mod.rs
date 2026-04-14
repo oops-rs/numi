@@ -58,6 +58,7 @@ pub struct JobReport {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HookReport {
     pub phase: HookPhase,
+    pub command: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1617,7 +1618,10 @@ fn run_hook(
         });
     }
 
-    Ok(HookReport { phase })
+    Ok(HookReport {
+        phase,
+        command: hook.command.clone(),
+    })
 }
 
 fn resolve_hook_command<'a>(config_dir: &Path, command: &'a [String]) -> (PathBuf, &'a [String]) {

@@ -591,18 +591,7 @@ impl CliUi {
     fn job_reports(&self, root: &Path, jobs: &[numi_core::JobReport]) {
         for job in jobs {
             for hook in &job.hook_reports {
-                let (label, tone, message) = match hook.phase {
-                    numi_core::HookPhase::PreGenerate => (
-                        "Preparing",
-                        StatusTone::Accent,
-                        format!("{} hook", job.job_name),
-                    ),
-                    numi_core::HookPhase::PostGenerate => (
-                        "Tidying",
-                        StatusTone::Accent,
-                        format!("{} hook", job.job_name),
-                    ),
-                };
+                let (label, tone, message) = hook_status(&job.job_name, hook);
                 self.status(tone, label, message);
             }
 
@@ -673,6 +662,25 @@ impl CliUi {
         let rendered = format_status_block(label, tone, message, self.color);
         eprint!("{rendered}");
     }
+}
+
+fn hook_status(job_name: &str, hook: &numi_core::HookReport) -> (&'static str, StatusTone, String) {
+    let label = match hook.phase {
+        numi_core::HookPhase::PreGenerate => "Preparing",
+        numi_core::HookPhase::PostGenerate => "Tidying",
+    };
+
+    let message = if hook.command.is_empty() {
+        format!("{job_name} hook")
+    } else {
+        format!("{job_name} hook -> {}", render_hook_command(&hook.command))
+    };
+
+    (label, StatusTone::Accent, message)
+}
+
+fn render_hook_command(command: &[String]) -> String {
+    command.join(" ")
 }
 
 fn cli_ui() -> CliUi {
@@ -858,6 +866,34 @@ mod cli_ui_tests {
                 skipped: 1,
             }
         );
+    }
+
+    #[test]
+    fn hook_status_message_includes_configured_command() {
+        let hook = numi_core::HookReport {
+            phase: numi_core::HookPhase::PostGenerate,
+            command: vec!["utils/numi-post-generate-format.sh".to_string()],
+        };
+
+        let (label, tone, message) = hook_status("assets", &hook);
+
+        assert_eq!(label, "Tidying");
+        assert_eq!(tone, StatusTone::Accent);
+        assert_eq!(message, "assets hook -> utils/numi-post-generate-format.sh");
+    }
+
+    #[test]
+    fn hook_status_message_falls_back_to_hook_name_when_command_is_empty() {
+        let hook = numi_core::HookReport {
+            phase: numi_core::HookPhase::PreGenerate,
+            command: Vec::new(),
+        };
+
+        let (label, tone, message) = hook_status("files", &hook);
+
+        assert_eq!(label, "Preparing");
+        assert_eq!(tone, StatusTone::Accent);
+        assert_eq!(message, "files hook");
     }
 
     #[test]

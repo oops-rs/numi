@@ -203,6 +203,57 @@ name = "assets"
 }
 
 #[test]
+fn workspace_defaults_shell_hooks_inherit_when_job_hooks_are_missing() {
+    let workspace = workspace_fixture(
+        r#"
+version = 1
+
+[workspace]
+members = ["AppUI"]
+
+[workspace.defaults.jobs.assets.hooks.post_generate]
+shell = "swift format -i \"$NUMI_HOOK_OUTPUT_PATH\""
+"#,
+    );
+
+    let member_config = member_fixture(
+        r#"
+version = 1
+
+[jobs.assets]
+output = "Generated/Assets.h"
+
+[[jobs.assets.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.assets.template.builtin]
+language = "objc"
+name = "assets"
+"#,
+    );
+
+    let resolved = resolve_workspace_member_config(
+        Path::new("/tmp/workspace"),
+        &workspace,
+        "AppUI",
+        &member_config,
+    )
+    .expect("workspace defaults should resolve");
+
+    let hook = resolved.jobs[0]
+        .hooks
+        .post_generate
+        .as_ref()
+        .expect("post hook should be inherited");
+    assert!(hook.command.is_empty());
+    assert_eq!(
+        hook.shell.as_deref(),
+        Some("swift format -i \"$NUMI_HOOK_OUTPUT_PATH\"")
+    );
+}
+
+#[test]
 fn workspace_global_hooks_inherit_when_job_hooks_are_missing() {
     let workspace = workspace_fixture(
         r#"

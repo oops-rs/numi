@@ -15,7 +15,7 @@ It turns asset catalogs, localization resources, fonts, and file lists into gene
 - Works well in modular repos through workspace manifests and shared defaults
 - Avoids rewriting unchanged outputs — deterministic, byte-stable generation
 - Verifies checked-in generated files with `numi check`
-- Supports per-job and workspace-level generation hooks for tasks like formatting
+- Supports per-job and workspace-level generation hooks, including inline shell hooks for tasks like formatting
 - Incremental caching — asset catalogs and strings files are parsed once and skipped when untouched
 
 Numi started as a modern SwiftGen replacement path, but its core model is broader: parse resources into a stable context, then render the output shape your project actually wants.

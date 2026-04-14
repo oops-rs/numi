@@ -419,11 +419,13 @@ Hooks are optional and only run during `numi generate`.
 command = ["Scripts/prepare-generated.sh"]
 
 [jobs.assets.hooks.post_generate]
-command = ["swiftformat"]
+shell = "swift format -i \"$NUMI_HOOK_OUTPUT_PATH\""
 ```
 
 Hook rules:
-- `command`: required argv-style array with a non-empty executable in `command[0]`
+- Set exactly one of `command` or `shell`
+- `command`: argv-style array with a non-empty executable in `command[0]`
+- `shell`: shell command string evaluated by the platform shell (`/bin/sh -c` on Unix, `cmd /C` on Windows)
 - `pre_generate`: runs before rendering and writing
 - `post_generate`: runs only after created or updated outputs
 - Hook failures fail the job and the command
@@ -807,6 +809,7 @@ This includes:
 - Path-like hook executables in `command[0]`
 
 For hook commands, `command[0]` is treated as a path only when it looks path-like. Member hook paths resolve relative to the member manifest directory. Workspace-default hook paths resolve relative to the workspace manifest directory and are rebased for member execution.
+Hook `shell` commands run with the config directory as their working directory.
 
 ### 16.3 Ignore Rules
 V1 may optionally skip obvious build directories for downward search, such as:

@@ -38,7 +38,7 @@ name = "l10n"
 # compatibility with older hook scripts.
 #
 # [jobs.l10n.hooks.post_generate]
-# command = ["swiftformat"]
+# shell = "swift format -i \"$NUMI_HOOK_OUTPUT_PATH\""
 
 # For multi-module repositories, a repo-root numi.toml can switch to:
 #
@@ -46,10 +46,10 @@ name = "l10n"
 # members = ["AppUI", "Core"]
 #
 # [workspace.defaults.hooks.post_generate]
-# command = ["Scripts/format-generated.sh"]
+# shell = "swift format -i \"$NUMI_HOOK_OUTPUT_PATH\""
 #
 # [workspace.defaults.jobs.l10n.template]
 # path = "Templates/l10n"
 #
 # [workspace.defaults.jobs.l10n.hooks.post_generate]
-# command = ["Scripts/format-generated-localization.sh"]
+# shell = "swift format -i \"$NUMI_HOOK_OUTPUT_PATH\""

@@ -230,7 +230,42 @@ command = ["swiftformat"]
 }
 
 #[test]
-fn rejects_empty_job_hook_command() {
+fn parses_job_hook_shell_shape() {
+    let config = parse_str(
+        r#"
+version = 1
+
+[jobs.assets]
+output = "Generated/Assets.swift"
+
+[[jobs.assets.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.assets.template.builtin]
+language = "swift"
+name = "swiftui-assets"
+
+[jobs.assets.hooks.post_generate]
+shell = "swift format -i \"$NUMI_HOOK_OUTPUT_PATH\""
+"#,
+    )
+    .expect("config with shell hook should parse");
+
+    let hook = config.jobs[0]
+        .hooks
+        .post_generate
+        .as_ref()
+        .expect("post hook should exist");
+    assert_eq!(hook.command, Vec::<String>::new());
+    assert_eq!(
+        hook.shell.as_deref(),
+        Some("swift format -i \"$NUMI_HOOK_OUTPUT_PATH\"")
+    );
+}
+
+#[test]
+fn rejects_empty_job_hook_definition() {
     let error = parse_str(
         r#"
 version = 1
@@ -247,15 +282,45 @@ language = "swift"
 name = "swiftui-assets"
 
 [jobs.assets.hooks.post_generate]
-command = []
 "#,
     )
-    .expect_err("empty hook commands should fail validation");
+    .expect_err("empty hooks should fail validation");
 
     assert!(
         error
             .to_string()
-            .contains("job hook command must not be empty")
+            .contains("job hook must set either `command` or `shell`")
+    );
+}
+
+#[test]
+fn rejects_job_hook_with_both_command_and_shell() {
+    let error = parse_str(
+        r#"
+version = 1
+
+[jobs.assets]
+output = "Generated/Assets.swift"
+
+[[jobs.assets.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.assets.template.builtin]
+language = "swift"
+name = "swiftui-assets"
+
+[jobs.assets.hooks.post_generate]
+command = ["swiftformat"]
+shell = "swift format -i \"$NUMI_HOOK_OUTPUT_PATH\""
+"#,
+    )
+    .expect_err("hook with command and shell should fail validation");
+
+    assert!(
+        error
+            .to_string()
+            .contains("job hook must set exactly one of `command` or `shell`")
     );
 }
 

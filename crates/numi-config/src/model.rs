@@ -119,6 +119,8 @@ pub struct HooksConfig {
 pub struct HookConfig {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub command: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shell: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]

@@ -486,6 +486,37 @@ command = ["swiftformat"]
 }
 
 #[test]
+fn parses_workspace_defaults_job_hook_shell_shape() {
+    let manifest = parse_manifest_str(
+        r#"
+version = 1
+
+[workspace]
+members = ["AppUI"]
+
+[workspace.defaults.jobs.assets.hooks.post_generate]
+shell = "swift format -i \"$NUMI_HOOK_OUTPUT_PATH\""
+"#,
+    )
+    .expect("workspace defaults shell hook should parse");
+
+    let Manifest::Workspace(workspace) = manifest else {
+        panic!("expected workspace manifest");
+    };
+
+    let hook = workspace.workspace.defaults.jobs["assets"]
+        .hooks
+        .post_generate
+        .as_ref()
+        .expect("post hook should exist");
+    assert!(hook.command.is_empty());
+    assert_eq!(
+        hook.shell.as_deref(),
+        Some("swift format -i \"$NUMI_HOOK_OUTPUT_PATH\"")
+    );
+}
+
+#[test]
 fn rejects_workspace_member_overrides_for_undeclared_members() {
     let error = parse_manifest_str(
         r#"

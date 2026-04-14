@@ -70,7 +70,7 @@ pub struct JobReport {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HookReport {
     pub phase: HookPhase,
-    pub command: Vec<String>,
+    pub command: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -148,13 +148,13 @@ pub enum GenerateError {
     HookSpawn {
         job: String,
         phase: HookPhase,
-        command: Vec<String>,
+        command: String,
         source: std::io::Error,
     },
     HookExit {
         job: String,
         phase: HookPhase,
-        command: Vec<String>,
+        command: String,
         status: std::process::ExitStatus,
         stdout: String,
         stderr: String,
@@ -228,7 +228,7 @@ impl std::fmt::Display for GenerateError {
                 f,
                 "failed to run {} hook for job `{job}` ({}): {source}",
                 phase.as_str(),
-                render_hook_command(command)
+                command
             ),
             Self::HookExit {
                 job,
@@ -242,7 +242,7 @@ impl std::fmt::Display for GenerateError {
                     f,
                     "{} hook for job `{job}` failed ({}) with status {}",
                     phase.as_str(),
-                    render_hook_command(command),
+                    command,
                     status
                 )?;
                 if !stderr.trim().is_empty() {
@@ -1834,9 +1834,9 @@ fn run_hook(
     env: &HookEnvironment,
     outcome: Option<WriteOutcome>,
 ) -> Result<HookReport, GenerateError> {
-    let (program, args) = resolve_hook_command(config_dir, &hook.command);
-    let output = Command::new(&program)
-        .args(args)
+    let invocation = resolve_hook_command(config_dir, hook);
+    let output = Command::new(&invocation.program)
+        .args(&invocation.args)
         .current_dir(config_dir)
         .env("NUMI_HOOK_PHASE", phase.as_str())
         .env("NUMI_HOOK_JOB_NAME", &env.job_name)
@@ -1880,7 +1880,7 @@ fn run_hook(
         .map_err(|source| GenerateError::HookSpawn {
             job: job_name.to_owned(),
             phase,
-            command: hook.command.clone(),
+            command: invocation.display.clone(),
             source,
         })?;
 
@@ -1888,7 +1888,7 @@ fn run_hook(
         return Err(GenerateError::HookExit {
             job: job_name.to_owned(),
             phase,
-            command: hook.command.clone(),
+            command: invocation.display.clone(),
             status: output.status,
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
@@ -1897,12 +1897,27 @@ fn run_hook(
 
     Ok(HookReport {
         phase,
-        command: hook.command.clone(),
+        command: invocation.display,
     })
 }
 
-fn resolve_hook_command<'a>(config_dir: &Path, command: &'a [String]) -> (PathBuf, &'a [String]) {
-    let program = command
+struct ResolvedHookCommand {
+    program: PathBuf,
+    args: Vec<String>,
+    display: String,
+}
+
+fn resolve_hook_command(config_dir: &Path, hook: &HookConfig) -> ResolvedHookCommand {
+    if let Some(shell) = hook.shell.as_deref() {
+        return ResolvedHookCommand {
+            program: platform_shell_program(),
+            args: platform_shell_args(shell),
+            display: shell.to_string(),
+        };
+    }
+
+    let program = hook
+        .command
         .first()
         .map(|value| {
             if command_looks_like_path(value) {
@@ -1912,7 +1927,12 @@ fn resolve_hook_command<'a>(config_dir: &Path, command: &'a [String]) -> (PathBu
             }
         })
         .unwrap_or_default();
-    (program, &command[1..])
+
+    ResolvedHookCommand {
+        program,
+        args: hook.command[1..].to_vec(),
+        display: render_hook_command(&hook.command),
+    }
 }
 
 fn command_looks_like_path(command: &str) -> bool {
@@ -1948,6 +1968,26 @@ fn write_outcome_name(outcome: WriteOutcome) -> &'static str {
 
 fn render_hook_command(command: &[String]) -> String {
     command.join(" ")
+}
+
+#[cfg(windows)]
+fn platform_shell_program() -> PathBuf {
+    PathBuf::from("cmd")
+}
+
+#[cfg(not(windows))]
+fn platform_shell_program() -> PathBuf {
+    PathBuf::from("/bin/sh")
+}
+
+#[cfg(windows)]
+fn platform_shell_args(command: &str) -> Vec<String> {
+    vec!["/C".to_string(), command.to_string()]
+}
+
+#[cfg(not(windows))]
+fn platform_shell_args(command: &str) -> Vec<String> {
+    vec!["-c".to_string(), command.to_string()]
 }
 
 fn to_utf8_path(path: &Path) -> Result<Utf8PathBuf, GenerateError> {

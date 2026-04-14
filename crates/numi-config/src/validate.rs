@@ -3,8 +3,8 @@ use std::collections::HashSet;
 use numi_diagnostics::Diagnostic;
 
 use crate::model::{
-    ACCESS_LEVEL_VALUES, BUILTIN_TEMPLATE_LANGUAGES, BUNDLE_MODE_VALUES, Config, HooksConfig,
-    INPUT_KIND_VALUES, TemplateConfig, builtin_template_names_for_language,
+    ACCESS_LEVEL_VALUES, BUILTIN_TEMPLATE_LANGUAGES, BUNDLE_MODE_VALUES, Config, HookConfig,
+    HooksConfig, INPUT_KIND_VALUES, TemplateConfig, builtin_template_names_for_language,
 };
 
 pub fn validate_config(config: &Config) -> Vec<Diagnostic> {
@@ -123,20 +123,14 @@ pub(crate) fn validate_hooks(
 ) {
     validate_hook_command(
         diagnostics,
-        hooks
-            .pre_generate
-            .as_ref()
-            .map(|hook| hook.command.as_slice()),
+        hooks.pre_generate.as_ref(),
         label,
         &format!("{field_path}.pre_generate.command"),
         job,
     );
     validate_hook_command(
         diagnostics,
-        hooks
-            .post_generate
-            .as_ref()
-            .map(|hook| hook.command.as_slice()),
+        hooks.post_generate.as_ref(),
         label,
         &format!("{field_path}.post_generate.command"),
         job,
@@ -145,19 +139,23 @@ pub(crate) fn validate_hooks(
 
 fn validate_hook_command(
     diagnostics: &mut Vec<Diagnostic>,
-    command: Option<&[String]>,
+    hook: Option<&HookConfig>,
     label: &str,
     field_path: &str,
     job: Option<&str>,
 ) {
-    let Some(command) = command else {
+    let Some(hook) = hook else {
         return;
     };
 
-    if command.is_empty() {
-        let diagnostic = Diagnostic::error(format!("{label} command must not be empty")).with_hint(
-            format!("set `{field_path} = [\"tool\"]` or remove the hook"),
-        );
+    if !hook.command.is_empty() && hook.shell.is_some() {
+        let shell_field_path = field_path.replace(".command", ".shell");
+        let diagnostic = Diagnostic::error(format!(
+            "{label} must set exactly one of `command` or `shell`"
+        ))
+        .with_hint(format!(
+            "remove either `{field_path}` or `{shell_field_path}`"
+        ));
         diagnostics.push(match job {
             Some(job) => diagnostic.with_job(job.to_owned()),
             None => diagnostic,
@@ -165,7 +163,37 @@ fn validate_hook_command(
         return;
     }
 
-    if command[0].trim().is_empty() {
+    if let Some(shell) = hook.shell.as_deref() {
+        if shell.trim().is_empty() {
+            let shell_field_path = field_path.replace(".command", ".shell");
+            let diagnostic = Diagnostic::error(format!("{label} shell must not be empty"))
+                .with_hint(format!(
+                    "set a non-empty shell command in `{shell_field_path}`"
+                ));
+            diagnostics.push(match job {
+                Some(job) => diagnostic.with_job(job.to_owned()),
+                None => diagnostic,
+            });
+        }
+        return;
+    }
+
+    if hook.command.is_empty() {
+        let shell_field_path = field_path.replace(".command", ".shell");
+        let diagnostic =
+            Diagnostic::error(format!("{label} must set either `command` or `shell`")).with_hint(
+                format!(
+                    "set `{field_path} = [\"tool\"]`, set `{shell_field_path} = \"tool ...\"`, or remove the hook"
+                ),
+            );
+        diagnostics.push(match job {
+            Some(job) => diagnostic.with_job(job.to_owned()),
+            None => diagnostic,
+        });
+        return;
+    }
+
+    if hook.command[0].trim().is_empty() {
         let diagnostic = Diagnostic::error(format!("{label} executable must not be empty"))
             .with_hint(format!("set a non-empty executable in `{field_path}[0]`"));
         diagnostics.push(match job {

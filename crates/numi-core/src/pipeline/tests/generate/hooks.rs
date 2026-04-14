@@ -14,6 +14,10 @@ fn toml_array(values: &[String]) -> String {
     format!("[{}]", parts.join(", "))
 }
 
+fn toml_string(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
 fn write_hook_probe_script(root: &std::path::Path, name: &str, exit_code: i32) -> String {
     let scripts_root = root.join("Scripts");
     fs::create_dir_all(&scripts_root).expect("scripts dir should exist");
@@ -156,6 +160,44 @@ path = "Templates/files.jinja"
     fs::write(config_path, manifest).expect("config should be written");
 }
 
+fn write_custom_files_job_config_with_shell_hook(config_path: &std::path::Path, shell: &str) {
+    let manifest = format!(
+        r#"
+version = 1
+
+[jobs.files]
+output = "Generated/Files.swift"
+
+[[jobs.files.inputs]]
+type = "files"
+path = "Resources/Fixtures"
+
+[jobs.files.template]
+path = "Templates/files.jinja"
+
+[jobs.files.hooks.post_generate]
+shell = {}
+"#,
+        toml_string(shell)
+    );
+
+    fs::write(config_path, manifest).expect("config should be written");
+}
+
+fn hook_probe_shell_command(log_path: &std::path::Path, exit_code: i32) -> String {
+    let log_path = log_path.display().to_string().replace('\\', "\\\\");
+    if cfg!(windows) {
+        format!(
+            ">> \"{log_path}\" echo %NUMI_HOOK_PHASE%^|%NUMI_HOOK_JOB_NAME%^|%NUMI_HOOK_OUTPUT_PATH% & exit /b {exit_code}"
+        )
+    } else {
+        let log_path = log_path.replace('"', "\\\"");
+        format!(
+            "printf '%s|%s|%s\\n' \"$NUMI_HOOK_PHASE\" \"$NUMI_HOOK_JOB_NAME\" \"$NUMI_HOOK_OUTPUT_PATH\" >> \"{log_path}\"; exit {exit_code}"
+        )
+    }
+}
+
 #[test]
 fn generate_runs_pre_and_post_hooks_with_target_env() {
     let temp_dir = make_temp_dir("pipeline-hooks-pre-post");
@@ -250,6 +292,50 @@ fn generate_does_not_run_post_hook_when_output_is_unchanged() {
     assert_eq!(second.jobs[0].outcome, WriteOutcome::Unchanged);
     assert_eq!(lines.len(), 1);
     assert!(lines[0].contains("|created|"));
+
+    fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn generate_runs_shell_hook_with_target_env() {
+    let temp_dir = make_temp_dir("pipeline-hooks-shell");
+    let config_path = temp_dir.join("numi.toml");
+    let files_root = temp_dir.join("Resources/Fixtures");
+    let template_path = temp_dir.join("Templates/files.jinja");
+    let generated_path = temp_dir.join("Generated/Files.swift");
+    let log_path = temp_dir.join("hook.log");
+
+    fs::create_dir_all(&files_root).expect("files directory should exist");
+    fs::create_dir_all(
+        template_path
+            .parent()
+            .expect("template path should have parent"),
+    )
+    .expect("template dir should exist");
+    fs::write(files_root.join("faq.pdf"), "faq").expect("faq file should be written");
+    fs::write(
+        &template_path,
+        "{{ modules[0].entries[0].properties.fileName }}\n",
+    )
+    .expect("template should be written");
+    write_custom_files_job_config_with_shell_hook(
+        &config_path,
+        &hook_probe_shell_command(&log_path, 0),
+    );
+
+    let report = generate(&config_path, None).expect("generation should succeed");
+    let log = fs::read_to_string(&log_path).expect("hook log should exist");
+    let line = log.lines().next().expect("hook line should exist");
+
+    assert_eq!(report.jobs[0].outcome, WriteOutcome::Created);
+    assert_eq!(
+        line,
+        format!("post_generate|files|{}", generated_path.display())
+    );
+    assert_eq!(
+        report.jobs[0].hook_reports[0].command,
+        hook_probe_shell_command(&log_path, 0)
+    );
 
     fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
 }

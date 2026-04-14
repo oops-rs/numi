@@ -694,7 +694,7 @@ fn hook_status(job_name: &str, hook: &numi_core::HookReport) -> (&'static str, S
     let message = if hook.command.is_empty() {
         format!("{job_name} hook")
     } else {
-        format!("{job_name} hook -> {}", render_hook_command(&hook.command))
+        format!("{job_name} hook -> {}", hook.command)
     };
 
     (label, StatusTone::Accent, message)
@@ -702,10 +702,6 @@ fn hook_status(job_name: &str, hook: &numi_core::HookReport) -> (&'static str, S
 
 fn job_started_status(job_name: &str) -> (&'static str, StatusTone, String) {
     ("Weaving", StatusTone::Accent, format!("{job_name}..."))
-}
-
-fn render_hook_command(command: &[String]) -> String {
-    command.join(" ")
 }
 
 fn rewrite_diagnostic_paths_in_cwd(message: &str) -> String {
@@ -936,7 +932,7 @@ mod cli_ui_tests {
     fn hook_status_message_includes_configured_command() {
         let hook = numi_core::HookReport {
             phase: numi_core::HookPhase::PostGenerate,
-            command: vec!["utils/numi-post-generate-format.sh".to_string()],
+            command: "utils/numi-post-generate-format.sh".to_string(),
         };
 
         let (label, tone, message) = hook_status("assets", &hook);
@@ -950,7 +946,7 @@ mod cli_ui_tests {
     fn hook_status_message_falls_back_to_hook_name_when_command_is_empty() {
         let hook = numi_core::HookReport {
             phase: numi_core::HookPhase::PreGenerate,
-            command: Vec::new(),
+            command: String::new(),
         };
 
         let (label, tone, message) = hook_status("files", &hook);

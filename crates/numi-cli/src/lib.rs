@@ -635,8 +635,9 @@ impl CliUi {
     }
 
     fn warning(&self, message: &str) {
+        let message = rewrite_diagnostic_paths_in_cwd(message);
         if self.interactive {
-            let body = message.strip_prefix("warning: ").unwrap_or(message);
+            let body = message.strip_prefix("warning: ").unwrap_or(&message);
             self.block(StatusTone::Warning, "Noted", body);
         } else {
             eprintln!("{message}");
@@ -644,8 +645,9 @@ impl CliUi {
     }
 
     fn error(&self, message: &str) {
+        let message = rewrite_diagnostic_paths_in_cwd(message);
         if self.interactive {
-            self.block(StatusTone::Error, "Oops", message);
+            self.block(StatusTone::Error, "Oops", &message);
         } else {
             eprintln!("{message}");
         }
@@ -681,6 +683,45 @@ fn hook_status(job_name: &str, hook: &numi_core::HookReport) -> (&'static str, S
 
 fn render_hook_command(command: &[String]) -> String {
     command.join(" ")
+}
+
+fn rewrite_diagnostic_paths_in_cwd(message: &str) -> String {
+    std::env::current_dir()
+        .ok()
+        .map(|cwd| rewrite_diagnostic_paths(message, &cwd))
+        .unwrap_or_else(|| message.to_string())
+}
+
+fn rewrite_diagnostic_paths(message: &str, cwd: &Path) -> String {
+    let mut rewritten = String::with_capacity(message.len());
+    let mut remaining = message;
+
+    while let Some(marker_index) = remaining.find("[path: ") {
+        let (prefix, after_prefix) = remaining.split_at(marker_index);
+        rewritten.push_str(prefix);
+
+        let after_marker = &after_prefix["[path: ".len()..];
+        let Some(path_end) = after_marker.find(']') else {
+            rewritten.push_str(after_prefix);
+            return rewritten;
+        };
+
+        let (path_text, suffix) = after_marker.split_at(path_end);
+        rewritten.push_str("[path: ");
+        rewritten.push_str(&rewrite_diagnostic_path(path_text, cwd));
+        rewritten.push(']');
+        remaining = &suffix[1..];
+    }
+
+    rewritten.push_str(remaining);
+    rewritten
+}
+
+fn rewrite_diagnostic_path(path_text: &str, cwd: &Path) -> String {
+    Path::new(path_text)
+        .strip_prefix(cwd)
+        .map(display_path)
+        .unwrap_or_else(|_| path_text.to_string())
 }
 
 fn cli_ui() -> CliUi {
@@ -894,6 +935,33 @@ mod cli_ui_tests {
         assert_eq!(label, "Preparing");
         assert_eq!(tone, StatusTone::Accent);
         assert_eq!(message, "files hook");
+    }
+
+    #[test]
+    fn rewrite_diagnostic_paths_relativizes_paths_under_cwd() {
+        let cwd = Path::new("/tmp/workspace");
+        let message =
+            "warning: skipped entry [path: /tmp/workspace/AppUI/Resources/Localizable.xcstrings]";
+
+        let rewritten = rewrite_diagnostic_paths(message, cwd);
+
+        assert_eq!(
+            rewritten,
+            "warning: skipped entry [path: AppUI/Resources/Localizable.xcstrings]"
+        );
+    }
+
+    #[test]
+    fn rewrite_diagnostic_paths_keeps_paths_outside_cwd() {
+        let cwd = Path::new("/tmp/workspace");
+        let message = "warning: skipped entry [path: /tmp/other/Localizable.xcstrings]";
+
+        let rewritten = rewrite_diagnostic_paths(message, cwd);
+
+        assert_eq!(
+            rewritten,
+            "warning: skipped entry [path: /tmp/other/Localizable.xcstrings]"
+        );
     }
 
     #[test]

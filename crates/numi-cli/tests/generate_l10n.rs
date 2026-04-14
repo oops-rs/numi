@@ -487,6 +487,8 @@ name = "l10n"
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("warning: skipping xcstrings key `Lv.%lld`"));
+    assert!(stderr.contains("[path: Resources/Localization/Localizable.xcstrings]"));
+    assert!(!stderr.contains(&working_root.to_string_lossy().to_string()));
 
     let generated = fs::read_to_string(working_root.join("Generated/L10n.swift"))
         .expect("generated l10n file should exist");

@@ -101,7 +101,7 @@ The starter config shipped with `numi init` lives in [docs/examples/starter-numi
 - [docs/examples/starter-numi.toml](docs/examples/starter-numi.toml): starter manifest
 - [docs/crates-io-release.md](docs/crates-io-release.md): release workflow notes
 
-For detailed guides on workspace manifests, generation hooks, custom templates, supported inputs, built-in templates, and CI integration, see the [numi website](https://numi.oops.rs).
+For detailed guides on workspace manifests, generation hooks, custom templates, supported inputs, built-in templates, and CI integration, see the [numi website](https://numi.elata.ai/#quickstart).
 
 ## Development
 

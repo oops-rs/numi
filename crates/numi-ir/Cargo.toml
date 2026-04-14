@@ -1,6 +1,6 @@
 [package]
 name = "numi-ir"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 description = "Intermediate representation types for the Numi resource code generation workspace."
 license = "MIT"
@@ -8,6 +8,6 @@ repository = "https://github.com/oops-rs/numi"
 
 [dependencies]
 camino = { version = "1", features = ["serde1"] }
-numi-diagnostics = { version = "0.2.1", path = "../numi-diagnostics" }
+numi-diagnostics = { version = "0.2.2", path = "../numi-diagnostics" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

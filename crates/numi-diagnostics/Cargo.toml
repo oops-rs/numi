@@ -1,6 +1,6 @@
 [package]
 name = "numi-diagnostics"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 description = "Diagnostics types for the Numi resource code generation workspace."
 license = "MIT"

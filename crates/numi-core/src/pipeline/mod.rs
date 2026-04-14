@@ -321,7 +321,7 @@ where
     let template_lookup_root = options
         .workspace_manifest_path
         .as_deref()
-        .map(|path| self::config_dir(path))
+        .map(self::config_dir)
         .unwrap_or(config_dir);
     let jobs = numi_config::resolve_selected_jobs(config, selected_jobs)
         .map_err(GenerateError::Diagnostics)?;
@@ -411,7 +411,7 @@ pub fn check_loaded_config_with_options(
     let template_lookup_root = options
         .workspace_manifest_path
         .as_deref()
-        .map(|path| self::config_dir(path))
+        .map(self::config_dir)
         .unwrap_or(config_dir);
     let jobs = numi_config::resolve_selected_jobs(config, selected_jobs)
         .map_err(GenerateError::Diagnostics)?;
@@ -1657,14 +1657,15 @@ fn resolve_job_template<'a>(
         });
     }
 
-    if job.template.auto_lookup != Some(false) && job.template.builtin.is_none() {
-        if let Some(resolved_path) = discover_job_template_path(template_lookup_root, &job.name)? {
-            return Ok(ResolvedJobTemplate::Custom {
-                configured_path: display_relative_path(&resolved_path, template_lookup_root),
-                resolved_path,
-                template_root: template_lookup_root.to_path_buf(),
-            });
-        }
+    if job.template.auto_lookup != Some(false)
+        && job.template.builtin.is_none()
+        && let Some(resolved_path) = discover_job_template_path(template_lookup_root, &job.name)?
+    {
+        return Ok(ResolvedJobTemplate::Custom {
+            configured_path: display_relative_path(&resolved_path, template_lookup_root),
+            resolved_path,
+            template_root: template_lookup_root.to_path_buf(),
+        });
     }
 
     Ok(ResolvedJobTemplate::Missing)

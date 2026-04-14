@@ -2,5 +2,3 @@
 enabled = ["codex"]
 [launch_hooks]
 sync_on_startup = true
-[dev-dependencies]
-superpowers = { github = "obra/superpowers", branch = "main" }

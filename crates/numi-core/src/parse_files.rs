@@ -1,3 +1,4 @@
+use crate::input_filters::should_ignore_directory_entry;
 use camino::Utf8PathBuf;
 use numi_ir::{EntryKind, Metadata, RawEntry};
 use serde_json::Value;
@@ -77,7 +78,7 @@ fn collect_files(
         })?;
         let path = entry.path();
 
-        if path.file_name().is_some_and(|name| name == ".DS_Store") {
+        if should_ignore_directory_entry(&path) {
             continue;
         }
 
@@ -250,8 +251,11 @@ mod tests {
         let first_file = assets_dir.join("zeta").with_file_name("zeta.txt");
         let second_file = assets_dir.join("Nested").join("alpha.json");
         let ignored = assets_dir.join(".DS_Store");
+        let hidden_dir = assets_dir.join(".Snapshots");
         fs::write(&first_file, "one").expect("first file should be written");
         fs::write(&second_file, "two").expect("second file should be written");
+        fs::create_dir_all(&hidden_dir).expect("hidden directory should be created");
+        fs::write(hidden_dir.join("preview.txt"), "hidden").expect("hidden file should be written");
         fs::write(&ignored, "ignored").expect("noise file should be written");
 
         let entries = parse_files(&assets_dir).expect("directory input should parse");
@@ -284,6 +288,30 @@ mod tests {
             Value::String("txt".to_string())
         );
         assert!(entries.iter().all(|entry| entry.path != ".DS_Store"));
+        assert!(
+            entries
+                .iter()
+                .all(|entry| !entry.path.starts_with(".Snapshots/"))
+        );
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn hidden_only_directory_is_treated_as_empty() {
+        let temp_dir = make_temp_dir("parse-files-hidden-only");
+        let files_dir = temp_dir.join("Resources").join("Assets");
+        let hidden_dir = files_dir.join(".Snapshots");
+        fs::create_dir_all(&hidden_dir).expect("hidden directory should be created");
+        fs::write(files_dir.join(".DS_Store"), "ignored").expect("dotfile should be written");
+        fs::write(hidden_dir.join("preview.txt"), "hidden").expect("hidden file should be written");
+
+        let entries = parse_files(&files_dir).expect("hidden-only directory should parse");
+
+        assert!(
+            entries.is_empty(),
+            "hidden-only folders should not emit entries"
+        );
 
         fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
     }

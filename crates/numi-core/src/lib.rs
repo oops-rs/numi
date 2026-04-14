@@ -1,5 +1,6 @@
 mod context;
 mod generation_cache;
+mod input_filters;
 mod output;
 mod parse_cache;
 pub mod parse_files;

@@ -514,6 +514,64 @@ private func file(_ path: String) -> URL {
 }
 
 #[test]
+fn generate_skips_hidden_only_files_inputs() {
+    let temp_dir = make_temp_dir("pipeline-files-hidden-only-input");
+    let config_path = temp_dir.join("numi.toml");
+    let empty_root = temp_dir.join("Resources/Empty");
+    let files_root = temp_dir.join("Resources/Fixtures");
+    let template_path = temp_dir.join("Templates/files.jinja");
+    let generated_path = temp_dir.join("Generated/Files.swift");
+
+    fs::create_dir_all(empty_root.join(".Snapshots")).expect("hidden-only directory should exist");
+    fs::create_dir_all(&files_root).expect("files directory should exist");
+    fs::create_dir_all(
+        template_path
+            .parent()
+            .expect("template path should have parent"),
+    )
+    .expect("template dir should exist");
+    fs::write(empty_root.join(".DS_Store"), "ignored").expect("dotfile should be written");
+    fs::write(empty_root.join(".Snapshots/preview.txt"), "hidden")
+        .expect("hidden file should be written");
+    fs::write(files_root.join("faq.pdf"), "faq").expect("faq file should be written");
+    fs::write(
+        &template_path,
+        "{{ modules | length }}|{{ modules[0].name }}|{{ modules[0].entries[0].properties.fileName }}\n",
+    )
+    .expect("template should be written");
+    fs::write(
+        &config_path,
+        r#"
+version = 1
+
+[jobs.files]
+output = "Generated/Files.swift"
+
+[[jobs.files.inputs]]
+type = "files"
+path = "Resources/Empty"
+
+[[jobs.files.inputs]]
+type = "files"
+path = "Resources/Fixtures"
+
+[jobs.files.template]
+path = "Templates/files.jinja"
+"#,
+    )
+    .expect("config should be written");
+
+    let report = generate(&config_path, None).expect("generation should succeed");
+    let rendered = fs::read_to_string(&generated_path).expect("output should be written");
+
+    assert_eq!(report.jobs.len(), 1);
+    assert_eq!(report.jobs[0].outcome, WriteOutcome::Created);
+    assert_eq!(rendered, "1|Fixtures|faq.pdf\n");
+
+    fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+}
+
+#[test]
 fn generate_writes_objc_builtin_files_accessors() {
     let temp_dir = make_temp_dir("pipeline-objc-files-generate");
     let config_path = temp_dir.join("numi.toml");

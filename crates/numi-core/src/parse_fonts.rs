@@ -1,3 +1,4 @@
+use crate::input_filters::should_ignore_directory_entry;
 use camino::Utf8PathBuf;
 use numi_ir::{EntryKind, Metadata, RawEntry};
 use serde::{Deserialize, Serialize};
@@ -132,7 +133,7 @@ fn collect_fonts(
         })?;
         let path = entry.path();
 
-        if path.file_name().is_some_and(|name| name == ".DS_Store") {
+        if should_ignore_directory_entry(&path) {
             continue;
         }
 
@@ -574,6 +575,8 @@ mod tests {
         let temp_dir = make_temp_dir("parse-fonts-directory");
         let fonts_root = temp_dir.join("Resources").join("Fonts");
         fs::create_dir_all(fonts_root.join("Nested")).expect("font directory should exist");
+        fs::create_dir_all(fonts_root.join(".Preview"))
+            .expect("hidden font directory should exist");
         fs::write(
             fonts_root.join("Baloo2-Bold.ttf"),
             make_test_font_bytes("Baloo 2", "Bold", "Baloo2-Bold"),
@@ -584,6 +587,11 @@ mod tests {
             make_test_font_bytes_with_full_name("fonteditor", "Medium", "fonteditor", "fonteditor"),
         )
         .expect("second font should be written");
+        fs::write(
+            fonts_root.join(".Preview").join("ghost.ttf"),
+            make_test_font_bytes("Ghost", "Regular", "Ghost-Regular"),
+        )
+        .expect("hidden font should be written");
 
         let entries = parse_font_entries(&fonts_root).expect("font directory should parse");
 
@@ -593,6 +601,30 @@ mod tests {
         assert_eq!(entries[1].family_name, "fonteditor");
         assert_eq!(entries[1].style_name, "Medium");
         assert_eq!(entries[1].full_name, "fonteditor");
+        assert!(entries.iter().all(|entry| entry.file_name != "ghost.ttf"));
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn hidden_only_font_directory_is_treated_as_empty() {
+        let temp_dir = make_temp_dir("parse-fonts-hidden-only");
+        let fonts_root = temp_dir.join("Resources").join("Fonts");
+        let hidden_dir = fonts_root.join(".Preview");
+        fs::create_dir_all(&hidden_dir).expect("hidden font directory should exist");
+        fs::write(fonts_root.join(".DS_Store"), "ignored").expect("dotfile should be written");
+        fs::write(
+            hidden_dir.join("ghost.ttf"),
+            make_test_font_bytes("Ghost", "Regular", "Ghost-Regular"),
+        )
+        .expect("hidden font should be written");
+
+        let entries = parse_font_entries(&fonts_root).expect("hidden-only directory should parse");
+
+        assert!(
+            entries.is_empty(),
+            "hidden-only folders should not emit fonts"
+        );
 
         fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
     }

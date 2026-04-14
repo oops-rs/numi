@@ -20,6 +20,7 @@ use std::{
 use crate::{
     context::{AssetTemplateContext, ContextError},
     generation_cache,
+    input_filters::should_ignore_directory_entry,
     output::{OutputError, WriteOutcome, output_is_stale, write_if_changed_atomic},
     parse_cache::{self, CacheKind, CachedParseData},
     parse_files::{ParseFilesError, parse_files},
@@ -945,6 +946,9 @@ fn build_modules(
                 let mut entries =
                     normalize_scope(&job.name, raw_entries).map_err(GenerateError::Diagnostics)?;
                 annotate_swiftgen_file_sort_keys(&mut entries);
+                if entries.is_empty() {
+                    continue;
+                }
                 let module_id = input_path
                     .file_stem()
                     .or_else(|| input_path.file_name())
@@ -985,6 +989,9 @@ fn build_modules(
                     .collect::<Vec<_>>();
                 let entries =
                     normalize_scope(&job.name, raw_entries).map_err(GenerateError::Diagnostics)?;
+                if entries.is_empty() {
+                    continue;
+                }
                 let module_id = input_path
                     .file_stem()
                     .or_else(|| input_path.file_name())
@@ -1728,11 +1735,10 @@ fn collect_fingerprint_files(root: &Path, files: &mut Vec<PathBuf>) -> std::io::
     for entry in fs::read_dir(root)? {
         let entry = entry?;
         let path = entry.path();
-        let file_type = entry.file_type()?;
-
-        if path.file_name().is_some_and(|name| name == ".DS_Store") {
+        if should_ignore_directory_entry(&path) {
             continue;
         }
+        let file_type = entry.file_type()?;
 
         if file_type.is_dir() {
             collect_fingerprint_files(&path, files)?;

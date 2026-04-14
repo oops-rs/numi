@@ -1,4 +1,7 @@
-use crate::{parse_l10n::LocalizationTable, parse_xcassets::XcassetsReport};
+use crate::{
+    input_filters::should_ignore_directory_entry, parse_l10n::LocalizationTable,
+    parse_xcassets::XcassetsReport,
+};
 use atomic_write_file::AtomicWriteFile;
 use blake3::Hasher;
 use numi_ir::RawEntry;
@@ -475,6 +478,9 @@ fn collect_relevant_files(
             source,
         })?;
         let path = entry.path();
+        if should_ignore_directory_entry(&path) {
+            continue;
+        }
         let file_type = entry
             .file_type()
             .map_err(|source| CacheError::ReadDirectory {
@@ -534,6 +540,9 @@ fn collect_relevant_xcassets_entries(
             source,
         })?;
         let path = entry.path();
+        if should_ignore_directory_entry(&path) {
+            continue;
+        }
         let file_type = entry
             .file_type()
             .map_err(|source| CacheError::ReadDirectory {
@@ -720,6 +729,28 @@ mod tests {
 
         let after = fingerprint_input(CacheKind::Strings, &l10n_dir)
             .expect("fingerprint should still succeed");
+
+        assert_eq!(before, after);
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+    }
+
+    #[test]
+    fn fingerprint_ignores_hidden_entries_for_files_directory() {
+        let temp_dir = make_temp_dir("parse-cache-fingerprint-hidden-files");
+        let files_dir = temp_dir.join("Fixtures");
+        let hidden_dir = files_dir.join(".Snapshots");
+        fs::create_dir_all(&hidden_dir).expect("hidden dir should exist");
+        fs::write(files_dir.join(".DS_Store"), "ignored").expect("dotfile should exist");
+        fs::write(hidden_dir.join("preview.txt"), "before").expect("hidden file should exist");
+
+        let before =
+            fingerprint_input(CacheKind::Files, &files_dir).expect("fingerprint should succeed");
+
+        fs::write(hidden_dir.join("preview.txt"), "after").expect("hidden file should mutate");
+
+        let after =
+            fingerprint_input(CacheKind::Files, &files_dir).expect("fingerprint should succeed");
 
         assert_eq!(before, after);
 

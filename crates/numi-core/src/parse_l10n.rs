@@ -1,3 +1,4 @@
+use crate::input_filters::should_ignore_directory_entry;
 use camino::Utf8PathBuf;
 use langcodec::{
     error::Error as LangcodecError,
@@ -128,6 +129,9 @@ fn collect_localization_files(
             source,
         })?;
         let path = entry.path();
+        if should_ignore_directory_entry(&path) {
+            continue;
+        }
         let file_type = entry
             .file_type()
             .map_err(|source| ParseL10nError::ReadDirectory {

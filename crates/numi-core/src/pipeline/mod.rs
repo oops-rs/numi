@@ -39,6 +39,11 @@ pub struct GenerateReport {
     pub warnings: Vec<Diagnostic>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GenerateProgress {
+    JobStarted { job_name: String },
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GenerateOptions {
     pub incremental: Option<bool>,
@@ -264,8 +269,26 @@ pub fn generate_with_options(
     selected_jobs: Option<&[String]>,
     options: GenerateOptions,
 ) -> Result<GenerateReport, GenerateError> {
+    generate_with_options_and_progress(config_path, selected_jobs, options, |_| {})
+}
+
+pub fn generate_with_options_and_progress<F>(
+    config_path: &Path,
+    selected_jobs: Option<&[String]>,
+    options: GenerateOptions,
+    progress: F,
+) -> Result<GenerateReport, GenerateError>
+where
+    F: FnMut(&GenerateProgress),
+{
     let loaded = numi_config::load_from_path(config_path).map_err(GenerateError::LoadConfig)?;
-    generate_loaded_config(&loaded.path, &loaded.config, selected_jobs, options)
+    generate_loaded_config_with_progress(
+        &loaded.path,
+        &loaded.config,
+        selected_jobs,
+        options,
+        progress,
+    )
 }
 
 pub fn generate_loaded_config(
@@ -274,6 +297,19 @@ pub fn generate_loaded_config(
     selected_jobs: Option<&[String]>,
     options: GenerateOptions,
 ) -> Result<GenerateReport, GenerateError> {
+    generate_loaded_config_with_progress(config_path, config, selected_jobs, options, |_| {})
+}
+
+pub fn generate_loaded_config_with_progress<F>(
+    config_path: &Path,
+    config: &numi_config::Config,
+    selected_jobs: Option<&[String]>,
+    options: GenerateOptions,
+    mut progress: F,
+) -> Result<GenerateReport, GenerateError>
+where
+    F: FnMut(&GenerateProgress),
+{
     let config_dir = config_dir(config_path);
     let jobs = numi_config::resolve_selected_jobs(config, selected_jobs)
         .map_err(GenerateError::Diagnostics)?;
@@ -282,6 +318,9 @@ pub fn generate_loaded_config(
     let mut warnings = Vec::new();
 
     for job in jobs {
+        progress(&GenerateProgress::JobStarted {
+            job_name: job.name.clone(),
+        });
         let job_report = generate_job(config_path, config_dir, &config.defaults, job, &options)?;
         warnings.extend(job_report.warnings);
         reports.push(JobReport {

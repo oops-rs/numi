@@ -1,4 +1,7 @@
-use super::super::super::{GenerateOptions, WriteOutcome, generate, generate_with_options};
+use super::super::super::{
+    GenerateOptions, GenerateProgress, WriteOutcome, generate, generate_with_options,
+    generate_with_options_and_progress,
+};
 use super::super::{make_temp_dir, write_custom_files_job_config};
 use std::fs;
 
@@ -179,4 +182,46 @@ fn generate_refresh_bypasses_generation_skip() {
         fs::read_to_string(&generated_path).expect("generated file should remain"),
         "faq.pdf\n"
     );
+}
+
+#[test]
+fn generate_reports_job_started_before_generating() {
+    let temp_dir = make_temp_dir("pipeline-generate-progress");
+    let config_path = temp_dir.join("numi.toml");
+    let files_root = temp_dir.join("Resources/Fixtures");
+    let template_path = temp_dir.join("Templates/files.jinja");
+
+    fs::create_dir_all(&files_root).expect("files directory should exist");
+    fs::create_dir_all(
+        template_path
+            .parent()
+            .expect("template path should have parent"),
+    )
+    .expect("template dir should exist");
+    fs::write(files_root.join("faq.pdf"), "faq").expect("faq file should be written");
+    fs::write(
+        &template_path,
+        "{{ modules[0].entries[0].properties.fileName }}\n",
+    )
+    .expect("template should be written");
+    write_custom_files_job_config(&config_path, Some(false));
+
+    let mut events = Vec::new();
+    let report = generate_with_options_and_progress(
+        &config_path,
+        None,
+        GenerateOptions::default(),
+        |progress| events.push(progress.clone()),
+    )
+    .expect("generation should succeed");
+
+    assert_eq!(report.jobs[0].outcome, WriteOutcome::Created);
+    assert_eq!(
+        events,
+        vec![GenerateProgress::JobStarted {
+            job_name: "files".to_string(),
+        }]
+    );
+
+    fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
 }

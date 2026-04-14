@@ -87,7 +87,8 @@ fn run_generate_config(
 ) -> Result<(), CliError> {
     let selected_jobs = selected_jobs(&args.jobs);
     let incremental = args.incremental_override.resolve();
-    let report = numi_core::generate_with_options(
+    let ui = cli_ui();
+    let report = numi_core::generate_with_options_and_progress(
         config_path,
         selected_jobs,
         numi_core::GenerateOptions {
@@ -96,14 +97,15 @@ fn run_generate_config(
             force_regenerate: incremental.force_regenerate,
             workspace_manifest_path: None,
         },
+        |progress| ui.progress(progress),
     )
     .map_err(|error| CliError::new(error.to_string()))?;
     let output_root = manifest_dir(config_path)?;
-    cli_ui().job_reports(output_root, &report.jobs);
+    ui.job_reports(output_root, &report.jobs);
     print_warnings(&report.warnings);
     let mut summary = JobSummary::default();
     summary.record_jobs(&report.jobs);
-    cli_ui().generation_summary(summary);
+    ui.generation_summary(summary);
     Ok(())
 }
 
@@ -196,6 +198,7 @@ fn run_generate_workspace(
     args: &GenerateArgs,
 ) -> Result<(), CliError> {
     let workspace_dir = manifest_dir(manifest_path)?;
+    let ui = cli_ui();
     let mut summary = JobSummary::default();
 
     for member in workspace.members() {
@@ -212,7 +215,7 @@ fn run_generate_workspace(
         .map_err(render_config_diagnostics)?;
         let selected_jobs = workspace_jobs(args, &member);
         let incremental = args.incremental_override.resolve();
-        let report = numi_core::generate_loaded_config(
+        let report = numi_core::generate_loaded_config_with_progress(
             &config_path,
             &merged_config,
             selected_jobs.as_deref(),
@@ -222,14 +225,15 @@ fn run_generate_workspace(
                 force_regenerate: incremental.force_regenerate,
                 workspace_manifest_path: Some(manifest_path.to_path_buf()),
             },
+            |progress| ui.progress(progress),
         )
         .map_err(|error| CliError::new(error.to_string()))?;
-        cli_ui().job_reports(workspace_dir, &report.jobs);
+        ui.job_reports(workspace_dir, &report.jobs);
         print_warnings(&report.warnings);
         summary.record_jobs(&report.jobs);
     }
 
-    cli_ui().generation_summary(summary);
+    ui.generation_summary(summary);
     Ok(())
 }
 
@@ -588,6 +592,15 @@ impl CliUi {
         );
     }
 
+    fn progress(&self, progress: &numi_core::GenerateProgress) {
+        match progress {
+            numi_core::GenerateProgress::JobStarted { job_name } => {
+                let (label, tone, message) = job_started_status(job_name);
+                self.status(tone, label, message);
+            }
+        }
+    }
+
     fn job_reports(&self, root: &Path, jobs: &[numi_core::JobReport]) {
         for job in jobs {
             for hook in &job.hook_reports {
@@ -679,6 +692,10 @@ fn hook_status(job_name: &str, hook: &numi_core::HookReport) -> (&'static str, S
     };
 
     (label, StatusTone::Accent, message)
+}
+
+fn job_started_status(job_name: &str) -> (&'static str, StatusTone, String) {
+    ("Weaving", StatusTone::Accent, format!("{job_name}..."))
 }
 
 fn render_hook_command(command: &[String]) -> String {
@@ -935,6 +952,15 @@ mod cli_ui_tests {
         assert_eq!(label, "Preparing");
         assert_eq!(tone, StatusTone::Accent);
         assert_eq!(message, "files hook");
+    }
+
+    #[test]
+    fn job_started_status_message_describes_current_job() {
+        let (label, tone, message) = job_started_status("assets");
+
+        assert_eq!(label, "Weaving");
+        assert_eq!(tone, StatusTone::Accent);
+        assert_eq!(message, "assets...");
     }
 
     #[test]

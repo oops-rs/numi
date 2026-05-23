@@ -516,7 +516,7 @@ dependencies = [
 
 [[package]]
 name = "numi"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "clap",
  "numi-config",
@@ -527,7 +527,7 @@ dependencies = [
 
 [[package]]
 name = "numi-config"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "numi-diagnostics",
  "serde",
@@ -537,7 +537,7 @@ dependencies = [
 
 [[package]]
 name = "numi-core"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "atomic-write-file",
  "blake3",
@@ -555,14 +555,14 @@ dependencies = [
 
 [[package]]
 name = "numi-diagnostics"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "numi-ir"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "camino",
  "numi-diagnostics",

@@ -457,6 +457,34 @@ language = "swift"
 }
 
 #[test]
+fn parses_workspace_defaults_type_template_shape() {
+    let manifest = parse_manifest_str(
+        r#"
+version = 1
+
+[workspace]
+members = ["AppUI"]
+
+[workspace.defaults.types.xcstrings.template]
+path = "Templates/strings.template.jinja"
+"#,
+    )
+    .expect("workspace defaults type template should parse");
+
+    let Manifest::Workspace(workspace) = manifest else {
+        panic!("expected workspace manifest");
+    };
+
+    assert_eq!(
+        workspace.workspace.defaults.types["xcstrings"]
+            .template
+            .path
+            .as_deref(),
+        Some("Templates/strings.template.jinja")
+    );
+}
+
+#[test]
 fn parses_workspace_defaults_job_hooks_shape() {
     let manifest = parse_manifest_str(
         r#"
@@ -608,6 +636,26 @@ language = "objc"
     let message = error.to_string();
     assert!(message.contains("workspace default job template must set exactly one source"));
     assert!(message.contains("remove either `path` or `builtin.language`"));
+}
+
+#[test]
+fn rejects_invalid_workspace_default_type_key() {
+    let error = parse_manifest_str(
+        r#"
+version = 1
+
+[workspace]
+members = ["AppUI"]
+
+[workspace.defaults.types.images.template]
+path = "Templates/images.stencil"
+"#,
+    )
+    .expect_err("invalid workspace default type key should fail validation");
+
+    let message = error.to_string();
+    assert!(message.contains("workspace.defaults.types keys must be one of"));
+    assert!(message.contains("got `images`"));
 }
 
 #[test]

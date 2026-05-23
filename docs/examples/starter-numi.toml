@@ -51,5 +51,8 @@ name = "l10n"
 # [workspace.defaults.jobs.l10n.template]
 # path = "Templates/l10n"
 #
+# [workspace.defaults.types.xcstrings.template]
+# path = "Templates/strings.template.jinja"
+#
 # [workspace.defaults.jobs.l10n.hooks.post_generate]
 # shell = "swift format -i \"$NUMI_HOOK_OUTPUT_PATH\""

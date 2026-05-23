@@ -9,7 +9,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{
     ConfigError,
-    model::{BUILTIN_TEMPLATE_LANGUAGES, HooksConfig, TemplateConfig},
+    model::{BUILTIN_TEMPLATE_LANGUAGES, HooksConfig, INPUT_KIND_VALUES, TemplateConfig},
     validate::{validate_hooks, validate_template},
     workspace_member_config_path,
 };
@@ -71,6 +71,8 @@ pub struct WorkspaceDefaults {
     pub hooks: HooksConfig,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub jobs: BTreeMap<String, WorkspaceJobDefaults>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub types: BTreeMap<String, WorkspaceTypeDefaults>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -80,6 +82,13 @@ pub struct WorkspaceJobDefaults {
     pub template: TemplateConfig,
     #[serde(default, skip_serializing_if = "HooksConfig::is_empty")]
     pub hooks: HooksConfig,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceTypeDefaults {
+    #[serde(default, skip_serializing_if = "TemplateConfig::is_empty")]
+    pub template: TemplateConfig,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -320,6 +329,7 @@ fn validate_workspace(config: &WorkspaceConfig) -> Vec<Diagnostic> {
         validate_workspace_default_template(
             &mut diagnostics,
             &job_defaults.template,
+            "workspace default job template",
             &format!("workspace.defaults.jobs.{job_name}.template"),
             Some(job_name.as_str()),
         );
@@ -329,6 +339,37 @@ fn validate_workspace(config: &WorkspaceConfig) -> Vec<Diagnostic> {
             "workspace default job hook",
             &format!("workspace.defaults.jobs.{job_name}.hooks"),
             Some(job_name.as_str()),
+        );
+    }
+
+    for (input_type, type_defaults) in &config.workspace.defaults.types {
+        if !INPUT_KIND_VALUES.contains(&input_type.as_str()) {
+            diagnostics.push(
+                Diagnostic::error(format!(
+                    "workspace.defaults.types keys must be one of {} (got `{input_type}`)",
+                    INPUT_KIND_VALUES
+                        .iter()
+                        .map(|value| format!("`{value}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))
+                .with_hint(format!(
+                    "use one of: {}",
+                    INPUT_KIND_VALUES
+                        .iter()
+                        .map(|value| format!("`{value}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )),
+            );
+        }
+
+        validate_workspace_default_template(
+            &mut diagnostics,
+            &type_defaults.template,
+            "workspace default type template",
+            &format!("workspace.defaults.types.{input_type}.template"),
+            None,
         );
     }
 
@@ -346,6 +387,7 @@ fn validate_workspace(config: &WorkspaceConfig) -> Vec<Diagnostic> {
 fn validate_workspace_default_template(
     diagnostics: &mut Vec<Diagnostic>,
     template: &TemplateConfig,
+    label: &str,
     field_path: &str,
     job: Option<&str>,
 ) {
@@ -354,20 +396,12 @@ fn validate_workspace_default_template(
     }
 
     let Some(builtin) = template.builtin.as_ref() else {
-        validate_template(
-            diagnostics,
-            template,
-            "workspace default job template",
-            field_path,
-            job,
-        );
+        validate_template(diagnostics, template, label, field_path, job);
         return;
     };
 
     if builtin.name.is_some() {
-        let diagnostic = Diagnostic::error(
-            "workspace default job template builtin must not set `name`",
-        )
+        let diagnostic = Diagnostic::error(format!("{label} builtin must not set `name`"))
         .with_hint(
             "workspace defaults only inherit builtin language; set the job-level builtin name instead",
         );
@@ -379,12 +413,10 @@ fn validate_workspace_default_template(
     }
 
     if template.path.is_some() && builtin.language.is_some() {
-        let diagnostic = Diagnostic::error(
-            "workspace default job template must set exactly one source",
-        )
-        .with_hint(
-            "remove either `path` or `builtin.language` from `[workspace.defaults.jobs.<job>.template]`",
-        );
+        let diagnostic = Diagnostic::error(format!("{label} must set exactly one source"))
+            .with_hint(format!(
+                "remove either `path` or `builtin.language` from `[{field_path}]`"
+            ));
         diagnostics.push(match job {
             Some(job) => diagnostic.with_job(job.to_owned()),
             None => diagnostic,
@@ -397,13 +429,7 @@ fn validate_workspace_default_template(
         return;
     }
 
-    validate_template(
-        diagnostics,
-        template,
-        "workspace default job template",
-        field_path,
-        job,
-    );
+    validate_template(diagnostics, template, label, field_path, job);
 }
 
 fn validate_workspace_default_builtin_language(
@@ -500,6 +526,8 @@ struct RawWorkspaceDefaults {
     hooks: HooksConfig,
     #[serde(default)]
     jobs: BTreeMap<String, RawWorkspaceJobDefaults>,
+    #[serde(default)]
+    types: BTreeMap<String, RawWorkspaceTypeDefaults>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
@@ -509,6 +537,13 @@ struct RawWorkspaceJobDefaults {
     template: TemplateConfig,
     #[serde(default)]
     hooks: HooksConfig,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawWorkspaceTypeDefaults {
+    #[serde(default)]
+    template: TemplateConfig,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
@@ -616,6 +651,11 @@ impl RawWorkspaceDefaults {
                 .into_iter()
                 .map(|(job_name, defaults)| (job_name, defaults.into_workspace()))
                 .collect(),
+            types: self
+                .types
+                .into_iter()
+                .map(|(input_type, defaults)| (input_type, defaults.into_workspace()))
+                .collect(),
         }
     }
 }
@@ -629,6 +669,14 @@ impl RawWorkspaceJobDefaults {
     }
 }
 
+impl RawWorkspaceTypeDefaults {
+    fn into_workspace(self) -> WorkspaceTypeDefaults {
+        WorkspaceTypeDefaults {
+            template: self.template,
+        }
+    }
+}
+
 impl RawWorkspaceMemberOverride {
     fn into_workspace(self) -> WorkspaceMemberOverride {
         WorkspaceMemberOverride { jobs: self.jobs }
@@ -637,7 +685,7 @@ impl RawWorkspaceMemberOverride {
 
 impl WorkspaceDefaults {
     pub fn is_empty(&self) -> bool {
-        self.hooks.is_empty() && self.jobs.is_empty()
+        self.hooks.is_empty() && self.jobs.is_empty() && self.types.is_empty()
     }
 }
 

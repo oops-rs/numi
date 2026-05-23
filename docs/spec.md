@@ -450,8 +450,8 @@ version = 1
 [workspace]
 members = ["AppUI", "Core"]
 
-[workspace.defaults.jobs.assets.template.builtin]
-language = "objc"
+[workspace.defaults.types.xcassets.template]
+path = "Templates/assets.template.jinja"
 
 [workspace.member_overrides.Core]
 jobs = ["assets"]
@@ -463,7 +463,7 @@ Workspace manifest fields:
 - `workspace.defaults`: optional job defaults applied before member execution
 - `workspace.member_overrides`: optional per-member overrides keyed by member root
 
-Workspace defaults may provide shared `hooks.pre_generate` and `hooks.post_generate` for every workspace job. Workspace defaults may also provide `template.builtin.language`, but not a built-in `name`; each member job still selects its own built-in template name. `workspace.defaults.jobs.<job>.hooks` overrides the shared workspace hook for that job and phase, and member jobs replace inherited hooks when they define their own hooks.
+Workspace defaults may provide shared `hooks.pre_generate` and `hooks.post_generate` for every workspace job. Workspace defaults may also provide `template.builtin.language`, but not a built-in `name`; each member job still selects its own built-in template name. `workspace.defaults.types.<input-type>.template` applies a template default to jobs whose inputs all use that type, and `workspace.defaults.jobs.<job>.template` overrides the type default for that job. `workspace.defaults.jobs.<job>.hooks` overrides the shared workspace hook for that job and phase, and member jobs replace inherited hooks when they define their own hooks.
 
 Each workspace member contains:
 - one directory root that resolves to `<member>/numi.toml`

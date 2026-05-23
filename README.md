@@ -98,6 +98,14 @@ Templates/strings.template.jinja
 
 Set `auto_lookup = false` under `[jobs.<name>.template]` to disable this fallback for a job. In
 workspace mode, the same setting is available under `[workspace.defaults.jobs.<name>.template]`.
+Workspace manifests can also provide a custom template for every job with one matching input type:
+
+```toml
+[workspace.defaults.types.xcstrings.template]
+path = "Templates/strings.template.jinja"
+```
+
+Exact job defaults still win over type defaults when both apply.
 
 ## Custom Template Variables
 

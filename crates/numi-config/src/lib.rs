@@ -20,7 +20,8 @@ pub use model::{
 };
 pub use workspace::{
     LoadedWorkspace, WorkspaceConfig, WorkspaceDefaults, WorkspaceError, WorkspaceJobDefaults,
-    WorkspaceMember, WorkspaceMemberOverride, WorkspaceSettings, load_workspace_from_path,
+    WorkspaceMember, WorkspaceMemberOverride, WorkspaceSettings, WorkspaceTypeDefaults,
+    load_workspace_from_path,
 };
 
 #[derive(Debug)]
@@ -469,29 +470,30 @@ pub fn resolve_workspace_member_config(
     let mut resolved = member_config.clone();
 
     for job in &mut resolved.jobs {
-        if let Some(defaults) = workspace.workspace.defaults.jobs.get(&job.name)
-            && job.template.is_empty()
+        if job.template.is_empty()
+            && let Some(default_template) = workspace_template_default_for_job(workspace, job)
         {
-            if defaults.template.path.is_some() {
-                job.template.path =
-                    defaults.template.path.as_deref().map(|path| {
-                        rebase_workspace_template_path(workspace_root, member_root, path)
-                    });
-            }
-
-            if defaults.template.auto_lookup.is_some() {
-                job.template.auto_lookup = defaults.template.auto_lookup;
-            }
+            apply_workspace_template_default(
+                workspace_root,
+                member_root,
+                &mut job.template,
+                default_template,
+            );
         }
 
-        if let Some(defaults) = workspace.workspace.defaults.jobs.get(&job.name)
-            && let (Some(job_builtin), Some(default_builtin)) = (
-                job.template.builtin.as_mut(),
-                defaults.template.builtin.as_ref(),
-            )
-            && job_builtin.language.is_none()
+        if job
+            .template
+            .builtin
+            .as_ref()
+            .is_some_and(|builtin| builtin.language.is_none())
         {
-            job_builtin.language = default_builtin.language.clone();
+            let default_language =
+                workspace_builtin_language_for_job(workspace, job).map(str::to_owned);
+            if let (Some(job_builtin), Some(language)) =
+                (job.template.builtin.as_mut(), default_language)
+            {
+                job_builtin.language = Some(language);
+            }
         }
 
         if job.hooks.pre_generate.is_none() {
@@ -525,6 +527,84 @@ pub fn resolve_workspace_member_config(
     } else {
         Err(diagnostics)
     }
+}
+
+fn workspace_template_default_for_job<'a>(
+    workspace: &'a WorkspaceConfig,
+    job: &JobConfig,
+) -> Option<&'a TemplateConfig> {
+    workspace
+        .workspace
+        .defaults
+        .jobs
+        .get(&job.name)
+        .map(|defaults| &defaults.template)
+        .filter(|template| !template.is_empty())
+        .or_else(|| workspace_type_template_default_for_job(workspace, job))
+}
+
+fn workspace_type_template_default_for_job<'a>(
+    workspace: &'a WorkspaceConfig,
+    job: &JobConfig,
+) -> Option<&'a TemplateConfig> {
+    let input_type = job_unambiguous_input_type(job)?;
+    workspace
+        .workspace
+        .defaults
+        .types
+        .get(input_type)
+        .map(|defaults| &defaults.template)
+        .filter(|template| !template.is_empty())
+}
+
+fn apply_workspace_template_default(
+    workspace_root: &Path,
+    member_root: &str,
+    job_template: &mut TemplateConfig,
+    default_template: &TemplateConfig,
+) {
+    if default_template.path.is_some() {
+        job_template.path = default_template
+            .path
+            .as_deref()
+            .map(|path| rebase_workspace_template_path(workspace_root, member_root, path));
+    }
+
+    if default_template.auto_lookup.is_some() {
+        job_template.auto_lookup = default_template.auto_lookup;
+    }
+}
+
+fn workspace_builtin_language_for_job<'a>(
+    workspace: &'a WorkspaceConfig,
+    job: &JobConfig,
+) -> Option<&'a str> {
+    workspace
+        .workspace
+        .defaults
+        .jobs
+        .get(&job.name)
+        .and_then(|defaults| workspace_template_builtin_language(&defaults.template))
+        .or_else(|| {
+            workspace_type_template_default_for_job(workspace, job)
+                .and_then(workspace_template_builtin_language)
+        })
+}
+
+fn workspace_template_builtin_language(template: &TemplateConfig) -> Option<&str> {
+    template
+        .builtin
+        .as_ref()
+        .and_then(|builtin| builtin.language.as_deref())
+}
+
+fn job_unambiguous_input_type(job: &JobConfig) -> Option<&str> {
+    let mut inputs = job.inputs.iter();
+    let input_type = inputs.next()?.kind.as_str();
+
+    inputs
+        .all(|input| input.kind == input_type)
+        .then_some(input_type)
 }
 
 fn rebase_workspace_template_path(

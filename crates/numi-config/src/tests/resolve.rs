@@ -501,6 +501,160 @@ path = "Resources/Assets.xcassets"
 }
 
 #[test]
+fn workspace_type_defaults_path_inherit_for_matching_input_type() {
+    let workspace = workspace_fixture(
+        r#"
+version = 1
+
+[workspace]
+members = ["Modules/Couple"]
+
+[workspace.defaults.types.xcstrings.template]
+path = "Templates/strings.template.jinja"
+"#,
+    );
+
+    let member_config = member_fixture(
+        r#"
+version = 1
+
+[jobs.guard_strings]
+output = "Sources/Guard/Generated/Strings.generated.swift"
+
+[[jobs.guard_strings.inputs]]
+type = "xcstrings"
+path = "Sources/Guard/Resources/Localizable.xcstrings"
+
+[jobs.proposal_strings]
+output = "Sources/Proposal/Generated/Strings.generated.swift"
+
+[[jobs.proposal_strings.inputs]]
+type = "xcstrings"
+path = "Sources/Proposal/Resources/Localizable.xcstrings"
+"#,
+    );
+
+    let resolved = resolve_workspace_member_config(
+        Path::new("/tmp/workspace"),
+        &workspace,
+        "Modules/Couple",
+        &member_config,
+    )
+    .expect("workspace type defaults should resolve");
+    let expected_path = PathBuf::from("..")
+        .join("..")
+        .join("Templates")
+        .join("strings.template.jinja")
+        .display()
+        .to_string();
+
+    assert_eq!(
+        resolved.jobs[0].template.path.as_deref(),
+        Some(expected_path.as_str())
+    );
+    assert_eq!(
+        resolved.jobs[1].template.path.as_deref(),
+        Some(expected_path.as_str())
+    );
+}
+
+#[test]
+fn workspace_job_template_defaults_override_type_template_defaults() {
+    let workspace = workspace_fixture(
+        r#"
+version = 1
+
+[workspace]
+members = ["AppUI"]
+
+[workspace.defaults.types.xcstrings.template]
+path = "Templates/strings.template.jinja"
+
+[workspace.defaults.jobs.guard_strings.template]
+path = "Templates/guard-strings.template.jinja"
+"#,
+    );
+
+    let member_config = member_fixture(
+        r#"
+version = 1
+
+[jobs.guard_strings]
+output = "Sources/Guard/Generated/Strings.generated.swift"
+
+[[jobs.guard_strings.inputs]]
+type = "xcstrings"
+path = "Sources/Guard/Resources/Localizable.xcstrings"
+"#,
+    );
+
+    let resolved = resolve_workspace_member_config(
+        Path::new("/tmp/workspace"),
+        &workspace,
+        "AppUI",
+        &member_config,
+    )
+    .expect("workspace defaults should resolve");
+    let expected_path = PathBuf::from("..")
+        .join("Templates")
+        .join("guard-strings.template.jinja")
+        .display()
+        .to_string();
+
+    assert_eq!(
+        resolved.jobs[0].template.path.as_deref(),
+        Some(expected_path.as_str())
+    );
+}
+
+#[test]
+fn workspace_type_defaults_can_supply_builtin_language() {
+    let workspace = workspace_fixture(
+        r#"
+version = 1
+
+[workspace]
+members = ["AppUI"]
+
+[workspace.defaults.types.xcassets.template.builtin]
+language = "objc"
+"#,
+    );
+
+    let member_config = member_fixture(
+        r#"
+version = 1
+
+[jobs.icons]
+output = "Generated/Icons.h"
+
+[[jobs.icons.inputs]]
+type = "xcassets"
+path = "Resources/Assets.xcassets"
+
+[jobs.icons.template.builtin]
+name = "assets"
+"#,
+    );
+
+    let resolved = resolve_workspace_member_config(
+        Path::new("/tmp/workspace"),
+        &workspace,
+        "AppUI",
+        &member_config,
+    )
+    .expect("workspace type defaults should resolve");
+
+    let builtin = resolved.jobs[0]
+        .template
+        .builtin
+        .as_ref()
+        .expect("builtin should exist");
+    assert_eq!(builtin.language.as_deref(), Some("objc"));
+    assert_eq!(builtin.name.as_deref(), Some("assets"));
+}
+
+#[test]
 fn workspace_defaults_missing_member_builtin_name_remains_invalid() {
     let workspace = workspace_fixture(
         r#"

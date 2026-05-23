@@ -99,6 +99,33 @@ Templates/strings.template.jinja
 Set `auto_lookup = false` under `[jobs.<name>.template]` to disable this fallback for a job. In
 workspace mode, the same setting is available under `[workspace.defaults.jobs.<name>.template]`.
 
+## Custom Template Variables
+
+Jobs can pass project-specific knobs to custom or built-in templates through a job-local
+`variables` table:
+
+```toml
+[jobs.strings]
+output = "Generated/Strings.swift"
+
+[jobs.strings.template]
+path = "Templates/strings.jinja"
+
+[jobs.strings.variables]
+enum_name = "AppStrings"
+bundle_accessor = "Bundle.module"
+generate_comments = true
+imports = ["Foundation"]
+```
+
+Templates read those values from the top-level `variables` object:
+
+```jinja
+{% for import in variables.imports %}import {{ import }}
+{% endfor %}
+enum {{ variables.enum_name }} {}
+```
+
 ## Command Reference
 
 | Command | Purpose |

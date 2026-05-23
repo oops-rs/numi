@@ -11,6 +11,8 @@ pub const DEFAULT_ACCESS_LEVEL: &str = "internal";
 pub const DEFAULT_BUNDLE_MODE: &str = "module";
 pub const DEFAULT_INCREMENTAL: bool = true;
 
+pub type TemplateVariables = BTreeMap<String, serde_json::Value>;
+
 pub fn builtin_template_names_for_language(language: &str) -> &'static [&'static str] {
     match language {
         "swift" => SWIFT_BUILTIN_TEMPLATE_NAMES,
@@ -46,6 +48,8 @@ struct RawJobConfig {
     pub incremental: Option<bool>,
     #[serde(default, skip_serializing_if = "BundleConfig::is_empty")]
     pub bundle: BundleConfig,
+    #[serde(default, skip_serializing_if = "TemplateVariables::is_empty")]
+    pub variables: TemplateVariables,
     pub inputs: Vec<InputConfig>,
     #[serde(default, skip_serializing_if = "TemplateConfig::is_empty")]
     pub template: TemplateConfig,
@@ -80,6 +84,8 @@ pub struct JobConfig {
     pub incremental: Option<bool>,
     #[serde(default, skip_serializing_if = "BundleConfig::is_empty")]
     pub bundle: BundleConfig,
+    #[serde(default, skip_serializing_if = "TemplateVariables::is_empty")]
+    pub variables: TemplateVariables,
     pub inputs: Vec<InputConfig>,
     #[serde(default, skip_serializing_if = "TemplateConfig::is_empty")]
     pub template: TemplateConfig,
@@ -203,6 +209,7 @@ impl From<RawConfig> for Config {
                 access_level: job.access_level,
                 incremental: job.incremental,
                 bundle: job.bundle,
+                variables: job.variables,
                 inputs: job.inputs,
                 template: job.template,
                 hooks: job.hooks,
@@ -228,6 +235,7 @@ impl From<Config> for RawConfig {
                     access_level: job.access_level,
                     incremental: job.incremental,
                     bundle: job.bundle,
+                    variables: job.variables,
                     inputs: job.inputs,
                     template: job.template,
                     hooks: job.hooks,

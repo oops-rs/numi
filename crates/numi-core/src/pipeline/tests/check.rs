@@ -180,6 +180,81 @@ fn check_uses_cached_files_parse_and_still_reports_stale_outputs() {
 }
 
 #[test]
+fn check_reports_stale_output_when_only_job_variables_change() {
+    let temp_dir = make_temp_dir("pipeline-check-variable-change");
+    let config_path = temp_dir.join("numi.toml");
+    let files_root = temp_dir.join("Resources/Fixtures");
+    let template_path = temp_dir.join("Templates/files.jinja");
+    let generated_path = temp_dir.join("Generated/Files.swift");
+
+    fs::create_dir_all(&files_root).expect("files directory should exist");
+    fs::create_dir_all(
+        template_path
+            .parent()
+            .expect("template path should have parent"),
+    )
+    .expect("template dir should exist");
+    fs::write(files_root.join("faq.pdf"), "faq").expect("faq file should be written");
+    fs::write(&template_path, "{{ variables.enum_name }}\n").expect("template should be written");
+    fs::write(
+        &config_path,
+        r#"
+version = 1
+
+[jobs.files]
+output = "Generated/Files.swift"
+
+[[jobs.files.inputs]]
+type = "files"
+path = "Resources/Fixtures"
+
+[jobs.files.template]
+path = "Templates/files.jinja"
+
+[jobs.files.variables]
+enum_name = "FilesV1"
+"#,
+    )
+    .expect("config should be written");
+
+    generate(&config_path, None).expect("initial generation should succeed");
+    assert_eq!(
+        fs::read_to_string(&generated_path).expect("generated file should exist"),
+        "FilesV1\n"
+    );
+
+    fs::write(
+        &config_path,
+        r#"
+version = 1
+
+[jobs.files]
+output = "Generated/Files.swift"
+
+[[jobs.files.inputs]]
+type = "files"
+path = "Resources/Fixtures"
+
+[jobs.files.template]
+path = "Templates/files.jinja"
+
+[jobs.files.variables]
+enum_name = "FilesV2"
+"#,
+    )
+    .expect("config should be rewritten");
+
+    let report = check(&config_path, None).expect("check should succeed");
+
+    assert_eq!(
+        report.stale_paths,
+        vec![Utf8PathBuf::from_path_buf(generated_path).expect("utf8 output path")]
+    );
+
+    fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+}
+
+#[test]
 fn check_degrades_when_cache_root_is_unusable() {
     let temp_dir = make_temp_dir("pipeline-cache-degrade-check");
     let config_path = temp_dir.join("numi.toml");

@@ -8,6 +8,7 @@ Templates may rely on the field names and meanings documented here.
 Every `dump-context` payload and every built-in or custom template receives a single object with these top-level fields:
 
 - `job`
+- `variables`
 - `access_level`
 - `bundle`
 - `modules`
@@ -21,6 +22,15 @@ Top-level field names are stable for all v1 releases.
 - `job.name`: the configured job name from `numi.toml`
 - `job.swiftIdentifier`: the Swift type name derived from `job.name`
 - `job.output`: the configured output path as written in config
+
+### `variables`
+
+- `variables`: the job-local template variables configured under `[jobs.<name>.variables]`
+
+When omitted, `variables` is an empty object. Values may be strings, booleans, numbers, arrays, or nested objects from TOML tables.
+Templates can read these values directly, for example `{{ variables.enum_name }}` or `{{ variables.options.bundle_accessor }}`.
+
+Numi does not inspect templates to discover required variables. Missing values use the template engine's normal behavior.
 
 ### `access_level`
 
@@ -85,7 +95,7 @@ Current stable entry property keys:
 
 ## Determinism
 
-Numi v1 keeps module and entry ordering deterministic for the same config, inputs, and template version.
+Numi v1 keeps module and entry ordering deterministic for the same config, inputs, job variables, and template version.
 Repeated `generate` and `dump-context` runs should therefore be byte-stable when the inputs do not change.
 
 ## Compatibility Policy

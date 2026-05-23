@@ -123,6 +123,7 @@ fn builtin_template_fingerprint_record_includes_language_and_name() {
         access_level: "internal".to_string(),
         bundle_mode: "module".to_string(),
         bundle_identifier: None,
+        variables: Default::default(),
         inputs: Vec::new(),
         template: GenerationTemplateFingerprintRecord::Builtin {
             language: "objc".to_string(),
@@ -137,6 +138,7 @@ fn builtin_template_fingerprint_record_includes_language_and_name() {
     assert_eq!(serialized["template"]["language"], "objc");
     assert_eq!(serialized["template"]["name"], "assets");
     assert_eq!(serialized["template"]["fingerprint"], "fingerprint");
+    assert_eq!(serialized["variables"], json!({}));
 }
 
 #[test]
@@ -183,6 +185,55 @@ name = "files"
     assert_eq!(
         json["modules"][0]["entries"][1]["properties"]["fileName"],
         "faq.pdf"
+    );
+
+    fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn dump_context_includes_job_variables() {
+    let temp_dir = make_temp_dir("pipeline-context-job-variables");
+    let config_path = temp_dir.join("numi.toml");
+    let files_root = temp_dir.join("Resources/Fixtures");
+
+    fs::create_dir_all(&files_root).expect("files directory should exist");
+    fs::write(files_root.join("faq.pdf"), "faq").expect("faq file should be written");
+    fs::write(
+        &config_path,
+        r#"
+version = 1
+
+[jobs.files]
+output = "Generated/Files.swift"
+
+[[jobs.files.inputs]]
+type = "files"
+path = "Resources/Fixtures"
+
+[jobs.files.template]
+path = "Templates/files.jinja"
+
+[jobs.files.variables]
+enum_name = "AppFiles"
+imports = ["Foundation"]
+
+[jobs.files.variables.options]
+bundle_accessor = "Bundle.module"
+"#,
+    )
+    .expect("config should be written");
+
+    let report = dump_context(&config_path, "files").expect("dump context should succeed");
+    let json: Value = serde_json::from_str(&report.json).expect("json should parse");
+
+    assert_eq!(json["variables"]["enum_name"], "AppFiles");
+    assert_eq!(
+        json["variables"]["imports"],
+        serde_json::json!(["Foundation"])
+    );
+    assert_eq!(
+        json["variables"]["options"],
+        serde_json::json!({"bundle_accessor": "Bundle.module"})
     );
 
     fs::remove_dir_all(temp_dir).expect("temp dir should be removed");

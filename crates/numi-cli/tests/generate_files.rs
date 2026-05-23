@@ -192,3 +192,65 @@ fn dump_context_emits_files_module_kind_and_properties() {
 
     fs::remove_dir_all(temp_root).expect("temp dir should be removed");
 }
+
+#[test]
+fn dump_context_emits_job_variables() {
+    let temp_root = make_temp_dir("dump-context-files-variables");
+    let files_root = temp_root.join("Resources/Fixtures");
+    fs::create_dir_all(&files_root).expect("files directory should exist");
+    fs::write(files_root.join("faq.pdf"), "faq").expect("faq file should be written");
+    fs::write(
+        temp_root.join("numi.toml"),
+        r#"
+version = 1
+
+[jobs.files]
+output = "Generated/Files.swift"
+
+[[jobs.files.inputs]]
+type = "files"
+path = "Resources/Fixtures"
+
+[jobs.files.template]
+path = "Templates/files.jinja"
+
+[jobs.files.variables]
+enum_name = "AppFiles"
+generate_comments = true
+imports = ["Foundation"]
+
+[jobs.files.variables.options]
+bundle_accessor = "Bundle.module"
+"#,
+    )
+    .expect("config should be written");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_numi"))
+        .args(["dump-context", "--config", "numi.toml", "--job", "files"])
+        .current_dir(&temp_root)
+        .output()
+        .expect("numi dump-context should run");
+
+    assert!(
+        output.status.success(),
+        "command failed:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout should be JSON");
+
+    assert_eq!(json["variables"]["enum_name"], "AppFiles");
+    assert_eq!(json["variables"]["generate_comments"], true);
+    assert_eq!(
+        json["variables"]["imports"],
+        serde_json::json!(["Foundation"])
+    );
+    assert_eq!(
+        json["variables"]["options"]["bundle_accessor"],
+        "Bundle.module"
+    );
+
+    fs::remove_dir_all(temp_root).expect("temp dir should be removed");
+}

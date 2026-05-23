@@ -2,6 +2,7 @@ use crate::{
     BuiltinTemplateConfig, BundleConfig, Config, DefaultsConfig, HooksConfig, InputConfig,
     JobConfig, Manifest, TemplateConfig, parse_manifest_str, parse_str,
 };
+use serde_json::json;
 #[test]
 fn parses_defaults_and_jobs_from_toml() {
     let config = parse_str(
@@ -140,6 +141,60 @@ auto_lookup = false
     assert_eq!(config.jobs[0].template.auto_lookup, Some(false));
     assert!(config.jobs[0].template.path.is_none());
     assert!(config.jobs[0].template.builtin.is_none());
+}
+
+#[test]
+fn parses_job_template_variables_shape() {
+    let config = parse_str(
+        r#"
+version = 1
+
+[jobs.strings]
+output = "Generated/Strings.swift"
+
+[[jobs.strings.inputs]]
+type = "strings"
+path = "Resources/Localization"
+
+[jobs.strings.template]
+path = "Templates/strings.jinja"
+
+[jobs.strings.variables]
+enum_name = "AppStrings"
+bundle_accessor = "Bundle.module"
+generate_comments = true
+retry_count = 3
+scale = 1.5
+imports = ["Foundation", "UIKit"]
+
+[jobs.strings.variables.naming]
+prefix = "App"
+reserved = ["class", "struct"]
+"#,
+    )
+    .expect("config with job variables should parse");
+
+    let variables = &config.jobs[0].variables;
+    assert_eq!(variables["enum_name"], json!("AppStrings"));
+    assert_eq!(variables["bundle_accessor"], json!("Bundle.module"));
+    assert_eq!(variables["generate_comments"], json!(true));
+    assert_eq!(variables["retry_count"], json!(3));
+    assert_eq!(variables["scale"], json!(1.5));
+    assert_eq!(variables["imports"], json!(["Foundation", "UIKit"]));
+    assert_eq!(
+        variables["naming"],
+        json!({
+            "prefix": "App",
+            "reserved": ["class", "struct"],
+        })
+    );
+
+    let serialized = toml::to_string(&config).expect("config should serialize");
+    assert!(serialized.contains("[jobs.strings.variables]"));
+    assert!(serialized.contains("enum_name = \"AppStrings\""));
+
+    let reparsed = parse_str(&serialized).expect("serialized config should parse");
+    assert_eq!(reparsed.jobs[0].variables, config.jobs[0].variables);
 }
 
 #[test]
@@ -621,6 +676,7 @@ fn serializing_empty_builtin_namespace_omits_builtin_table() {
             access_level: None,
             incremental: None,
             bundle: BundleConfig::default(),
+            variables: Default::default(),
             inputs: vec![InputConfig {
                 kind: "xcassets".to_string(),
                 path: "Resources/Assets.xcassets".to_string(),

@@ -46,6 +46,82 @@ fn generate_skips_when_generation_contract_is_unchanged_by_default() {
 }
 
 #[test]
+fn generate_rerenders_when_only_job_variables_change() {
+    let temp_dir = make_temp_dir("pipeline-generate-variable-change");
+    let config_path = temp_dir.join("numi.toml");
+    let files_root = temp_dir.join("Resources/Fixtures");
+    let template_path = temp_dir.join("Templates/files.jinja");
+    let generated_path = temp_dir.join("Generated/Files.swift");
+
+    fs::create_dir_all(&files_root).expect("files directory should exist");
+    fs::create_dir_all(
+        template_path
+            .parent()
+            .expect("template path should have parent"),
+    )
+    .expect("template dir should exist");
+    fs::write(files_root.join("faq.pdf"), "faq").expect("faq file should be written");
+    fs::write(&template_path, "{{ variables.enum_name }}\n").expect("template should be written");
+    fs::write(
+        &config_path,
+        r#"
+version = 1
+
+[jobs.files]
+output = "Generated/Files.swift"
+
+[[jobs.files.inputs]]
+type = "files"
+path = "Resources/Fixtures"
+
+[jobs.files.template]
+path = "Templates/files.jinja"
+
+[jobs.files.variables]
+enum_name = "FilesV1"
+"#,
+    )
+    .expect("config should be written");
+
+    let first = generate(&config_path, None).expect("initial generation should succeed");
+    assert_eq!(first.jobs[0].outcome, WriteOutcome::Created);
+    assert_eq!(
+        fs::read_to_string(&generated_path).expect("generated file should exist"),
+        "FilesV1\n"
+    );
+
+    fs::write(
+        &config_path,
+        r#"
+version = 1
+
+[jobs.files]
+output = "Generated/Files.swift"
+
+[[jobs.files.inputs]]
+type = "files"
+path = "Resources/Fixtures"
+
+[jobs.files.template]
+path = "Templates/files.jinja"
+
+[jobs.files.variables]
+enum_name = "FilesV2"
+"#,
+    )
+    .expect("config should be rewritten");
+
+    let second = generate(&config_path, None).expect("second generation should succeed");
+    assert_eq!(second.jobs[0].outcome, WriteOutcome::Updated);
+    assert_eq!(
+        fs::read_to_string(&generated_path).expect("generated file should update"),
+        "FilesV2\n"
+    );
+
+    fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+}
+
+#[test]
 fn generate_respects_job_incremental_opt_out_and_rerenders() {
     let temp_dir = make_temp_dir("pipeline-generate-opt-out");
     let config_path = temp_dir.join("numi.toml");

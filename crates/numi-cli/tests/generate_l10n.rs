@@ -522,6 +522,7 @@ fn dump_context_emits_json_for_selected_job() {
 
     assert_eq!(json["job"]["name"], "l10n");
     assert_eq!(json["job"]["swiftIdentifier"], "L10n");
+    assert_eq!(json["variables"], serde_json::json!({}));
     assert_eq!(json["modules"][0]["kind"], "strings");
     assert_eq!(json["modules"][0]["name"], "Localizable");
     assert_eq!(json["modules"][0]["properties"]["tableName"], "Localizable");

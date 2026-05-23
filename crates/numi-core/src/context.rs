@@ -1,9 +1,11 @@
+use numi_config::TemplateVariables;
 use numi_ir::{EntryKind, Metadata, ModuleKind, ResourceEntry, ResourceModule, swift_identifier};
 use serde::Serialize;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AssetTemplateContext {
     pub job: JobTemplateContext,
+    pub variables: TemplateVariables,
     pub access_level: String,
     pub bundle: BundleTemplateContext,
     pub modules: Vec<ModuleTemplateContext>,
@@ -77,6 +79,7 @@ impl AssetTemplateContext {
         bundle_mode: &str,
         bundle_identifier: Option<&str>,
         modules: &[ResourceModule],
+        variables: TemplateVariables,
     ) -> Result<Self, ContextError> {
         Ok(Self {
             job: JobTemplateContext {
@@ -84,6 +87,7 @@ impl AssetTemplateContext {
                 swift_identifier: swift_identifier(job_name),
                 output: job_output.to_owned(),
             },
+            variables,
             access_level: access_level.to_owned(),
             bundle: BundleTemplateContext {
                 mode: bundle_mode.to_owned(),
@@ -203,6 +207,7 @@ mod tests {
             "module",
             None,
             &[module],
+            TemplateVariables::new(),
         )
         .expect("context should build");
         let serialized = serde_json::to_value(&context).expect("context should serialize");
@@ -210,6 +215,7 @@ mod tests {
         assert_eq!(serialized["job"]["name"], "assets");
         assert_eq!(serialized["job"]["swiftIdentifier"], "Assets");
         assert_eq!(serialized["job"]["output"], "Generated/Assets.swift");
+        assert_eq!(serialized["variables"], json!({}));
         assert_eq!(serialized["access_level"], "internal");
         assert_eq!(serialized["bundle"]["mode"], "module");
         assert_eq!(serialized["bundle"]["identifier"], serde_json::Value::Null);
@@ -227,6 +233,48 @@ mod tests {
         assert_eq!(
             serialized["modules"][0]["entries"][1]["children"][0]["swiftIdentifier"],
             "Add"
+        );
+    }
+
+    #[test]
+    fn exposes_job_variables_at_top_level() {
+        let variables = TemplateVariables::from([
+            ("enum_name".to_string(), json!("AppStrings")),
+            ("generate_comments".to_string(), json!(true)),
+            ("imports".to_string(), json!(["Foundation", "UIKit"])),
+            (
+                "options".to_string(),
+                json!({
+                    "bundle_accessor": "Bundle.module",
+                    "retries": 3,
+                }),
+            ),
+        ]);
+
+        let context = AssetTemplateContext::new(
+            "strings",
+            "Generated/Strings.swift",
+            "internal",
+            "module",
+            None,
+            &[],
+            variables,
+        )
+        .expect("context should build");
+        let serialized = serde_json::to_value(&context).expect("context should serialize");
+
+        assert_eq!(serialized["variables"]["enum_name"], "AppStrings");
+        assert_eq!(serialized["variables"]["generate_comments"], true);
+        assert_eq!(
+            serialized["variables"]["imports"],
+            json!(["Foundation", "UIKit"])
+        );
+        assert_eq!(
+            serialized["variables"]["options"],
+            json!({
+                "bundle_accessor": "Bundle.module",
+                "retries": 3,
+            })
         );
     }
 
@@ -259,6 +307,7 @@ mod tests {
             "module",
             None,
             &[module],
+            TemplateVariables::new(),
         )
         .expect("context should build");
         let serialized = serde_json::to_value(&context).expect("context should serialize");
@@ -338,6 +387,7 @@ mod tests {
             "module",
             None,
             &[module],
+            TemplateVariables::new(),
         )
         .expect("context should build");
         let serialized = serde_json::to_value(&context).expect("context should serialize");
@@ -396,6 +446,7 @@ mod tests {
             "module",
             None,
             &[module],
+            TemplateVariables::new(),
         )
         .expect("context should build");
         let serialized = serde_json::to_value(&context).expect("context should serialize");

@@ -16,7 +16,7 @@ pub use discovery::{
 pub use model::{
     ACCESS_LEVEL_VALUES, BUNDLE_MODE_VALUES, BuiltinTemplateConfig, BundleConfig, Config,
     DEFAULT_ACCESS_LEVEL, DEFAULT_BUNDLE_MODE, DEFAULT_INCREMENTAL, DefaultsConfig, HookConfig,
-    HooksConfig, INPUT_KIND_VALUES, InputConfig, JobConfig, TemplateConfig,
+    HooksConfig, INPUT_KIND_VALUES, InputConfig, JobConfig, TemplateConfig, TemplateVariables,
 };
 pub use workspace::{
     LoadedWorkspace, WorkspaceConfig, WorkspaceDefaults, WorkspaceError, WorkspaceJobDefaults,

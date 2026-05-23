@@ -169,6 +169,62 @@ path = "Templates/main.jinja"
 }
 
 #[test]
+fn generate_renders_custom_template_with_job_variables() {
+    let temp_dir = make_temp_dir("custom-template-job-variables");
+    let config_path = temp_dir.join("numi.toml");
+    let localization_root = temp_dir.join("Resources/Localization");
+    let templates_dir = temp_dir.join("Templates");
+    let generated_path = temp_dir.join("Generated/Strings.swift");
+
+    fs::create_dir_all(localization_root.join("en.lproj")).expect("localization dir should exist");
+    fs::create_dir_all(&templates_dir).expect("templates dir should exist");
+    fs::write(
+        localization_root.join("en.lproj/Localizable.strings"),
+        "\"profile.title\" = \"Profile\";\n",
+    )
+    .expect("strings file should be written");
+    fs::write(
+        templates_dir.join("strings.jinja"),
+        "{{ variables.imports[0] }}|{{ variables.enum_name }}|{{ variables.options.bundle_accessor }}|{{ variables.generate_comments }}\n",
+    )
+    .expect("template should be written");
+    fs::write(
+        &config_path,
+        r#"
+version = 1
+
+[jobs.strings]
+output = "Generated/Strings.swift"
+
+[[jobs.strings.inputs]]
+type = "strings"
+path = "Resources/Localization"
+
+[jobs.strings.template]
+path = "Templates/strings.jinja"
+
+[jobs.strings.variables]
+enum_name = "AppStrings"
+generate_comments = true
+imports = ["Foundation", "UIKit"]
+
+[jobs.strings.variables.options]
+bundle_accessor = "Bundle.module"
+"#,
+    )
+    .expect("config should be written");
+
+    let report = generate(&config_path, None).expect("generation should succeed");
+    let rendered = fs::read_to_string(&generated_path).expect("output should be written");
+
+    assert_eq!(report.jobs.len(), 1);
+    assert_eq!(report.jobs[0].outcome, WriteOutcome::Created);
+    assert_eq!(rendered, "Foundation|AppStrings|Bundle.module|true\n");
+
+    fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+}
+
+#[test]
 fn generate_resolves_extensionless_template_path_to_jinja_file() {
     let temp_dir = make_temp_dir("pipeline-extensionless-template-path");
     let config_path = temp_dir.join("numi.toml");

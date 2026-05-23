@@ -1,6 +1,6 @@
 use blake3::Hasher;
 use camino::Utf8PathBuf;
-use numi_config::{BundleConfig, DefaultsConfig, HookConfig, JobConfig};
+use numi_config::{BundleConfig, DefaultsConfig, HookConfig, JobConfig, TemplateVariables};
 use numi_diagnostics::Diagnostic;
 use numi_ir::{
     GraphMetadata, Metadata, ModuleKind, ResourceGraph, ResourceModule,
@@ -33,7 +33,7 @@ use crate::{
     },
 };
 
-const GENERATION_FINGERPRINT_SCHEMA_VERSION: u32 = 1;
+const GENERATION_FINGERPRINT_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GenerateReport {
@@ -730,6 +730,7 @@ fn build_context(
         bundle_mode,
         bundle.identifier.as_deref(),
         &modules,
+        job.variables.clone(),
     )
     .map_err(|source| GenerateError::BuildContext {
         job: job.name.clone(),
@@ -775,6 +776,7 @@ struct GenerationFingerprintRecord {
     access_level: String,
     bundle_mode: String,
     bundle_identifier: Option<String>,
+    variables: TemplateVariables,
     inputs: Vec<GenerationInputFingerprintRecord>,
     template: GenerationTemplateFingerprintRecord,
 }
@@ -1612,6 +1614,7 @@ fn compute_generation_fingerprint(
         access_level: resolve_access_level(defaults, job).to_owned(),
         bundle_mode: bundle.mode.clone().unwrap_or_else(|| "module".to_string()),
         bundle_identifier: bundle.identifier.clone(),
+        variables: job.variables.clone(),
         inputs,
         template,
     };

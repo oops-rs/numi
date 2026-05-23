@@ -614,6 +614,7 @@ mod tests {
     use super::*;
     use crate::context::AssetTemplateContext;
     use camino::Utf8PathBuf;
+    use numi_config::TemplateVariables;
     use numi_ir::{EntryKind, Metadata, ModuleKind, ResourceEntry, ResourceModule};
     use serde_json::json;
     use std::{
@@ -648,6 +649,7 @@ mod tests {
                 }],
                 metadata: Metadata::from([("tableName".to_string(), json!("Localizable"))]),
             }],
+            TemplateVariables::new(),
         )
         .expect("context should build")
     }
@@ -699,6 +701,7 @@ mod tests {
                 ],
                 metadata: Metadata::new(),
             }],
+            TemplateVariables::new(),
         )
         .expect("context should build")
     }
@@ -770,6 +773,7 @@ mod tests {
                 ],
                 metadata: Metadata::new(),
             }],
+            TemplateVariables::new(),
         )
         .expect("context should build")
     }
@@ -803,6 +807,7 @@ mod tests {
                 }],
                 metadata: Metadata::from([("tableName".to_string(), json!("Localizable"))]),
             }],
+            TemplateVariables::new(),
         )
         .expect("context should build")
     }
@@ -929,6 +934,7 @@ private func tr(_ table: String, _ key: String) -> String {
                 ],
                 metadata: Metadata::new(),
             }],
+            TemplateVariables::new(),
         )
         .expect("context should build");
 
@@ -1011,6 +1017,7 @@ private func file(_ path: String) -> URL {
                 ],
                 metadata: Metadata::new(),
             }],
+            TemplateVariables::new(),
         )
         .expect("context should build");
 

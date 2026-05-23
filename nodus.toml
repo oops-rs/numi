@@ -1,4 +1,11 @@
 [adapters]
 enabled = ["codex"]
-[launch_hooks]
-sync_on_startup = true
+[[hooks]]
+id = "nodus.sync_on_startup"
+event = "session_start"
+[hooks.matcher]
+sources = ["startup", "resume"]
+[hooks.handler]
+type = "command"
+command = "nodus sync"
+
